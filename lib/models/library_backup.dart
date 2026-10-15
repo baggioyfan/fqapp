@@ -56,7 +56,8 @@ class LibraryBackup {
   int get episodeCount =>
       watched.values.fold(0, (total, episodes) => total + episodes.length);
 
-  /// The read-time entries in the typed shape the store's merge consumes.
+  /// The read-time entries in the typed shape the store's merge consumes:
+  /// `id` is a content ID and `kind` scopes the storage key, as with history.
   List<({String id, String kind, Map<String, double> days})>
   get readTimeEntries => [
     for (final entry in readTime)
@@ -113,7 +114,9 @@ class LibraryBackup {
         for (final entry in readTime)
           if (include(entry.id) && entry.days.isNotEmpty)
             {
-              'id': entry.id,
+              // Stored by content ID, like history: the store rebuilds the
+              // `kind:id` key for scoped media on restore.
+              'id': _bareId(entry.id),
               'kind': entry.kind,
               'days': {
                 for (final day in entry.days.entries)
@@ -360,8 +363,9 @@ class LibraryBackup {
     return {for (final key in keys.sublist(keys.length - keep)) key: days[key]};
   }
 
-  /// `audio:123` -> `123`, so a scoped media ID that points at a local book is
-  /// still recognized as local data.
+  /// `audio:123` -> `123`. Scoped-media storage keys never travel: a backup
+  /// stores the content ID, and the store rebuilds the key from `kind`. It also
+  /// keeps a scoped ID that points at a local book recognizable as local data.
   static String _bareId(String id) {
     final separator = id.indexOf(':');
     if (separator < 0) return id;

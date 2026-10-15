@@ -235,12 +235,28 @@ void main() {
     test('creates an identity the device has never tracked', () async {
       final backup = backupWith(
         readTime: [
-          (id: 'audio:new', kind: 'audio', days: {'2026-2-1': 300.0}),
+          // A content ID, not the scoped storage key.
+          (id: 'new', kind: 'audio', days: {'2026-2-1': 300.0}),
         ],
       );
       expect((await service.restore(backup)).readTime, 1);
       expect(library.readTimeSnapshot()['audio:new'], {'2026-2-1': 300.0});
       expect(library.readTimeKindSnapshot()['audio:new'], 'audio');
+    });
+
+    test('round-trips a scoped identity through its content ID', () async {
+      await Hive.box('read_time').put('audio:series-9', {
+        '2026-3-2': 420.0,
+        '_media_kind_v1': 'audio',
+      });
+      final backup = await service.capture();
+      expect(backup.readTime, hasLength(1));
+      expect(backup.readTime.single['id'], 'series-9');
+      expect(backup.readTime.single['kind'], 'audio');
+      await Hive.box('read_time').delete('audio:series-9');
+      expect((await service.restore(backup)).readTime, 1);
+      expect(library.readTimeSnapshot()['audio:series-9'], {'2026-3-2': 420.0});
+      expect(library.readTimeKindSnapshot()['audio:series-9'], 'audio');
     });
   });
 
