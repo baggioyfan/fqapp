@@ -935,11 +935,12 @@ class LibraryStore implements ReaderStore {
   }
 
   static void _mergeMaxDays(
-    Map<String, double> target,
+    Map<String, dynamic> target,
     Map<String, double> days,
   ) {
     for (final day in days.entries) {
-      if (day.value > (target[day.key] ?? 0)) target[day.key] = day.value;
+      final current = _finiteNumber(target[day.key]) ?? 0;
+      if (day.value > current) target[day.key] = day.value;
     }
   }
 
