@@ -79,18 +79,20 @@ class _LibraryBackupPageState extends State<LibraryBackupPage> {
       if (!mounted) return;
       setState(() {
         _preview = null;
+        final kept = backup.history.length - result.history;
         _message =
-            '恢复完成：新增 ${result.shelf} 条收藏、${result.history} 条进度、'
-            '${result.episodes} 集已看标记。\n'
-            '保留本机已有收藏/进度 '
-            '${backup.shelf.length + backup.history.length - result.shelf - result.history} 条。';
+            '恢复完成：收藏 ${result.shelf} 条、进度 ${result.history} 条'
+            '${kept > 0 ? '（另有 $kept 条本机记录更新或读得更靠后，保留本机）' : ''}、'
+            '已看 ${result.episodes} 集、阅读时长 ${result.readTime} 项、'
+            '搜索历史 ${result.searchHistory} 条。';
       });
     }, restoring: true);
   }
 
   static String _counts(LibraryBackup backup) =>
       '${backup.shelf.length} 条收藏、${backup.history.length} 条进度、'
-      '${backup.episodeCount} 集已看标记';
+      '${backup.episodeCount} 集已看标记、${backup.readTime.length} 项阅读时长、'
+      '${backup.searchHistory.length} 条搜索历史';
 
   @override
   Widget build(BuildContext context) {
@@ -126,10 +128,10 @@ class _LibraryBackupPageState extends State<LibraryBackupPage> {
                       ),
                     ),
                     const SizedBox(height: 12),
-                    const Text('包含在线小说、听书、漫画、短剧和漫剧的收藏、已保存的阅读/播放进度，以及已看剧集。'),
+                    const Text('包含在线小说、听书、漫画、短剧和漫剧的收藏、已保存的阅读/播放进度、已看剧集、阅读时长和搜索历史。'),
                     const SizedBox(height: 8),
                     Text(
-                      '不含本地 TXT/EPUB 书籍及其进度、下载缓存、阅读时长、划线和应用设置。'
+                      '不含本地 TXT/EPUB 书籍及其进度、下载缓存、划线和应用设置。'
                       '本地书籍请另行保留原文件。',
                       style: TextStyle(color: palette.muted),
                     ),
@@ -178,7 +180,10 @@ class _LibraryBackupPageState extends State<LibraryBackupPage> {
                         ),
                       ],
                       const SizedBox(height: 12),
-                      const Text('同一作品已有收藏或进度时保留本机记录，只补缺失项；已看剧集会合并。可重复导入。'),
+                      const Text(
+                        '同一作品：进度取记录时间较新、且读得更靠后的一条，进度不会回退；'
+                        '收藏与已看剧集取并集；阅读时长按天取较大值；搜索历史取并集。可重复导入。',
+                      ),
                       const SizedBox(height: 16),
                       FilledButton(
                         onPressed: enabled ? _restore : null,
