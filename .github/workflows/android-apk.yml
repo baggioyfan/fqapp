@@ -84,7 +84,13 @@ env:
   # this, so a package signed with the wrong key -- or not signed at all --
   # fails here instead of being published. The matching keystore is stored
   # as a repository secret.
-  RELEASE_SIGNER_SHA256: 'e8471cd8a935fd71fd8197355b5558d245449d5bc8294f60f88616f60451c550'
+  #
+  # A fork can never reproduce the upstream certificate, so the default only
+  # applies until you sign with your own keystore. Set a repository variable of
+  # the same name (Settings -> Secrets and variables -> Actions -> Variables) to
+  # your own certificate's SHA-256, otherwise adding the keystore secrets makes
+  # the signing step fail the pin check rather than switch to your key.
+  RELEASE_SIGNER_SHA256: ${{ vars.RELEASE_SIGNER_SHA256 || 'e8471cd8a935fd71fd8197355b5558d245449d5bc8294f60f88616f60451c550' }}
   FQAPP_USE_MAVEN_MIRRORS: 'false'
   GRADLE_OPTS: '-Dorg.gradle.jvmargs="-Xmx1536m -XX:MaxMetaspaceSize=768m -XX:ReservedCodeCacheSize=256m" -Dorg.gradle.workers.max=2 -Dorg.gradle.daemon=false'
   CMAKE_BUILD_PARALLEL_LEVEL: '2'
@@ -349,6 +355,21 @@ jobs:
           # as an unsigned one, which is worse than either answer being wrong.
           printf 'has_release_signing=true\n' >> "$GITHUB_OUTPUT"
           printf 'Verified release signing certificate: %s\n' "$actual_signer"
+
+      # Without the release keystore Gradle signs with the debug identity, which
+      # the build machine would otherwise generate afresh on every run: each
+      # build would then be a different signer, and since the manifest sets
+      # allowBackup="false", upgrading to the next build would mean uninstalling
+      # and losing local data. Caching the keystore keeps successive fork builds
+      # upgradeable over each other. It is not key material to protect -- the
+      # debug keystore's password is the well-known "android" -- and the cache is
+      # scoped to this repository.
+      - name: Cache the fork signing identity
+        if: steps.signing.outputs.has_release_signing != 'true'
+        uses: actions/cache@v4
+        with:
+          path: ~/.android/debug.keystore
+          key: fqapp-fork-debug-keystore-v1
 
       # Dependencies were resolved once, before the Rust gates; every step from
       # there on runs with --no-pub against that resolved package config.
