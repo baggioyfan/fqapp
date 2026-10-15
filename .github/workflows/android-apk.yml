@@ -29,9 +29,17 @@ on:
       - 'scripts/verify_audio_cenc.cjs'
       - '.github/workflows/android-apk.yml'
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: >-
+          Tag to publish as a GitHub Release, for example v1.0.114. Leave empty
+          to only build the APK and upload it as a workflow artifact.
+        required: false
+        type: string
 
 permissions:
-  contents: read
+  # gh release create needs write access; every other step only reads.
+  contents: write
 
 concurrency:
   group: android-apk-${{ github.ref }}
@@ -356,6 +364,35 @@ jobs:
             app/build/ci-artifacts/verification/*.json
             app/build/ci-artifacts/verification/*.sha256
             app/build/ci-artifacts/verification/*.log
+
+      # Publishing is opt-in: a release is only created when the run was started
+      # with a tag, so an ordinary branch build can never publish one.
+      - name: Publish the GitHub Release
+        if: github.event_name == 'workflow_dispatch' && inputs.release_tag != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          case "$RELEASE_TAG" in
+            v*) ;;
+            *)
+              echo "::error::The release tag must start with 'v' (got '$RELEASE_TAG')." >&2
+              exit 1
+              ;;
+          esac
+          if gh release view "$RELEASE_TAG" > /dev/null 2>&1; then
+            echo "::error::Release $RELEASE_TAG already exists; refusing to overwrite it." >&2
+            exit 1
+          fi
+          asset="build/ci-artifacts/fqapp-$RELEASE_TAG-arm64-v8a.apk"
+          cp build/ci-artifacts/app-release.apk "$asset"
+          gh release create "$RELEASE_TAG" \
+            --title "$RELEASE_TAG" \
+            --notes-file .github/release-notes.md \
+            --target "$GITHUB_SHA" \
+            "$asset" \
+            build/ci-artifacts/build-info.txt
+          printf 'Published %s\n' "$RELEASE_TAG"
 
       - name: Retain diagnostics if a build or APK check fails
         if: failure()
