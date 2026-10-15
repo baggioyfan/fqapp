@@ -412,6 +412,7 @@ class LibraryStore implements ReaderStore {
   /// Identities whose buckets were already re-assigned to another media kind
   /// are skipped: that allocation is device-local bookkeeping, and merging its
   /// exported (already re-assigned) days back would count the seconds twice.
+  /// Exported IDs are content IDs, so scoped media get their `kind:id` key back.
   Future<int> _mergeReadTimeInWrite(
     List<({String id, String kind, Map<String, double> days})> incoming,
   ) async {
@@ -419,7 +420,9 @@ class LibraryStore implements ReaderStore {
     final touched = DateTime.now().millisecondsSinceEpoch;
     for (final entry in incoming) {
       if (entry.id.isEmpty || entry.days.isEmpty) continue;
-      final raw = _readTimeBox.get(entry.id);
+      final scoped = entry.kind == 'audio' || entry.kind == 'manga';
+      final key = scoped ? '${entry.kind}:${entry.id}' : entry.id;
+      final raw = _readTimeBox.get(key);
       if (raw is Map &&
           (raw[_allocatedTimeKey] is Map || raw[_legacyTimeKey] is Map)) {
         continue;
@@ -440,7 +443,7 @@ class LibraryStore implements ReaderStore {
       // least recently touched one and be dropped by the identity cap.
       record[_touchedKey] = touched;
       _pruneRecordDays(record);
-      await _readTimeBox.put(entry.id, record);
+      await _readTimeBox.put(key, record);
       merged++;
     }
     if (merged > 0) await _trimReadTimeIdentities();
