@@ -108,8 +108,14 @@ android {
             // keep the debug key so `flutter run` and overwrite-installing a
             // local test build keep working. A package signed by the older test
             // key cannot be overwritten by these -- it must be uninstalled.
-            if (hasReleaseSigning) {
-                signingConfig = signingConfigs.getByName("release")
+            //
+            // Without the release keystore (a fork, or CI without the secrets)
+            // the build falls back to the debug identity instead of shipping an
+            // unsigned package: an unsigned APK cannot be installed at all.
+            signingConfig = if (hasReleaseSigning) {
+                signingConfigs.getByName("release")
+            } else {
+                signingConfigs.getByName("debug")
             }
             isMinifyEnabled = true
             isShrinkResources = true
