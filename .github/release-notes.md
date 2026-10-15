@@ -17,8 +17,15 @@
 ⚠️ 这个 APK 使用 **Android debug 签名** —— 作者的正式签名拿不到，所以按官方签名安装过的版本装不上它。
 
 - 手机已装官方版（或其它签名的同包名版本）时，**必须先卸载再安装**。
-- 本包之间能否直接覆盖升级，取决于两次构建的签名身份是否一致；实际身份见附件 `build-info.txt` 里的 `APK signer certificate SHA-256`。
-- 想固定自己的签名身份：给仓库加上 `RELEASE_KEYSTORE_BASE64` / `RELEASE_STORE_PASSWORD` / `RELEASE_KEY_ALIAS` / `RELEASE_KEY_PASSWORD` 四个 secret，流水线会自动改用正式签名并 pin 证书。
+- 清单里是 `android:allowBackup="false"`，**卸载会连同书架、进度、阅读时长一起清掉**。
+  换签名重装前务必先「设置 → 数据 → 备份与恢复」导出备份文件，装好后导回来。
+- 流水线会把 debug 身份缓存下来（`~/.android/debug.keystore`），好让同一个仓库的后续构建
+  复用同一个签名、能直接覆盖升级。本版实际指纹见附件 `build-info.txt` 的
+  `APK signer certificate SHA-256`；对比两次构建的这行就知道身份是否一致。
+- 想换成自己的签名：给仓库加 `RELEASE_KEYSTORE_BASE64` / `RELEASE_STORE_PASSWORD` /
+  `RELEASE_KEY_ALIAS` / `RELEASE_KEY_PASSWORD` 四个 secret，**并把仓库变量
+  `RELEASE_SIGNER_SHA256` 设成你自己证书的 SHA-256** —— 默认值是作者的证书，
+  只加 secret 不改它的话，签名步骤会按作者证书校验并直接失败。
 - 包名 `com.fqapp.fqapp`，仅 `arm64-v8a`。
 
 ## 构建与验证
