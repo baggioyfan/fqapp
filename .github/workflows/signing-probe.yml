@@ -1,0 +1,66 @@
+name: Signing probe
+
+# Diagnostic workflow. It answers the two questions behind the fork's signing
+# path -- where the runner keeps its Android debug keystore, and whether a
+# keystore provisioned at a path we control survives a cache round trip -- in
+# about a minute instead of a 13-minute release build.
+#
+# It also seeds .github/workflows/android-apk.yml's signing cache, so the next
+# build signs with the certificate printed here. Re-run it after a cache
+# eviction to see the identity a build will pick up; delete it whenever the
+# signing arrangement is no longer in question.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Report where the runner keeps Android user data
+        run: |
+          printf 'HOME=%s\nRUNNER_TEMP=%s\nANDROID_HOME=%s\nANDROID_USER_HOME=%s\n' \
+            "$HOME" "$RUNNER_TEMP" "${ANDROID_HOME:-}" "${ANDROID_USER_HOME:-}"
+
+      - name: Look for a debug keystore the image already ships
+        run: |
+          found=0
+          for root in "$HOME" /usr/local/lib/android "$RUNNER_TEMP"; do
+            while IFS= read -r hit; do
+              found=1
+              printf 'found: %s\n' "$hit"
+            done < <(find "$root" -maxdepth 6 -name 'debug.keystore' 2>/dev/null)
+          done
+          [ "$found" -eq 1 ] || printf 'no debug.keystore anywhere AGP could look\n'
+
+      - name: Restore the fork signing identity
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/fqapp-debug.p12
+          key: fqapp-fork-debug-keystore-v1
+
+      - name: Show the identity a build would sign with
+        run: |
+          path="$RUNNER_TEMP/fqapp-debug.p12"
+          if [ -f "$path" ]; then
+            printf 'cache hit: builds reuse this identity\n'
+          else
+            printf 'cache miss: creating the identity a build would create\n'
+            keytool -genkeypair -keystore "$path" -storetype PKCS12 -storepass android \
+              -keypass android -alias androiddebugkey -keyalg RSA -keysize 2048 \
+              -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
+          fi
+          ls -l "$path"
+          # AGP loads the keystore through Java, so prove Java accepts it here
+          # instead of discovering a format problem during a release build.
+          keytool -list -keystore "$path" -storepass android | head -8
+          printf 'FORK_SIGNER_SHA256=%s\n' \
+            "$(keytool -exportcert -keystore "$path" -storepass android \
+               -alias androiddebugkey | sha256sum | cut -d ' ' -f 1)"

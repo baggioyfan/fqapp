@@ -356,20 +356,45 @@ jobs:
           printf 'has_release_signing=true\n' >> "$GITHUB_OUTPUT"
           printf 'Verified release signing certificate: %s\n' "$actual_signer"
 
-      # Without the release keystore Gradle signs with the debug identity, which
-      # the build machine would otherwise generate afresh on every run: each
-      # build would then be a different signer, and since the manifest sets
-      # allowBackup="false", upgrading to the next build would mean uninstalling
-      # and losing local data. Caching the keystore keeps successive fork builds
-      # upgradeable over each other. It is not key material to protect -- the
-      # debug keystore's password is the well-known "android" -- and the cache is
-      # scoped to this repository.
-      - name: Cache the fork signing identity
+      # Without the release keystore Gradle signs with a debug identity, which the
+      # build machine would otherwise generate afresh on every run: each build
+      # would then be a different signer, and because the manifest sets
+      # allowBackup="false", upgrading would mean uninstalling and losing the
+      # local shelf, progress and read time. So one identity is provisioned and
+      # cached, and every later build signs with that same certificate.
+      #
+      # The path is explicit rather than the runner's default debug.keystore:
+      # caching that default silently saved nothing, because it is not where AGP
+      # looks. The credentials are the well-known debug ones, so this is not key
+      # material worth protecting, and the cache is scoped to this repository.
+      - name: Restore the fork signing identity
         if: steps.signing.outputs.has_release_signing != 'true'
         uses: actions/cache@v4
         with:
-          path: ~/.android/debug.keystore
+          path: ${{ runner.temp }}/fqapp-debug.p12
           key: fqapp-fork-debug-keystore-v1
+
+      # Only the first run after a cache eviction regenerates the certificate;
+      # installs signed by the previous identity then need one uninstall.
+      - name: Provision the fork signing identity
+        if: steps.signing.outputs.has_release_signing != 'true'
+        run: |
+          path="$RUNNER_TEMP/fqapp-debug.p12"
+          if [ ! -f "$path" ]; then
+            printf 'No cached fork identity; generating one.\n'
+            keytool -genkeypair -keystore "$path" -storetype PKCS12 -storepass android \
+              -keypass android -alias androiddebugkey -keyalg RSA -keysize 2048 \
+              -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
+          fi
+          {
+            printf 'FQAPP_DEBUG_KEYSTORE=%s\n' "$path"
+          } >> "$GITHUB_ENV"
+          # The debug signing config overrides only storeFile, so AGP's own
+          # defaults -- alias androiddebugkey, password android -- must match
+          # this file, and this line makes the identity in use visible.
+          printf 'Fork signing certificate SHA-256: %s\n' \
+            "$(keytool -exportcert -keystore "$path" -storepass android \
+               -alias androiddebugkey | sha256sum | cut -d ' ' -f 1)"
 
       # Dependencies were resolved once, before the Rust gates; every step from
       # there on runs with --no-pub against that resolved package config.
