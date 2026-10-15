@@ -301,10 +301,12 @@ def verify(args: argparse.Namespace, report_dir: Path, report: dict) -> None:
     run_logged([zipalign, "-c", "-P", "16", "-v", "4", str(apk)],
                report_dir, "zipalign.log")
     report["checks"]["zip_16kb_alignment"] = "passed"
-    # A build made without the release keystore is unsigned, and apksigner
-    # exits non-zero on such a package. That is an expected outcome rather than
-    # a defect when the caller asks for an unsigned-tolerant verification, so
-    # the signature block is reported as absent instead of aborting the run.
+    # apksigner exits non-zero on a package with no signature. That is an
+    # expected outcome rather than a defect when the caller asks for an
+    # unsigned-tolerant verification -- a local inspection build, say -- so the
+    # signature block is reported as absent instead of aborting the run. CI does
+    # not take this path: it passes no signature arguments at all, which keeps a
+    # signature a hard requirement even when no certificate can be pinned.
     if args.allow_unsigned:
         signature = run_logged([java, "-jar", str(signer), "verify", "--verbose",
                                 "--print-certs", str(apk)], report_dir, "apksigner.log",
@@ -346,9 +348,9 @@ def main() -> int:
                         help="Require the APK's sole signing certificate to have this SHA-256 digest")
     parser.add_argument("--allow-unsigned", action="store_true",
                         help=("Accept a package with no signature and report it as unsigned. "
-                              "Every other check still runs. Use only where the release keystore "
-                              "is unavailable, such as a fork or a local inspection build; an "
-                              "unsigned package cannot be installed over a signed one."))
+                              "Every other check still runs. Use only for an inspection build "
+                              "that is never installed; an unsigned package cannot be installed "
+                              "over a signed one."))
     args = parser.parse_args()
     if args.allow_unsigned and args.expected_signer_sha256 is not None:
         parser.error("--allow-unsigned contradicts --expected-signer-sha256: "

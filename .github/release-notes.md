@@ -14,13 +14,17 @@
 
 ## 安装
 
-⚠️ 这个 APK 使用 **Android debug 签名** —— 作者的正式签名不可用，所以按官方签名安装过的版本装不上它。
+⚠️ 这个 APK 使用 **Android debug 签名** —— 作者的正式签名拿不到，所以按官方签名安装过的版本装不上它。
 
 - 手机已装官方版（或其它签名的同包名版本）时，**必须先卸载再安装**。
-- 之后升级本包可以直接覆盖安装。
+- 本包之间能否直接覆盖升级，取决于两次构建的签名身份是否一致；实际身份见附件 `build-info.txt` 里的 `APK signer certificate SHA-256`。
+- 想固定自己的签名身份：给仓库加上 `RELEASE_KEYSTORE_BASE64` / `RELEASE_STORE_PASSWORD` / `RELEASE_KEY_ALIAS` / `RELEASE_KEY_PASSWORD` 四个 secret，流水线会自动改用正式签名并 pin 证书。
 - 包名 `com.fqapp.fqapp`，仅 `arm64-v8a`。
 
 ## 构建与验证
 
 由 `.github/workflows/android-apk.yml` 构建，流水线包含 `flutter analyze`、全量 `flutter test`、
 Rust clippy 与测试、以及 APK 内容、签名和 16 KiB 对齐校验。构建信息见附件 `build-info.txt`。
+
+没有 release 密钥时签名校验会退化为「要求存在签名但不 pin 证书」，所以未签名的包不会被发出来；
+有密钥时则严格比对证书指纹。
