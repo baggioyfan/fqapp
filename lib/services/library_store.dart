@@ -321,35 +321,46 @@ class LibraryStore implements ReaderStore {
     ),
   );
 
-  /// Imports validated content IDs, keeping every existing local record.
+  /// Imports validated content IDs. Shelves and watched episodes stay unions,
+  /// but a progress record is replaced only when the incoming one clears both
+  /// sync gates: it must be newer (`time`) **and** further along (`episode`,
+  /// then `progress`). Two devices therefore converge on the furthest position
+  /// instead of one device re-reading an earlier chapter dragging the rest back.
+  /// The returned `history` count is writes, not inserts (new + replaced).
   /// Do not call addHistory here: its normal retention sweep would delete
   /// local entries midway through restoring a larger backup.
-  Future<({int history, int episodes})> mergeBackup({
+  Future<({int history, int episodes, int readTime})> mergeBackup({
     required List<Map<String, dynamic>> history,
     required Map<String, Map<String, int>> watched,
+    required List<({String id, String kind, Map<String, double> days})>
+    readTime,
   }) {
     final guard = ReadingDataWriteGuard(this);
     return _serializeResult(() async {
       if (!guard.canWriteHistory) throw StateError('历史已清理，请重新导入');
-      final identities = historySnapshot().map(_historyIdentity).toSet();
-      var addedHistory = 0;
+      var writtenHistory = 0;
       for (final entry in history) {
         final kind = entry['kind'] as String;
         final id = entry['id'] as String;
         final scoped = kind == 'audio' || kind == 'manga';
         final key = scoped ? '$kind:$id' : id;
-        // Bare video/book keys may also be occupied by another kind. Do not
-        // overwrite it or invoke legacy statistics migration during restore.
-        if (identities.contains((kind, id)) || _histBox.containsKey(key)) {
-          continue;
+        final existing = _historyRecord(_histBox.get(key), id: key);
+        if (existing != null) {
+          // Bare video/book keys may also be occupied by another kind. Do not
+          // overwrite it or invoke legacy statistics migration during restore.
+          if ((existing['kind']?.toString() ?? 'book') != kind) continue;
+          final incomingTime = (entry['time'] as num?)?.toInt() ?? 0;
+          final existingTime = (existing['time'] as num?)?.toInt() ?? 0;
+          // Same instant keeps the local copy so two devices cannot ping-pong.
+          if (incomingTime <= existingTime) continue;
+          if (!_advancesProgress(entry, existing)) continue;
         }
         await _histBox.put(key, {
           ...entry,
           'id': key,
           if (scoped) 'contentId': id,
         });
-        identities.add((kind, id));
-        addedHistory++;
+        writtenHistory++;
       }
       var addedEpisodes = 0;
       for (final entry in watched.entries) {
@@ -362,10 +373,78 @@ class LibraryStore implements ReaderStore {
         await _watchedBox.put(entry.key, {...current, ...missing});
         addedEpisodes += missing.length;
       }
+      final mergedReadTime = await _mergeReadTimeInWrite(readTime);
       await _histBox.flush();
       await _watchedBox.flush();
-      return (history: addedHistory, episodes: addedEpisodes);
+      await _readTimeBox.flush();
+      return (
+        history: writtenHistory,
+        episodes: addedEpisodes,
+        readTime: mergedReadTime,
+      );
     });
+  }
+
+  /// Whether [incoming] sits strictly further along than [existing].
+  ///
+  /// `episode` is the 0-based chapter/episode index for every kind, and
+  /// `progress` is the position inside it. A record missing `episode` cannot be
+  /// compared at all, so it falls back to plain last-write-wins rather than
+  /// blocking the update forever.
+  static bool _advancesProgress(
+    Map<String, dynamic> incoming,
+    Map<String, dynamic> existing,
+  ) {
+    final a = incoming['episode'];
+    final b = existing['episode'];
+    if (a is! num || b is! num) return true;
+    if (a != b) return a > b;
+    final pa = (incoming['progress'] as num?) ?? 0;
+    final pb = (existing['progress'] as num?) ?? 0;
+    return pa > pb;
+  }
+
+  /// Merges exported read-time buckets by taking the per-day maximum.
+  ///
+  /// Max is idempotent: importing the same snapshot twice cannot inflate a
+  /// total, which an additive merge could never guarantee. Two devices reading
+  /// the same day therefore keep the longer session instead of their sum.
+  /// Identities whose buckets were already re-assigned to another media kind
+  /// are skipped: that allocation is device-local bookkeeping, and merging its
+  /// exported (already re-assigned) days back would count the seconds twice.
+  Future<int> _mergeReadTimeInWrite(
+    List<({String id, String kind, Map<String, double> days})> incoming,
+  ) async {
+    var merged = 0;
+    final touched = DateTime.now().millisecondsSinceEpoch;
+    for (final entry in incoming) {
+      if (entry.id.isEmpty || entry.days.isEmpty) continue;
+      final raw = _readTimeBox.get(entry.id);
+      if (raw is Map &&
+          (raw[_allocatedTimeKey] is Map || raw[_legacyTimeKey] is Map)) {
+        continue;
+      }
+      final days = <String, double>{
+        for (final day in entry.days.entries)
+          if (_parseDayKey(day.key) != null &&
+              day.value.isFinite &&
+              day.value >= 0)
+            day.key: day.value,
+      };
+      if (days.isEmpty) continue;
+      final record = _readTimeStorage(raw);
+      _mergeMaxDays(record, days);
+      final kind = entry.kind.trim();
+      if (kind.isNotEmpty) record[_kindKey] = kind;
+      // Refresh the eviction order: a restored identity must not look like the
+      // least recently touched one and be dropped by the identity cap.
+      record[_touchedKey] = touched;
+      _pruneRecordDays(record);
+      await _readTimeBox.put(entry.id, record);
+      merged++;
+    }
+    if (merged > 0) await _trimReadTimeIdentities();
+    return merged;
   }
 
   static Map<String, int> _watchedRecord(dynamic raw) {
@@ -667,6 +746,22 @@ class LibraryStore implements ReaderStore {
       }
     }
     return out;
+  }
+
+  /// The portable shape a backup stores: one entry per read-time identity,
+  /// carrying its media kind so a restored device can label the statistics row.
+  List<({String id, String kind, Map<String, double> days})>
+  readTimeBackupSnapshot() {
+    final kinds = readTimeKindSnapshot();
+    return [
+      for (final entry in readTimeSnapshot().entries)
+        if (entry.value.isNotEmpty)
+          (
+            id: entry.key,
+            kind: kinds[entry.key] ?? 'book',
+            days: Map<String, double>.unmodifiable(entry.value),
+          ),
+    ];
   }
 
   @override

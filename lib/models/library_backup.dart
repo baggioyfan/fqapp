@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:typed_data';
 
+import '../services/search_history_store.dart';
 import '../services/shelf_store.dart';
 import 'media_item.dart';
 
@@ -9,9 +10,23 @@ import 'media_item.dart';
 // .agents/notes/implemented/feature/2026-10-15-library-backup.md
 class LibraryBackup {
   static const maxBytes = 16 * 1024 * 1024;
+
+  /// Past this the exporter retries with a shorter read-time window instead of
+  /// failing outright: day buckets dominate the payload, and an install that
+  /// has been tracking for years can approach the hard limit on its own.
+  static const _trimAboveBytes = 8 * 1024 * 1024;
+  static const _trimmedReadTimeDays = 365;
+  static const _maxDaySeconds = 1e9;
+  static const _maxSearchTerms = 20;
+  static const _maxSearchTermLength = 200;
   static const _maxRecords = 10000;
   static const _maxEpisodes = 100000;
   static const _format = 'fqapp.library-backup';
+
+  /// 2 adds `readTime` and `searchHistory`; 1 files stay importable, their
+  /// missing lists simply read as empty.
+  static const _version = 2;
+  static const _supportedVersions = {1, 2};
   static const _kinds = {'book', 'audio', 'manga', 'video', 'manju'};
   static final _idPattern = RegExp(r'^[a-zA-Z0-9_-]{1,128}$');
 
@@ -21,6 +36,11 @@ class LibraryBackup {
   /// IDs here are content IDs. Storage keys are reconstructed by LibraryStore.
   final List<Map<String, dynamic>> history;
   final Map<String, Map<String, int>> watched;
+
+  /// `{id, kind, days: {day: seconds}}` — the user-visible read-time totals,
+  /// never the internal allocation/migration keys those totals are derived from.
+  final List<Map<String, dynamic>> readTime;
+  final List<String> searchHistory;
   final int excludedLocalRecords;
 
   LibraryBackup._({
@@ -28,20 +48,39 @@ class LibraryBackup {
     required this.shelf,
     required this.history,
     required this.watched,
+    required this.readTime,
+    required this.searchHistory,
     required this.excludedLocalRecords,
   });
 
   int get episodeCount =>
       watched.values.fold(0, (total, episodes) => total + episodes.length);
 
+  /// The read-time entries in the typed shape the store's merge consumes.
+  List<({String id, String kind, Map<String, double> days})>
+  get readTimeEntries => [
+    for (final entry in readTime)
+      (
+        id: entry['id'] as String,
+        kind: entry['kind'] as String,
+        days: {
+          for (final day in (entry['days'] as Map).entries)
+            day.key as String: (day.value as num).toDouble(),
+        },
+      ),
+  ];
+
   factory LibraryBackup.capture({
     required List<ShelfRecord> shelf,
     required List<Map<String, dynamic>> history,
     required Map<String, Map<String, int>> watched,
+    required List<({String id, String kind, Map<String, double> days})>
+    readTime,
+    required Iterable<String> searchHistory,
   }) {
     var excluded = 0;
     bool include(String id) {
-      if (!id.startsWith('local_')) return true;
+      if (!_bareId(id).startsWith('local_')) return true;
       excluded++;
       return false;
     }
@@ -49,7 +88,7 @@ class LibraryBackup {
     // The same validation is used before export and before any restore writes.
     return LibraryBackup._fromJson({
       'format': _format,
-      'version': 1,
+      'version': _version,
       'createdAt': DateTime.now().millisecondsSinceEpoch,
       'shelf': [
         for (final record in shelf)
@@ -70,6 +109,19 @@ class LibraryBackup {
         for (final entry in watched.entries)
           if (include(entry.key)) {'id': entry.key, 'episodes': entry.value},
       ],
+      'readTime': [
+        for (final entry in readTime)
+          if (include(entry.id) && entry.days.isNotEmpty)
+            {
+              'id': entry.id,
+              'kind': entry.kind,
+              'days': {
+                for (final day in entry.days.entries)
+                  if (_parseDayKey(day.key) != null) day.key: day.value,
+              },
+            },
+      ],
+      'searchHistory': normalizeSearchHistory(searchHistory).toList(),
       'excludedLocalRecords': excluded,
     });
   }
@@ -90,7 +142,10 @@ class LibraryBackup {
   }
 
   factory LibraryBackup._fromJson(Map<String, dynamic> raw) {
-    if (raw['format'] != _format || raw['version'] != 1) {
+    final version = raw['version'];
+    if (raw['format'] != _format ||
+        version is! int ||
+        !_supportedVersions.contains(version)) {
       throw const FormatException('不是受支持的 FQApp 备份，请使用兼容版本导出的文件');
     }
     final createdAt = _integer(raw['createdAt'], '备份时间', 8640000000000000);
@@ -191,11 +246,56 @@ class LibraryBackup {
           _id(entry.key): _integer(entry.value, '已看时间', 8640000000000000),
       });
     }
+    final readTime = <Map<String, dynamic>>[];
+    final readTimeIds = <String>{};
+    for (final value in _list(raw['readTime'] ?? const <dynamic>[])) {
+      final record = _map(value);
+      final id = _id(record['id']);
+      if (!_kinds.contains(record['kind'])) {
+        throw const FormatException('阅读时长含未知作品类型');
+      }
+      if (!readTimeIds.add(id)) throw const FormatException('备份中有重复的阅读时长');
+      final days = <String, double>{};
+      for (final day in _map(record['days']).entries) {
+        final seconds = day.value;
+        if (_parseDayKey(day.key) == null ||
+            seconds is! num ||
+            !seconds.isFinite ||
+            seconds < 0 ||
+            seconds > _maxDaySeconds) {
+          throw const FormatException('备份中的阅读时长无效');
+        }
+        days[day.key] = seconds.toDouble();
+      }
+      if (days.isEmpty) continue;
+      readTime.add(
+        Map.unmodifiable({
+          'id': id,
+          'kind': record['kind'],
+          'days': Map.unmodifiable(days),
+        }),
+      );
+    }
+    final searchHistory = <String>[];
+    final searchSeen = <String>{};
+    for (final value in _list(raw['searchHistory'] ?? const <dynamic>[])) {
+      if (value is! String) throw const FormatException('搜索历史记录无效');
+      final term = normalizeSearchQuery(value);
+      if (term.isEmpty) continue;
+      if (term.length > _maxSearchTermLength) {
+        throw const FormatException('搜索历史记录过长');
+      }
+      if (!searchSeen.add(term.toLowerCase())) continue;
+      if (searchHistory.length == _maxSearchTerms) break;
+      searchHistory.add(term);
+    }
     return LibraryBackup._(
       createdAt: DateTime.fromMillisecondsSinceEpoch(createdAt),
       shelf: List.unmodifiable(shelf),
       history: List.unmodifiable(history),
       watched: Map.unmodifiable(watched),
+      readTime: List.unmodifiable(readTime),
+      searchHistory: List.unmodifiable(searchHistory),
       excludedLocalRecords: _integer(
         raw['excludedLocalRecords'] ?? 0,
         '排除条数',
@@ -205,24 +305,83 @@ class LibraryBackup {
   }
 
   Uint8List encode() {
-    final bytes = Uint8List.fromList(
-      utf8.encode(
-        jsonEncode({
-          'format': _format,
-          'version': 1,
-          'createdAt': createdAt.millisecondsSinceEpoch,
-          'shelf': shelf.map(_shelfJson).toList(),
-          'history': history,
-          'watched': [
-            for (final entry in watched.entries)
-              {'id': entry.key, 'episodes': entry.value},
-          ],
-          'excludedLocalRecords': excludedLocalRecords,
-        }),
-      ),
-    );
+    var bytes = _encodeBytes();
+    if (bytes.length > _trimAboveBytes) {
+      // Retry once with the read-time window shortened; the rest of the payload
+      // is bounded by record counts and cannot be trimmed meaningfully.
+      bytes = _encodeBytes(readTimeDays: _trimmedReadTimeDays);
+    }
     if (bytes.length > maxBytes) throw const FormatException('备份数据超过 16 MB');
     return bytes;
+  }
+
+  Uint8List _encodeBytes({int? readTimeDays}) => Uint8List.fromList(
+    utf8.encode(
+      jsonEncode({
+        'format': _format,
+        'version': _version,
+        'createdAt': createdAt.millisecondsSinceEpoch,
+        'shelf': shelf.map(_shelfJson).toList(),
+        'history': history,
+        'watched': [
+          for (final entry in watched.entries)
+            {'id': entry.key, 'episodes': entry.value},
+        ],
+        'readTime': [
+          for (final entry in readTime)
+            if (readTimeDays == null)
+              entry
+            else
+              {...entry, 'days': _recentDays(entry['days'], readTimeDays)},
+        ],
+        'searchHistory': searchHistory,
+        'excludedLocalRecords': excludedLocalRecords,
+      }),
+    ),
+  );
+
+  /// Drops day buckets older than the newest [keep] days. Only used by the
+  /// size fallback, so a normal export keeps the full stored window.
+  static Map<String, dynamic> _recentDays(Object? days, int keep) {
+    if (days is! Map) return const {};
+    final dated = <String, DateTime>{};
+    for (final entry in days.entries) {
+      final key = entry.key.toString();
+      final date = _parseDayKey(key);
+      if (date != null) dated[key] = date;
+    }
+    if (dated.length <= keep) {
+      return {
+        for (final entry in days.entries) entry.key.toString(): entry.value,
+      };
+    }
+    final keys = dated.keys.toList()
+      ..sort((a, b) => dated[a]!.compareTo(dated[b]!));
+    return {for (final key in keys.sublist(keys.length - keep)) key: days[key]};
+  }
+
+  /// `audio:123` -> `123`, so a scoped media ID that points at a local book is
+  /// still recognized as local data.
+  static String _bareId(String id) {
+    final separator = id.indexOf(':');
+    if (separator < 0) return id;
+    final scope = id.substring(0, separator);
+    return scope == 'audio' || scope == 'manga'
+        ? id.substring(separator + 1)
+        : id;
+  }
+
+  /// Mirrors `LibraryStore._dayKey`, which does not zero-pad its parts.
+  static DateTime? _parseDayKey(String key) {
+    final parts = key.split('-');
+    if (parts.length != 3) return null;
+    final year = int.tryParse(parts[0]);
+    final month = int.tryParse(parts[1]);
+    final day = int.tryParse(parts[2]);
+    if (year == null || month == null || day == null) return null;
+    if (year < 1 || year > 9999) return null;
+    if (month < 1 || month > 12 || day < 1 || day > 31) return null;
+    return DateTime(year, month, day);
   }
 
   static Map<String, dynamic> _shelfJson(ShelfRecord record) => {

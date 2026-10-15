@@ -17,7 +17,9 @@ class SearchHistoryStore implements SearchHistoryRepository {
 
   static final SearchHistoryStore instance = SearchHistoryStore._();
 
-  static const _key = 'search_history_v1';
+  /// Exposed so the backup layer can name the same preference instead of
+  /// repeating the literal.
+  static const key = 'search_history_v1';
   static const maxEntries = 20;
   Future<void> _writes = Future<void>.value();
   Zone _writesZone = Zone.current;
@@ -45,7 +47,7 @@ class SearchHistoryStore implements SearchHistoryRepository {
 
   Future<List<String>> _read() async {
     final preferences = await SharedPreferences.getInstance();
-    final raw = preferences.get(_key);
+    final raw = preferences.get(key);
     return normalizeSearchHistory(raw is List ? raw.whereType<String>() : []);
   }
 
@@ -53,7 +55,7 @@ class SearchHistoryStore implements SearchHistoryRepository {
   Future<List<String>> add(String query) => _serialize(() async {
     final items = mergeSearchHistory(await _read(), query);
     final preferences = await SharedPreferences.getInstance();
-    await preferences.setStringList(_key, items);
+    await preferences.setStringList(key, items);
     return items;
   });
 
@@ -64,14 +66,26 @@ class SearchHistoryStore implements SearchHistoryRepository {
         .where((item) => item.toLowerCase() != normalized)
         .toList(growable: false);
     final preferences = await SharedPreferences.getInstance();
-    await preferences.setStringList(_key, items);
+    await preferences.setStringList(key, items);
     return items;
   });
 
   @override
   Future<void> clear() => _serialize(() async {
     final preferences = await SharedPreferences.getInstance();
-    await preferences.remove(_key);
+    await preferences.remove(key);
+  });
+
+  /// Unions exported terms into the local list, keeping local entries first,
+  /// and returns how many of them were new. [normalizeSearchHistory] owns
+  /// deduplication, whitespace folding and the [maxEntries] cap, so importing
+  /// the same snapshot twice adds nothing.
+  Future<int> merge(Iterable<String> incoming) => _serialize(() async {
+    final current = await _read();
+    final merged = normalizeSearchHistory([...current, ...incoming]);
+    final preferences = await SharedPreferences.getInstance();
+    await preferences.setStringList(key, merged);
+    return merged.length - current.length;
   });
 
   Future<T> _serialize<T>(Future<T> Function() action) {

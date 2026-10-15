@@ -116,12 +116,16 @@ void main() {
         watched: {
           'series-1': {'ep-1': 100, 'ep-2': 200},
         },
+        readTime: const [],
+        searchHistory: const [],
       );
       final service = LibraryBackupService();
       expect(await service.restore(backup), (
         shelf: 1,
         history: 110,
         episodes: 1,
+        readTime: 0,
+        searchHistory: 0,
       ));
       expect(library.historySnapshot(), hasLength(111));
       expect((await library.historyEntry('same'))?['episode'], 9);
@@ -133,6 +137,8 @@ void main() {
         shelf: 0,
         history: 0,
         episodes: 0,
+        readTime: 0,
+        searchHistory: 0,
       ));
       expect(library.historySnapshot(), hasLength(111));
     },
@@ -149,6 +155,8 @@ void main() {
                     {'id': 'valid', 'kind': 'book'},
                   ],
                   watched: {},
+                  readTime: const [],
+                  searchHistory: const [],
                 ).encodeAsText(),
               )
               as Map<String, dynamic>;
