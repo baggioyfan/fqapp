@@ -19,10 +19,12 @@
 - 手机已装官方版（或其它签名的同包名版本）时，**必须先卸载再安装**。
 - 清单里是 `android:allowBackup="false"`，**卸载会连同书架、进度、阅读时长一起清掉**。
   换签名重装前务必先「设置 → 数据 → 备份与恢复」导出备份文件，装好后导回来。
-- 流水线会把 debug 身份缓存下来（`~/.android/debug.keystore`），好让同一个仓库的后续构建
-  复用同一个签名、能直接覆盖升级。本版实际指纹见附件 `build-info.txt` 的
-  `APK signer certificate SHA-256`；对比两次构建的这行就知道身份是否一致。
-- 想换成自己的签名：给仓库加 `RELEASE_KEYSTORE_BASE64` / `RELEASE_STORE_PASSWORD` /
+- 流水线会把 fork 的 debug 身份**固定下来**（首次生成后缓存，后续构建复用同一张证书），
+  所以本仓库后续的 release 可以直接覆盖升级。本版实际指纹见附件 `build-info.txt` 的
+  `APK signer certificate SHA-256`（v1.0.114 = `13f6a184…d9ac`）。
+- ⚠️ 唯一例外：Actions 缓存被清掉时（长期不构建，或仓库缓存配额被其它构建挤爆），
+  下一版会生成新身份，那一版需要重新卸载安装一次。
+- 想彻底不依赖缓存：给仓库加 `RELEASE_KEYSTORE_BASE64` / `RELEASE_STORE_PASSWORD` /
   `RELEASE_KEY_ALIAS` / `RELEASE_KEY_PASSWORD` 四个 secret，**并把仓库变量
   `RELEASE_SIGNER_SHA256` 设成你自己证书的 SHA-256** —— 默认值是作者的证书，
   只加 secret 不改它的话，签名步骤会按作者证书校验并直接失败。
