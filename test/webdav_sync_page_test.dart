@@ -222,7 +222,7 @@ void main() {
     expect(service.receivedPassword, 'hunter2');
   });
 
-  testWidgets('reports a first upload when the cloud file is absent', (
+  testWidgets('reports a first upload without the merge counts', (
     tester,
   ) async {
     SharedPreferences.setMockInitialValues({
@@ -230,11 +230,13 @@ void main() {
     });
     await pumpPage(
       tester,
+      // The shape a first sync really has: nothing was merged, only uploaded,
+      // so every count is zero.
       report: (
         remoteExisted: false,
         remoteModified: null,
         uploadedBytes: 2048,
-        shelf: 2,
+        shelf: 0,
         history: 0,
         episodes: 0,
         readTime: 0,
@@ -246,8 +248,9 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.textContaining('云端还没有备份文件'), findsOneWidget);
-    expect(find.textContaining('收藏 2 条'), findsOneWidget);
     expect(find.textContaining('2.0 KB'), findsOneWidget);
+    // "已把本机数据上传（收藏 0 条…）" would read as "nothing was uploaded".
+    expect(find.textContaining('收藏 0 条'), findsNothing);
     expect(await configStore.lastSyncedAt(), isNotNull);
   });
 }
