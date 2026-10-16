@@ -20,6 +20,7 @@ import 'library_backup_page.dart';
 import 'log_viewer_page.dart';
 import 'settings_category_page.dart';
 import 'system_tts_settings_page.dart';
+import 'webdav_sync_page.dart';
 
 /// Settings home: a list of category entries (PiliPlus multi-level
 /// navigation). Each category opens its own CommonSetting-style page.
@@ -70,7 +71,7 @@ class SettingsPage extends StatelessWidget {
       SettingsCategory(
         icon: LucideIcons.database,
         title: '数据',
-        subtitle: '备份与恢复、缓存、阅读与播放历史',
+        subtitle: '备份与恢复、WebDAV 同步、缓存、阅读与播放历史',
         items: [
           SettingsItem(
             icon: LucideIcons.database,
@@ -79,6 +80,15 @@ class SettingsPage extends StatelessWidget {
             onTap: (context, setState) => Navigator.push(
               context,
               MaterialPageRoute(builder: (_) => const LibraryBackupPage()),
+            ),
+          ),
+          SettingsItem(
+            icon: LucideIcons.cloud,
+            title: 'WebDAV 同步',
+            subtitle: '用一个云端目录在两台手机之间对齐收藏和进度',
+            onTap: (context, setState) => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const WebdavSyncPage()),
             ),
           ),
           SettingsItem(
