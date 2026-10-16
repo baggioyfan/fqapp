@@ -159,7 +159,7 @@ class _FqAppState extends State<FqApp> {
                 navigatorKey: _navigatorKey,
                 child: child ?? const SizedBox.shrink(),
               ),
-              title: 'fqapp',
+              title: '番茄小铺',
               debugShowCheckedModeBanner: false,
               theme: _theme(Brightness.light, eink: eink),
               darkTheme: _theme(Brightness.dark, eink: eink),
