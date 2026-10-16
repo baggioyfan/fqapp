@@ -231,6 +231,51 @@ def run_logged(command: list[str], report_dir: Path, log_name: str,
     return result.stdout
 
 
+def declared_display_name() -> str | None:
+    """The launcher name the source declares, read from the repository root.
+
+    Comparing against the resource instead of a literal keeps the value in one
+    place. Outside a checkout the check is skipped rather than failing a build.
+    """
+    resource = (Path(__file__).resolve().parent.parent
+                / "android/app/src/main/res/values/strings.xml")
+    if not resource.is_file():
+        return None
+    match = re.search(r'<string name="app_name">([^<]*)</string>',
+                      resource.read_text(encoding="utf-8"))
+    return match.group(1) if match else None
+
+
+def display_name(badging: str) -> str:
+    """The packaged application label, as aapt reports it.
+
+    aapt prints the compact `application-label:` form and the older
+    `application: label=` field; either one proves what the launcher shows.
+    """
+    for pattern in (r"^application-label:'([^']*)'",
+                    r"^application: label='([^']*)'"):
+        match = re.search(pattern, badging, re.MULTILINE)
+        if match is not None:
+            return match.group(1)
+    raise VerificationError("aapt did not report an application label")
+
+
+def check_display_name(badging: str, expected: str | None) -> str:
+    """The packaged label, failing when it disagrees with the declared name.
+
+    A literal label in the manifest once shipped a release under the
+    placeholder name: nothing read the packaged name, and every other check
+    still passed. [expected] is None outside a checkout, which skips the
+    comparison instead of failing on a missing source file.
+    """
+    label = display_name(badging)
+    if expected is not None and label != expected:
+        raise VerificationError(
+            f"APK label {label!r} does not match the app_name resource "
+            f"({expected!r})")
+    return label
+
+
 def application_metadata(badging: str) -> dict:
     package_line = next((line for line in badging.splitlines() if line.startswith("package: ")), "")
     fields = dict(re.findall(r"(\w+)='([^']*)'", package_line))
@@ -373,6 +418,8 @@ def verify(args: argparse.Namespace, report_dir: Path, report: dict) -> None:
               flush=True)
     badging = run_logged([aapt, "dump", "badging", str(apk)], report_dir, "aapt-badging.log")
     report["application"] = application_metadata(badging)
+    report["application"]["display_name"] = check_display_name(
+        badging, declared_display_name())
     report["checks"]["application_metadata"] = "passed"
     if args.expected_version_name is not None:
         report["application"]["expected_version_name"] = args.expected_version_name
