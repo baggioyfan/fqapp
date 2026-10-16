@@ -83,6 +83,15 @@ void main() {
     WebdavSyncReport? report,
     WebdavException? failure,
   }) async {
+    // The form is taller than the default 800x600 test surface. A tap on a
+    // widget outside the viewport only warns and then misses, and a widget far
+    // enough down the list is never built, so both the buttons and the message
+    // at the bottom would be invisible to the assertions below. A tall surface
+    // keeps the whole page on screen and leaves scrolling out of the test.
+    tester.view.physicalSize = const Size(1000, 1800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+
     final service = _SpySync(report: report, failure: failure);
     await tester.pumpWidget(
       MaterialApp(home: WebdavSyncPage(service: service)),
