@@ -38,7 +38,9 @@ String? validateWebdavUrl(String input) {
   final value = input.trim();
   if (value.isEmpty) return '请填写 WebDAV 地址';
   final uri = Uri.tryParse(value);
-  if (uri == null || uri.host.isEmpty) return '地址格式不正确，例如 https://dav.example.com/dav/';
+  if (uri == null || uri.host.isEmpty) {
+    return '地址格式不正确，例如 https://dav.example.com/dav/我的目录/';
+  }
   if (uri.scheme != 'https' && uri.scheme != 'http') {
     return '地址需要以 http:// 或 https:// 开头';
   }

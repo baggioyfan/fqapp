@@ -266,7 +266,13 @@ void main() {
           isA<WebdavException>()
               .having((error) => error.statusCode, 'statusCode', 404)
               .having((error) => error.message, 'message', contains('坚果云'))
-              .having((error) => error.message, 'message', contains('文件夹')),
+              // The refused address travels with the advice, so the root of
+              // the drive is visible as the cause without reading a log.
+              .having(
+                (error) => error.message,
+                'message',
+                contains('${server.origin}${server.path}'),
+              ),
         ),
       );
     });
