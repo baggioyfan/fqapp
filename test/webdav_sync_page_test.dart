@@ -1,5 +1,4 @@
 import 'dart:io';
-import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -20,8 +19,6 @@ import 'package:fqapp/services/webdav_sync_service.dart';
 /// what a save stores, what a failed sync shows, and what a successful one
 /// leaves in the cloud file.
 class _FakeTransport implements WebdavTransport {
-  _FakeTransport({this.remote, this.failure});
-
   Uint8List? remote;
   WebdavException? failure;
   Uint8List? uploaded;

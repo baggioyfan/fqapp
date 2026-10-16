@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
@@ -53,10 +52,12 @@ class _FakeServer {
   Future<void> _handle(HttpRequest request) async {
     final response = request.response;
     methods.add(request.method);
-    headers[request.method] = {
-      for (final name in ['authorization', 'depth', 'content-type'])
-        if (request.headers.value(name) case final value?) name: value,
-    };
+    final recorded = <String, String>{};
+    for (final name in ['authorization', 'depth', 'content-type']) {
+      final value = request.headers.value(name);
+      if (value != null) recorded[name] = value;
+    }
+    headers[request.method] = recorded;
     if (redirectLocation case final location?) {
       response.statusCode = 301;
       response.headers.set('location', location);
