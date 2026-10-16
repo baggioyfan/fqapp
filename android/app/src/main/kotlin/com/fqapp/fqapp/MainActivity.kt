@@ -29,6 +29,8 @@ class MainActivity : FlutterActivity() {
         flutterEngine.plugins.add(SystemTtsPlugin())
         flutterEngine.plugins.add(LocalBookPickerPlugin())
         flutterEngine.plugins.add(LibraryBackupPlugin())
+        // WebDAV 密码：密钥库加密后再落 SharedPreferences，见 SecretStorePlugin。
+        flutterEngine.plugins.add(SecretStorePlugin())
         // 官方系统分享是 Intent.ACTION_SEND；没有可分享的应用时回 false。
         flutterEngine.plugins.add(SharePlugin())
         // 整本 TXT 导出：MediaStore.Downloads 或应用外部目录，见 DownloadsPlugin。
