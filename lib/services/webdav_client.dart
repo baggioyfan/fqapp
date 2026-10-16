@@ -79,8 +79,10 @@ class WebdavClient implements WebdavTransport {
   /// server will not put a file in it. Nutstore answers 404 for a PUT that
   /// would create a file at its WebDAV root and allows it only inside a folder,
   /// which is the first-run failure easiest to misread as a wrong password.
-  static const _createHereHint =
-      '。请确认地址指向一个已存在的文件夹：'
+  /// The URL that was refused is printed with the advice, so the answer is in
+  /// the message instead of a log.
+  String get _createHereHint =>
+      '（被拒绝的地址是 ${config.fileUri}）。请确认地址指向一个已存在的文件夹：'
       '有的网盘（如坚果云）不允许在根目录下新建文件，需要先在网页端建一个文件夹，'
       '再把地址改成这个文件夹';
 
