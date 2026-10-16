@@ -35,4 +35,24 @@ void main() {
       reason: 'this is the name the launcher shows after install',
     );
   });
+
+  test('the in-app brand strings read $displayName', () {
+    // The About header is the one that slipped. Rebasing onto upstream 1.0.118
+    // stopped on a version-line conflict there, and resolving that file with
+    // `git checkout --ours` takes the whole file from the rebase target, so the
+    // header silently went back to the placeholder `fqapp` with no conflict
+    // marker to notice. No check read that header, so only a hand comparison of
+    // the diff against upstream showed it was gone.
+    for (final path in const [
+      'lib/main.dart',
+      'lib/pages/about_page.dart',
+      'lib/widgets/home/home_hero.dart',
+    ]) {
+      expect(
+        File(path).readAsStringSync(),
+        contains(displayName),
+        reason: '$path shows the app name to the user',
+      );
+    }
+  });
 }
