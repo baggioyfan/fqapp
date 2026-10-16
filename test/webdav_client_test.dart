@@ -136,11 +136,16 @@ void main() {
     fileName: fileName,
   );
 
-  WebdavClient clientFor({String password = 'secret'}) => WebdavClient(
-    config: configFor(),
-    password: password,
-    timeout: const Duration(seconds: 5),
-  );
+  WebdavClient clientFor({String password = 'secret'}) {
+    final client = WebdavClient(
+      config: configFor(),
+      password: password,
+      timeout: const Duration(seconds: 5),
+    );
+    // Left open, an idle connection outlives the assertions it belongs to.
+    addTearDown(client.close);
+    return client;
+  }
 
   group('collection', () {
     test('accepts an existing collection', () async {
@@ -195,6 +200,7 @@ void main() {
         password: '',
         timeout: const Duration(seconds: 5),
       );
+      addTearDown(client.close);
       await client.ensureCollection();
       expect(server.headers['PROPFIND']!.containsKey('authorization'), isFalse);
     });
