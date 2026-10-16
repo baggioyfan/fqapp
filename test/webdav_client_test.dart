@@ -20,6 +20,7 @@ class _FakeServer {
 
   bool collectionExists = true;
   bool allowCreate = true;
+  bool allowCreateFile = true;
   bool requireCredentials = true;
   int? forcedStatus;
   String? redirectLocation;
@@ -108,8 +109,14 @@ class _FakeServer {
         builder.add(chunk);
       }
       lastPutBody = builder.takeBytes();
-      files[request.uri.path] = lastPutBody;
-      response.statusCode = 201;
+      if (!allowCreateFile) {
+        // What Nutstore answers for a PUT that would create a file at its
+        // WebDAV root: the collection exists, the file is still refused.
+        response.statusCode = 404;
+      } else {
+        files[request.uri.path] = lastPutBody;
+        response.statusCode = 201;
+      }
     } else {
       response.statusCode = 405;
     }
@@ -244,6 +251,23 @@ void main() {
       expect(
         server.headers['PUT']!['content-type'],
         contains('application/json'),
+      );
+    });
+
+    test('a server that refuses a file here points at the folder', () async {
+      // The collection exists and the credentials are accepted, so the 404 is
+      // about where the file would go. Nutstore answers exactly this for a PUT
+      // at its WebDAV root, and the message has to name the fix rather than
+      // leave the user re-checking a password that is already correct.
+      server.allowCreateFile = false;
+      await expectLater(
+        clientFor().upload(Uint8List.fromList(utf8.encode('{"version":2}'))),
+        throwsA(
+          isA<WebdavException>()
+              .having((error) => error.statusCode, 'statusCode', 404)
+              .having((error) => error.message, 'message', contains('坚果云'))
+              .having((error) => error.message, 'message', contains('文件夹')),
+        ),
       );
     });
 
