@@ -209,6 +209,14 @@ class _WebdavSyncPageState extends State<WebdavSyncPage> {
         '同一作品保留读得更靠后的进度，收藏与已看取并集。';
   }
 
+  /// Shown under the address field. What gets stored is a folder URL and the
+  /// snapshot is created inside it, so an address that is the WebDAV root is
+  /// exactly the shape several cloud drives refuse: Nutstore answers 404 for a
+  /// PUT there, which reads like a wrong path rather than a rule of the drive.
+  static const _folderNote =
+      '地址要指向一个已存在的文件夹：有的网盘（如坚果云）不允许在根目录下新建文件，'
+      '需要先在网页端建一个文件夹，再把地址填成这个文件夹。';
+
   @override
   Widget build(BuildContext context) {
     final palette = HomePalette.of(context);
@@ -318,9 +326,10 @@ class _WebdavSyncPageState extends State<WebdavSyncPage> {
                     ValueListenableBuilder<TextEditingValue>(
                       valueListenable: _url,
                       builder: (context, value, _) => Text(
-                        value.text.trim().startsWith('http://')
+                        '${value.text.trim().startsWith('http://')
                             ? '当前使用明文 http：家庭内网可以用，公共网络下建议换成 https。'
-                            : '用 https 地址时凭据是加密传输的；地址末尾的 / 会自动补上。',
+                            : '用 https 地址时凭据是加密传输的；地址末尾的 / 会自动补上。'}'
+                        '$_folderNote',
                         style: TextStyle(color: palette.muted, fontSize: 12.5),
                       ),
                     ),

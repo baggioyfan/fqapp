@@ -72,6 +72,18 @@ class WebdavClient implements WebdavTransport {
       '<d:propfind xmlns:d="DAV:"><d:prop><d:getlastmodified/>'
       '<d:getcontentlength/></d:prop></d:propfind>';
 
+  /// Appended to a 404 or 409 on the snapshot file itself.
+  ///
+  /// The configured address is a folder and the snapshot is created inside it,
+  /// so those two statuses have one meaning: the folder is not there, or the
+  /// server will not put a file in it. Nutstore answers 404 for a PUT that
+  /// would create a file at its WebDAV root and allows it only inside a folder,
+  /// which is the first-run failure easiest to misread as a wrong password.
+  static const _createHereHint =
+      '。请确认地址指向一个已存在的文件夹：'
+      '有的网盘（如坚果云）不允许在根目录下新建文件，需要先在网页端建一个文件夹，'
+      '再把地址改成这个文件夹';
+
   @override
   Future<void> ensureCollection() async {
     final response = await _read(
@@ -140,7 +152,13 @@ class WebdavClient implements WebdavTransport {
       case 404:
       case 409:
       case 507:
-        throw _statusError(response, '上传云端备份失败');
+        // Only 404 and 409 use the hint; the mapping below ignores it for the
+        // other status in this group, so 507 needs no branch of its own.
+        throw _statusError(
+          response,
+          '上传云端备份失败',
+          hint: _createHereHint,
+        );
       default:
         _requireSuccess(response, '上传云端备份失败');
     }
@@ -214,7 +232,11 @@ class WebdavClient implements WebdavTransport {
     throw _statusError(response, what);
   }
 
-  WebdavException _statusError(http.Response response, String what) {
+  WebdavException _statusError(
+    http.Response response,
+    String what, {
+    String hint = '',
+  }) {
     final status = response.statusCode;
     if (status >= 300 && status < 400) {
       final location = response.headers['location'];
@@ -229,9 +251,9 @@ class WebdavClient implements WebdavTransport {
       switch (status) {
         401 => '认证失败：请检查用户名和密码',
         403 => '服务器拒绝访问：请确认该账号对该目录有读写权限',
-        404 => '$what：云端路径不存在',
+        404 => '$what：云端路径不存在$hint',
         405 => '$what：服务器不允许这个操作',
-        409 => '$what：云端目录不存在',
+        409 => '$what：云端目录不存在$hint',
         423 => '$what：云端文件被锁定，请稍后重试',
         507 => '云端空间不足，无法写入备份',
         _ => '$what：服务器返回 $status',
