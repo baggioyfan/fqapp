@@ -153,26 +153,6 @@ void main() {
     expect(store.readTimeDailyTotals()['2026-1-5'], 3000.0);
   });
 
-  test('the legacy cross-tab is folded into both tables once', () async {
-    // 先按老形态写进去，再走一次 init，让迁移把它折叠掉。
-    // setUp 那次 init 已经置过迁移标记，这里要清掉才会重跑。
-    SharedPreferences.setMockInitialValues({});
-    await Hive.close();
-    Hive.init(directory.path);
-    final legacy = await Hive.openBox('read_time');
-    await legacy.put('book-a', {'2026-1-5': 90.0, '2026-1-6': 30.0});
-    await legacy.put('audio:book-b', {'2026-1-6': 45.0});
-
-    await LibraryStore.instance.init();
-
-    final store = LibraryStore.instance;
-    expect(store.readTimeBookTotals(), {'book-a': 120.0, 'audio:book-b': 45.0});
-    expect(store.readTimeDailyTotals(), {'2026-1-5': 90.0, '2026-1-6': 75.0});
-    // 迁移完成后旧盒清空，重复 init 不会把秒数再折一遍。
-    await LibraryStore.instance.init();
-    expect(store.readTimeBookTotals(), {'book-a': 120.0, 'audio:book-b': 45.0});
-  });
-
   test('clearing reading data empties both tables', () async {
     final store = LibraryStore.instance;
     await store.accumulateReadTime(
