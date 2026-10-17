@@ -54,14 +54,17 @@ void main() {
     DateTime? lastSyncedAt,
     DateTime? dismissed,
   }) async {
-    SharedPreferences.setMockInitialValues({
-      if (url != null) WebdavConfigStore.urlKey: url,
-      WebdavConfigStore.userKey: 'reader',
-      if (lastSyncedAt != null)
-        WebdavConfigStore.lastSyncKey: lastSyncedAt.millisecondsSinceEpoch,
-      if (dismissed != null)
-        WebdavConfigStore.dismissedKey: dismissed.millisecondsSinceEpoch,
-    });
+    final values = <String, Object>{WebdavConfigStore.userKey: 'reader'};
+    if (url != null) values[WebdavConfigStore.urlKey] = url;
+    if (lastSyncedAt != null) {
+      values[WebdavConfigStore.lastSyncKey] =
+          lastSyncedAt.millisecondsSinceEpoch;
+    }
+    if (dismissed != null) {
+      values[WebdavConfigStore.dismissedKey] =
+          dismissed.millisecondsSinceEpoch;
+    }
+    SharedPreferences.setMockInitialValues(values);
   }
 
   test('offers a sync when the cloud is newer than the last sync', () async {

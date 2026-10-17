@@ -62,11 +62,15 @@ class LibraryBackup {
   });
 
   /// 删除记录还原成存储键，交给 `ShelfStore.mergeBackup` 的 `removed`。
-  Map<String, DateTime> get shelfTombstones => {
-    for (final entry in shelfRemoved.entries)
-      if (_splitBare(entry.key) case final parts?)
-        ShelfStore.keyFor(parts.kind, parts.id): entry.value,
-  };
+  Map<String, DateTime> get shelfTombstones {
+    final result = <String, DateTime>{};
+    for (final entry in shelfRemoved.entries) {
+      final parts = _splitBare(entry.key);
+      if (parts == null) continue;
+      result[ShelfStore.keyFor(parts.kind, parts.id)] = entry.value;
+    }
+    return result;
+  }
 
   int get episodeCount =>
       watched.values.fold(0, (total, episodes) => total + episodes.length);
@@ -103,6 +107,16 @@ class LibraryBackup {
     }
 
     // The same validation is used before export and before any restore writes.
+    final removedJson = <Map<String, dynamic>>[];
+    for (final entry in shelfRemoved.entries) {
+      final parts = _splitBare(ShelfStore.bareKey(entry.key));
+      if (parts == null || !include(parts.id)) continue;
+      removedJson.add({
+        'kind': parts.kind,
+        'id': parts.id,
+        'removedAt': entry.value.millisecondsSinceEpoch,
+      });
+    }
     return LibraryBackup._fromJson({
       'format': _format,
       'version': _version,
@@ -112,16 +126,7 @@ class LibraryBackup {
           if (include(record.item.seriesId ?? record.item.id))
             {..._shelfJson(record), 'cover': _portableCover(record.item.cover)},
       ],
-      'shelfRemoved': [
-        for (final entry in shelfRemoved.entries)
-          if (_splitBare(ShelfStore.bareKey(entry.key)) case final parts?)
-            if (include(parts.id))
-              {
-                'kind': parts.kind,
-                'id': parts.id,
-                'removedAt': entry.value.millisecondsSinceEpoch,
-              },
-      ],
+      'shelfRemoved': removedJson,
       'history': [
         for (final record in history)
           if (include((record['contentId'] ?? record['id']).toString()))
@@ -380,15 +385,7 @@ class LibraryBackup {
         'version': _version,
         'createdAt': createdAt.millisecondsSinceEpoch,
         'shelf': shelf.map(_shelfJson).toList(),
-        'shelfRemoved': [
-          for (final entry in shelfRemoved.entries)
-            if (_splitBare(entry.key) case final parts?)
-              {
-                'kind': parts.kind,
-                'id': parts.id,
-                'removedAt': entry.value.millisecondsSinceEpoch,
-              },
-        ],
+        'shelfRemoved': _shelfRemovedJson(),
         'history': history,
         'watched': [
           for (final entry in watched.entries)
@@ -461,6 +458,21 @@ class LibraryBackup {
     if (year < 1 || year > 9999) return null;
     if (month < 1 || month > 12 || day < 1 || day > 31) return null;
     return DateTime(year, month, day);
+  }
+
+  /// 删除记录的 JSON 形态。身份解析不出来的（理论上不会有）直接跳过。
+  List<Map<String, dynamic>> _shelfRemovedJson() {
+    final result = <Map<String, dynamic>>[];
+    for (final entry in shelfRemoved.entries) {
+      final parts = _splitBare(entry.key);
+      if (parts == null) continue;
+      result.add({
+        'kind': parts.kind,
+        'id': parts.id,
+        'removedAt': entry.value.millisecondsSinceEpoch,
+      });
+    }
+    return result;
   }
 
   static Map<String, dynamic> _shelfJson(ShelfRecord record) => {

@@ -179,7 +179,7 @@ class ShelfStore {
     final box = _openBox;
     if (box == null) return;
     // 清空也是一次删除：不记墓碑的话，下次同步会把整架收藏搬回来。
-    final everything = box.keys.toList();
+    final everything = box.keys.whereType<String>().toList();
     await box.clear();
     await _recordRemovals(everything);
     _revision.value++;

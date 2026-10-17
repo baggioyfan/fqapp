@@ -139,7 +139,7 @@ void main() {
       {'book:gone': DateTime.fromMillisecondsSinceEpoch(1700000000000)},
     );
     expect(
-      decoded.shelfTombstones().keys,
+      decoded.shelfTombstones.keys,
       [ShelfStore.keyOf(_item('gone'))],
     );
   });
