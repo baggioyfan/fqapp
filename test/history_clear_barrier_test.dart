@@ -9,6 +9,7 @@ import 'package:fqapp/services/library_store.dart';
 import 'package:fqapp/services/media_history_store.dart';
 import 'package:fqapp/services/player_history.dart';
 import 'package:fqapp/services/reader_history.dart';
+import 'package:fqapp/services/read_time_store.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -58,7 +59,8 @@ void main() {
   for (final kind in ['audio', 'video', 'manju']) {
     for (final clearAll in [false, true]) {
       test('$kind clear during statistics write (all: $clearAll)', () async {
-        final readingTime = Hive.box('read_time');
+        // 阅读时长现在写在按书表里，监听新盒子才能看到真实的落盘。
+        final readingTime = Hive.box(ReadTimeStore.booksBoxName);
         final oldKey = _hasAudioScope(kind) ? 'audio:old' : 'old';
         final written = readingTime.watch(key: oldKey).first;
         final saved = _save(store, kind, 'old');
@@ -164,19 +166,20 @@ void main() {
   );
 
   test(
-    'history clearing does not interrupt legacy time preservation',
+    'history clearing does not interrupt an in-flight time write',
     () async {
-      await Hive.box(
-        'history',
-      ).put('shared', {'id': 'shared', 'kind': 'audio', 'time': 1});
-      await Hive.box('read_time').put('shared', {'2026-9-16': 23.0});
-
-      final accumulating = store.accumulateReadTime('shared', 'book', 7);
+      final accumulating = store.accumulateReadTime(
+        'shared',
+        'book',
+        7,
+        at: DateTime(2026, 9, 16),
+      );
       final cleared = store.clearHistory();
       await Future.wait([accumulating, cleared]);
 
       expect(store.historySnapshot(), isEmpty);
-      expect(_totalSeconds(store), 30);
+      // 清历史不动阅读时长：7 秒还在。
+      expect(_totalSeconds(store), 7);
     },
   );
 

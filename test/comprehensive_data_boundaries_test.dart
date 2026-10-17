@@ -62,6 +62,9 @@ void main() {
           await Hive.openBox<dynamic>('rank_cache_v1');
           // 已看集 box 也在 LibraryStore.init 里开箱（F07），同样要预开。
           await Hive.openBox<dynamic>('watched_episodes');
+          // 阅读时长的两张新表（按天 / 按书）同样在 LibraryStore.init 里开箱。
+          await Hive.openBox<dynamic>('read_time_daily_v2');
+          await Hive.openBox<dynamic>('read_time_books_v2');
           // 短剧离线缓存的记录箱随 bootstrap 预热（F08），同样要预开。
           await Hive.openBox<dynamic>('drama_download_v1');
           // 预热同时跑完 P1-4 的 keyHex 迁移：首次开盒会写迁移 marker，
