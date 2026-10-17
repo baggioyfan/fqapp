@@ -3,10 +3,11 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:hive/hive.dart';
+import 'package:hive_ce/hive.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:fqapp/models/library_backup.dart';
+import 'package:fqapp/services/encrypted_hive.dart';
 import 'package:fqapp/services/library_backup_service.dart';
 import 'package:fqapp/services/library_store.dart';
 import 'package:fqapp/services/search_history_store.dart';
@@ -178,7 +179,7 @@ void main() {
 
   group('read time merge', () {
     test('capture carries the user-visible totals out of the app store', () async {
-      await Hive.box('read_time').put('book-1', {
+      await EncryptedHive.box(Hive, 'read_time').put('book-1', {
         '2026-1-5': 1800.0,
         '_media_kind_v1': 'book',
       });
@@ -192,7 +193,7 @@ void main() {
     });
 
     test('takes the per-day maximum and stays idempotent', () async {
-      await Hive.box('read_time').put('book-1', {
+      await EncryptedHive.box(Hive, 'read_time').put('book-1', {
         '2026-1-5': 1800.0,
         '_media_kind_v1': 'book',
       });
@@ -218,7 +219,7 @@ void main() {
     });
 
     test('skips identities whose buckets were re-assigned to another kind', () async {
-      await Hive.box('read_time').put('shared', {
+      await EncryptedHive.box(Hive, 'read_time').put('shared', {
         '2026-1-5': 900.0,
         '_allocated_media_time_v1': {'2026-1-5': 600.0},
       });
@@ -228,7 +229,7 @@ void main() {
         ],
       );
       expect((await service.restore(backup)).readTime, 0);
-      final stored = Hive.box('read_time').get('shared') as Map;
+      final stored = EncryptedHive.box(Hive, 'read_time').get('shared') as Map;
       expect(stored['2026-1-5'], 900.0);
       expect(stored['_allocated_media_time_v1'], {'2026-1-5': 600.0});
     });
@@ -246,7 +247,7 @@ void main() {
     });
 
     test('round-trips a scoped identity through its content ID', () async {
-      await Hive.box('read_time').put('audio:series-9', {
+      await EncryptedHive.box(Hive, 'read_time').put('audio:series-9', {
         '2026-3-2': 420.0,
         '_media_kind_v1': 'audio',
       });
@@ -254,7 +255,7 @@ void main() {
       expect(backup.readTime, hasLength(1));
       expect(backup.readTime.single['id'], 'series-9');
       expect(backup.readTime.single['kind'], 'audio');
-      await Hive.box('read_time').delete('audio:series-9');
+      await EncryptedHive.box(Hive, 'read_time').delete('audio:series-9');
       expect((await service.restore(backup)).readTime, 1);
       expect(library.readTimeSnapshot()['audio:series-9'], {'2026-3-2': 420.0});
       expect(library.readTimeKindSnapshot()['audio:series-9'], 'audio');
