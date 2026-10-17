@@ -37,6 +37,34 @@ class LibraryBackupService {
     );
   }
 
+  /// 只取进度那一段，给热路径分片用。
+  ///
+  /// 整包的 `history` 字段仍然保留（降级保护：旧版本只认整包），所以这里
+  /// 不是「搬走」，而是「同一份数据再导出一份更小的」。
+  Future<List<Map<String, dynamic>>> captureProgress() async {
+    final library = LibraryStore.instance;
+    if (!library.isInitialized) throw StateError('本机数据尚未初始化');
+    return (await library.backupSnapshot()).history;
+  }
+
+  /// 把云端进度分片合并进本机。返回真正写入的条数。
+  ///
+  /// 复用 [LibraryStore.mergeBackup] 的双闸门（`time` 更新且位置更靠后），
+  /// 所以分片不引入第二套冲突规则。
+  Future<int> restoreHistory(List<Map<String, dynamic>> history) async {
+    if (!LibraryStore.instance.isInitialized) {
+      throw StateError('本机数据尚未初始化');
+    }
+    if (history.isEmpty) return 0;
+    final result = await LibraryStore.instance.mergeBackup(
+      history: history,
+      watched: const {},
+      daily: const {},
+      books: const [],
+    );
+    return result.history;
+  }
+
   Future<bool> export(LibraryBackup backup) async {
     final bytes = await Isolate.run(backup.encode);
     final stamp = backup.createdAt

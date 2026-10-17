@@ -24,19 +24,44 @@ class _FakeTransport implements WebdavTransport {
   bool ensured = false;
   bool closed = false;
 
+  /// 分片文件（`progress.json` 等）单独放，键是文件名。整包继续用上面那三个
+  /// 字段，老用例的断言不用改。
+  final Map<String, Uint8List> shards = {};
+  final Map<String, DateTime> shardStamps = {};
+
+  /// 每次 PUT 的目标文件名，null 记成空串 —— 用来断言「只推了分片」。
+  final List<String> puts = [];
+
   @override
   Future<void> ensureCollection() async => ensured = true;
 
   @override
-  Future<({Uint8List bytes, DateTime? modified})?> download() async =>
-      remote == null ? null : (bytes: remote!, modified: modified);
+  Future<({Uint8List bytes, DateTime? modified})?> download({
+    String? name,
+  }) async {
+    if (name != null) {
+      final bytes = shards[name];
+      return bytes == null ? null : (bytes: bytes, modified: shardStamps[name]);
+    }
+    return remote == null ? null : (bytes: remote!, modified: modified);
+  }
 
   @override
-  Future<DateTime?> remoteModified() async =>
-      remote == null ? null : modified;
+  Future<DateTime?> remoteModified({String? name}) async {
+    if (name != null) return shards[name] == null ? null : shardStamps[name];
+    return remote == null ? null : modified;
+  }
 
   @override
-  Future<void> upload(Uint8List bytes) async => uploaded = bytes;
+  Future<void> upload(Uint8List bytes, {String? name}) async {
+    puts.add(name ?? '');
+    if (name == null) {
+      uploaded = bytes;
+    } else {
+      shards[name] = bytes;
+      shardStamps[name] = DateTime.now();
+    }
+  }
 
   @override
   void close() => closed = true;
@@ -300,14 +325,16 @@ class _FailingTransport implements WebdavTransport {
   Future<void> ensureCollection() => inner.ensureCollection();
 
   @override
-  Future<({Uint8List bytes, DateTime? modified})?> download() =>
-      inner.download();
+  Future<({Uint8List bytes, DateTime? modified})?> download({
+    String? name,
+  }) => inner.download(name: name);
 
   @override
-  Future<DateTime?> remoteModified() => inner.remoteModified();
+  Future<DateTime?> remoteModified({String? name}) =>
+      inner.remoteModified(name: name);
 
   @override
-  Future<void> upload(Uint8List bytes) async {
+  Future<void> upload(Uint8List bytes, {String? name}) async {
     throw const WebdavException('上传云端备份失败：服务器返回 500');
   }
 

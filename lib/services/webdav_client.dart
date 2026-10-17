@@ -30,15 +30,17 @@ abstract interface class WebdavTransport {
   Future<void> ensureCollection();
 
   /// Null when the remote file does not exist yet.
-  Future<({Uint8List bytes, DateTime? modified})?> download();
+  ///
+  /// [name] 指向同一目录下的另一个分片；null 表示配置里那个整包文件。
+  Future<({Uint8List bytes, DateTime? modified})?> download({String? name});
 
   /// 只问「云端那份快照什么时候改过」，不取正文 —— 打开应用时的检查用它，
   /// 不必为了看一眼时间戳就把整份备份下载下来。
   ///
   /// Null 表示云端还没有这个文件（首次同步前）。
-  Future<DateTime?> remoteModified();
+  Future<DateTime?> remoteModified({String? name});
 
-  Future<void> upload(Uint8List bytes);
+  Future<void> upload(Uint8List bytes, {String? name});
 
   void close();
 }
@@ -94,6 +96,10 @@ class WebdavClient implements WebdavTransport {
       '有的网盘（如坚果云）不允许在根目录下新建文件，需要先在网页端建一个文件夹，'
       '再把地址改成这个文件夹';
 
+  /// 分片文件名给 null 时就是配置里的整包文件。
+  Uri _uriFor(String? name) =>
+      name == null ? config.fileUri : config.fileUriNamed(name);
+
   @override
   Future<void> ensureCollection() async {
     final response = await _read(
@@ -133,9 +139,11 @@ class WebdavClient implements WebdavTransport {
   }
 
   @override
-  Future<({Uint8List bytes, DateTime? modified})?> download() async {
+  Future<({Uint8List bytes, DateTime? modified})?> download({
+    String? name,
+  }) async {
     final response = await _read(
-      await _open('GET', config.fileUri),
+      await _open('GET', _uriFor(name)),
       limit: LibraryBackup.maxBytes,
     );
     if (response.statusCode == 404) return null;
@@ -144,11 +152,11 @@ class WebdavClient implements WebdavTransport {
   }
 
   @override
-  Future<DateTime?> remoteModified() async {
+  Future<DateTime?> remoteModified({String? name}) async {
     final response = await _read(
       await _open(
         'PROPFIND',
-        config.fileUri,
+        _uriFor(name),
         depth: '0',
         body: utf8.encode(_propfindBody),
         contentType: 'application/xml; charset=utf-8',
@@ -165,11 +173,11 @@ class WebdavClient implements WebdavTransport {
   }
 
   @override
-  Future<void> upload(Uint8List bytes) async {
+  Future<void> upload(Uint8List bytes, {String? name}) async {
     final response = await _read(
       await _open(
         'PUT',
-        config.fileUri,
+        _uriFor(name),
         body: bytes,
         contentType: 'application/json; charset=utf-8',
       ),

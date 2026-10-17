@@ -21,17 +21,19 @@ class _Probe implements WebdavTransport {
   Future<void> ensureCollection() async {}
 
   @override
-  Future<({Uint8List bytes, DateTime? modified})?> download() async => null;
+  Future<({Uint8List bytes, DateTime? modified})?> download({
+    String? name,
+  }) async => null;
 
   @override
-  Future<DateTime?> remoteModified() async {
+  Future<DateTime?> remoteModified({String? name}) async {
     probes++;
     if (fail == true) throw const WebdavException('无法连接服务器');
     return modified;
   }
 
   @override
-  Future<void> upload(Uint8List bytes) async {}
+  Future<void> upload(Uint8List bytes, {String? name}) async {}
 
   @override
   void close() {}

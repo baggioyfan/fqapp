@@ -24,6 +24,12 @@ class WebdavConfig {
 
   Uri get fileUri => Uri.parse('$collectionUrl$fileName');
 
+  /// 同一目录下的另一个分片（`progress.json` 等）。
+  ///
+  /// 分片是按**时机**拆的，不是按体积：进度秒级变化、其余分钟~天级，所以
+  /// 它们必须是两个文件，才能各自用不同的闸门和触发条件。
+  Uri fileUriNamed(String name) => Uri.parse('$collectionUrl$name');
+
   @override
   String toString() =>
       'WebdavConfig($collectionUrl, user: $username, file: $fileName)';
@@ -87,6 +93,10 @@ class WebdavConfigStore {
   static const fileKey = 'webdav_file_name_v1';
   static const lastSyncKey = 'webdav_last_sync_v1';
 
+  /// 进度分片自己的同步时刻。和整包分开记：分片是两个文件，闸门也必须
+  /// 各算各的，否则「刚同步过整包」会把进度分片误判成「云端没变」。
+  static const lastProgressSyncKey = 'webdav_last_progress_sync_v1';
+
   /// 用户点过「忽略」的那一版云端时间戳。只用来避免同一个版本反复追问，
   /// 不影响 [lastSyncedAt]（那是真的同步过才算）。
   static const dismissedKey = 'webdav_dismissed_remote_v1';
@@ -120,6 +130,7 @@ class WebdavConfigStore {
     await preferences.remove(userKey);
     await preferences.remove(fileKey);
     await preferences.remove(lastSyncKey);
+    await preferences.remove(lastProgressSyncKey);
     await preferences.remove(dismissedKey);
   }
 
@@ -132,6 +143,20 @@ class WebdavConfigStore {
   Future<void> markSynced(DateTime at) async {
     final preferences = await SharedPreferences.getInstance();
     await preferences.setInt(lastSyncKey, at.millisecondsSinceEpoch);
+  }
+
+  Future<DateTime?> progressSyncedAt() async {
+    final preferences = await SharedPreferences.getInstance();
+    final value = preferences.getInt(lastProgressSyncKey);
+    return value == null ? null : DateTime.fromMillisecondsSinceEpoch(value);
+  }
+
+  Future<void> markProgressSynced(DateTime at) async {
+    final preferences = await SharedPreferences.getInstance();
+    await preferences.setInt(
+      lastProgressSyncKey,
+      at.millisecondsSinceEpoch,
+    );
   }
 
   Future<DateTime?> dismissedRemoteAt() async {

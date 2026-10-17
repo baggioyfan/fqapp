@@ -63,6 +63,16 @@ class WebdavAutoSync {
   /// 「写入会停 → 防抖；写入不会停 → 节流」。
   static const playbackThrottle = Duration(minutes: 5);
 
+  /// 整包（`fqapp-sync.json`）的最小间隔。
+  ///
+  /// 进度是秒级的，其余五项是分钟~天级的，所以整包不必跟着每次退到后台走。
+  /// 到期只由三件事打断：冷数据改过（书架增删）、上次整包同步已经隔了一天、
+  /// 或者从来没同步过。中间的退出全部只推 `progress.json`。
+  ///
+  /// 阅读时长虽然在整包里，但它按天累计，一天一次足够 —— 真按秒推，等于
+  /// 把「翻一页」变成「上传整个书库」。
+  static const fullSyncInterval = Duration(hours: 24);
+
   static WebdavTransport _webdavTransport(
     WebdavConfig config,
     String password,
@@ -78,16 +88,23 @@ class WebdavAutoSync {
   Timer? _debounce;
   bool _dirty = false;
 
-  /// 本机是否有还没推上去的改动。
+  /// 冷数据（书架、墓碑、已看、阅读时长、搜索历史）改过，整包需要重写一次。
+  bool _coldDirty = false;
+  bool _progressBusy = false;
+
+  /// 本机是否有还没推上去的进度改动。
   bool get isDirty => _dirty;
 
   /// 内容变了，安排一次防抖同步。
   ///
   /// 只标记、不立刻发请求：一次阅读会写入几十次进度，每次都同步等于把
   /// 整包反复 PUT。真正兜底的是应用退到后台那一次（见 [syncOnBackground]）。
+  ///
   /// [delay] 让「用户主动操作」（改书架）比「连续写入」（翻页）更快落地。
-  void markDirty({Duration delay = debounceWindow}) {
+  /// [full] 表示这次改动落在冷数据里（书架/已看），必须走整包同步。
+  void markDirty({Duration delay = debounceWindow, bool full = false}) {
     _dirty = true;
+    _coldDirty = _coldDirty || full;
     _debounce?.cancel();
     _debounce = Timer(delay, () {
       _debounce = null;
@@ -104,21 +121,63 @@ class WebdavAutoSync {
     _lastPlaybackAt = now;
     _debounce?.cancel();
     _debounce = null;
-    unawaited(syncOnBackground(reason: 'playback'));
+    unawaited(syncProgressNow(reason: 'playback'));
   }
 
-  /// 离开阅读/播放页面时调用：取消防抖，立刻同步一次。
+  /// 离开阅读/播放页面时调用：取消防抖，立刻同步进度分片。
   ///
   /// 页面在离开前已经把进度落盘（`_persistProgress`），所以这里读到的是
-  /// 最新值。`minInterval` 仍然生效，连续进出页面不会连成一串。
+  /// 最新值。只碰 `progress.json`，一次 PROPFIND + 一次 PUT。
   Future<bool> syncOnLeave() {
     _debounce?.cancel();
     _debounce = null;
-    return syncOnBackground(reason: 'leave');
+    return syncProgressNow(reason: 'leave');
   }
 
-  /// 应用退到后台或即将被回收时调用：把待发的改动立刻推上去。
-  Future<bool> flush() => syncOnLeave();
+  /// 应用退到后台或即将被回收时调用：该结账的结账，该省的就省。
+  Future<bool> flush() => syncOnBackground(reason: 'flush');
+
+  /// 只推进度分片。三级闸门在 [WebdavSyncService.syncProgress] 里。
+  Future<bool> syncProgressNow({String reason = 'progress'}) async {
+    if (_progressBusy) return false;
+    // 整包同步正在跑时让位：它自己会把进度一起写上去。
+    if (WebdavSyncService.isSyncing) return false;
+    _progressBusy = true;
+    try {
+      final config = await _config.load();
+      if (config == null) return false;
+      // 先等本机排队中的写入落盘，否则推上去的是上一秒的进度。
+      await LibraryStore.instance.idle();
+      final report = await _service.syncProgress(
+        config,
+        password: await _password(),
+        localDirty: _dirty,
+      );
+      if (report.uploadedBytes > 0) {
+        _dirty = false;
+      }
+      // 三级闸门的第 2 条会「什么都没做」地返回，那种情况不写日志 ——
+      // 否则每次退出阅读页都往日志里塞一条空记录。
+      if (report.uploadedBytes > 0 || report.history > 0) {
+        AppLog.i(
+          'webdav-auto',
+          '进度已同步（$reason）：合并 ${report.history} 条、'
+              '写入 ${(report.uploadedBytes / 1024).toStringAsFixed(1)} KB',
+        );
+      }
+      return true;
+    } catch (error, stack) {
+      AppLog.w(
+        'webdav-auto',
+        '进度同步失败（$reason）',
+        error: error,
+        stack: stack,
+      );
+      return false;
+    } finally {
+      _progressBusy = false;
+    }
+  }
 
   void dispose() {
     _debounce?.cancel();
@@ -161,14 +220,21 @@ class WebdavAutoSync {
       password: update.password,
     );
     await _config.markSynced(DateTime.now());
+    // 手动同步是整包，冷数据已经结清；顺手把热路径的标记也清掉，免得
+    // 下一次退出又把同一份进度推一遍。
+    _coldDirty = false;
+    _dirty = false;
     return report;
   }
 
   Future<void> dismiss(WebdavRemoteUpdate update) =>
       _config.markDismissed(update.remoteModified);
 
-  /// 退到后台 / 离开页面 / 防抖到期时静默同步一次（用户点「回到桌面」、
-  /// 切走应用、翻完一章离开阅读页都会走到这里）。
+  /// 退到后台 / 防抖到期时静默同步一次（用户点「回到桌面」、切走应用、
+  /// 翻完一章离开阅读页都会走到这里）。
+  ///
+  /// 先判断整包到不到期：不到期就只推进度分片（见 [syncProgressNow]），
+  /// 这样「读了几页就退出」不会变成「上传整个书库」。
   ///
   /// 只写日志不弹窗：用户已经离开，失败提示没人看。返回是否真的跑了同步。
   /// [reason] 只进日志，用来区分是哪条触发路径出的问题。
@@ -183,12 +249,17 @@ class WebdavAutoSync {
     try {
       final config = await _config.load();
       if (config == null) return false;
+      if (!await _fullSyncDue(now)) {
+        // 冷数据没动、也没到每日那一次：整包里没有任何比进度更新的东西。
+        return syncProgressNow(reason: reason);
+      }
       // 先等本机排队中的写入落盘：页面在 dispose/paused 里提交的进度是异步
       // 排队的，不等就会把上一秒的进度推上去。
       await LibraryStore.instance.idle();
       final report = await _service.sync(config, password: await _password());
       await _config.markSynced(DateTime.now());
       _dirty = false;
+      _coldDirty = false;
       AppLog.i(
         'webdav-auto',
         '自动同步完成（$reason）：收藏 ${report.shelf} 条、进度 ${report.history} 条',
@@ -203,6 +274,17 @@ class WebdavAutoSync {
       );
       return false;
     }
+  }
+
+  /// 整包是否该跑了。
+  ///
+  /// 三条任一成立就跑：冷数据改过（书架增删，用户能立刻看见）、从来没同步过、
+  /// 距上次整包同步已经一天。剩下的情况一律走热路径。
+  Future<bool> _fullSyncDue(DateTime now) async {
+    if (_coldDirty) return true;
+    final lastFull = await _config.lastSyncedAt();
+    if (lastFull == null) return true;
+    return now.difference(lastFull) >= fullSyncInterval;
   }
 
   Future<String> _password() async {

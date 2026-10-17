@@ -246,61 +246,7 @@ class LibraryBackup {
       }
       // 其余情况：删除更晚，这条收藏不该存在。
     }
-    final history = <Map<String, dynamic>>[];
-    final historyKeys = <String>{};
-    for (final value in _list(raw['history'])) {
-      final record = _map(value);
-      final clean = _common(record);
-      if (!historyKeys.add('${clean['kind']}:${clean['id']}')) {
-        throw const FormatException('备份中有重复的进度');
-      }
-      for (final key in ['bookId', 'chapterId', 'toneId']) {
-        if (record[key] != null && record[key] != '') {
-          clean[key] = _id(record[key]);
-        }
-      }
-      for (final key in ['time', 'episode', 'positionVersion', 'textOffset']) {
-        if (record[key] != null) {
-          clean[key] = _integer(
-            record[key],
-            key,
-            key == 'time' ? 8640000000000000 : 2147483647,
-          );
-        }
-      }
-      for (final key in [
-        'position',
-        'maxScroll',
-        'progress',
-        'duration',
-        'rate',
-      ]) {
-        if (record[key] == null) continue;
-        final value = record[key];
-        final max = key == 'progress'
-            ? 1
-            : key == 'rate'
-            ? 10
-            : 1e12;
-        if (value is! num || !value.isFinite || value < 0 || value > max) {
-          throw FormatException('备份字段 $key 无效');
-        }
-        clean[key] = value.toDouble();
-      }
-      if (record['positionUnit'] != null) {
-        if (record['positionUnit'] != 'comic-page' ||
-            clean['kind'] != 'manga') {
-          throw const FormatException('不支持的漫画进度单位');
-        }
-        clean['positionUnit'] = 'comic-page';
-      }
-      for (final key in ['autoAdvance', 'completed']) {
-        if (record[key] == null) continue;
-        if (record[key] is! bool) throw FormatException('备份字段 $key 无效');
-        clean[key] = record[key];
-      }
-      history.add(Map.unmodifiable(clean));
-    }
+    final history = sanitizeHistory(_list(raw['history']));
     final watched = <String, Map<String, int>>{};
     var count = 0;
     for (final value in _list(raw['watched'])) {
@@ -415,6 +361,69 @@ class LibraryBackup {
         2147483647,
       ),
     );
+  }
+
+  /// 只校验进度列表：整包备份与 `progress.json` 分片共用同一套规则，
+  /// 免得两处对同一条记录给出不同的判断。
+  static List<Map<String, dynamic>> sanitizeHistory(
+    List<dynamic> records,
+  ) {
+    final history = <Map<String, dynamic>>[];
+    final historyKeys = <String>{};
+    for (final value in records) {
+      final record = _map(value);
+      final clean = _common(record);
+      if (!historyKeys.add('${clean['kind']}:${clean['id']}')) {
+        throw const FormatException('备份中有重复的进度');
+      }
+      for (final key in ['bookId', 'chapterId', 'toneId']) {
+        if (record[key] != null && record[key] != '') {
+          clean[key] = _id(record[key]);
+        }
+      }
+      for (final key in ['time', 'episode', 'positionVersion', 'textOffset']) {
+        if (record[key] != null) {
+          clean[key] = _integer(
+            record[key],
+            key,
+            key == 'time' ? 8640000000000000 : 2147483647,
+          );
+        }
+      }
+      for (final key in [
+        'position',
+        'maxScroll',
+        'progress',
+        'duration',
+        'rate',
+      ]) {
+        if (record[key] == null) continue;
+        final value = record[key];
+        final max = key == 'progress'
+            ? 1
+            : key == 'rate'
+            ? 10
+            : 1e12;
+        if (value is! num || !value.isFinite || value < 0 || value > max) {
+          throw FormatException('备份字段 $key 无效');
+        }
+        clean[key] = value.toDouble();
+      }
+      if (record['positionUnit'] != null) {
+        if (record['positionUnit'] != 'comic-page' ||
+            clean['kind'] != 'manga') {
+          throw const FormatException('不支持的漫画进度单位');
+        }
+        clean['positionUnit'] = 'comic-page';
+      }
+      for (final key in ['autoAdvance', 'completed']) {
+        if (record[key] == null) continue;
+        if (record[key] is! bool) throw FormatException('备份字段 $key 无效');
+        clean[key] = record[key];
+      }
+      history.add(Map.unmodifiable(clean));
+    }
+    return List.unmodifiable(history);
   }
 
   /// 不再有「超 8 MB 就悄悄把阅读时长裁到一年」的降级：两张表分别由

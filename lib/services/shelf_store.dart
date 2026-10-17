@@ -120,8 +120,13 @@ class ShelfStore {
 
   /// 书架增删是用户主动操作，可感知，值得尽快推上去（比连续写入的防抖窗口短）。
   /// 合并云端数据时不调用它，否则「合并 → 变脏 → 同步 → 再合并」会自激。
+  ///
+  /// 必须带 `full: true`：书架住在整包 `fqapp-sync.json` 里，而默认的防抖
+  /// 出口只推 `progress.json`。不加这个标记，删掉一本书要等到下次退到后台
+  /// 才会上云 —— 中途换设备就会看到「删了又回来」。
   static void _markSyncDirty() => WebdavAutoSync.instance.markDirty(
     delay: const Duration(seconds: 5),
+    full: true,
   );
 
   /// Adds the item, or removes it when it is already on the shelf.
