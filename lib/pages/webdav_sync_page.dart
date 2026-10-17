@@ -128,7 +128,7 @@ class _WebdavSyncPageState extends State<WebdavSyncPage> {
     if (!mounted) return;
     setState(() {
       _lastSyncedAt = finishedAt;
-      _message = _describe(report);
+      _message = describeSyncReport(report);
     });
   });
 
@@ -190,23 +190,6 @@ class _WebdavSyncPageState extends State<WebdavSyncPage> {
     } finally {
       if (mounted) setState(() => _busy = null);
     }
-  }
-
-  static String _describe(WebdavSyncReport report) {
-    final counts =
-        '收藏 ${report.shelf} 条、进度 ${report.history} 条、'
-        '已看 ${report.episodes} 集、阅读时长 ${report.readTime} 项、'
-        '搜索历史 ${report.searchHistory} 条';
-    final size = '${(report.uploadedBytes / 1024).toStringAsFixed(1)} KB';
-    if (!report.remoteExisted) {
-      // Nothing was merged, so every count in [report] is zero. Printing them
-      // after "已把本机数据上传" would read as "nothing was uploaded", which is
-      // the opposite of what happened.
-      return '云端还没有备份文件，已把本机数据上传（共 $size）。'
-          '在另一台手机打开本页点「立即同步」即可拿到这些数据。';
-    }
-    return '已从云端合并：$counts；并把合并后的结果（$size）写回云端。'
-        '同一作品保留读得更靠后的进度，收藏与已看取并集。';
   }
 
   /// Shown under the address field. What gets stored is a folder URL and the

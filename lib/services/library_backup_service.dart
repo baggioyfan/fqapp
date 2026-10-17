@@ -18,6 +18,8 @@ class LibraryBackupService {
     }
     final snapshot = await library.backupSnapshot();
     final shelf = shelfStore.records();
+    // 删除记录必须一起带走，否则另一台设备的并集合并会把删掉的条目搬回来。
+    final shelfRemoved = shelfStore.tombstones();
     // Read-time totals and search history are plain data too, so they are read
     // here and cross the isolate boundary with the rest of the snapshot.
     final readTime = library.readTimeBackupSnapshot();
@@ -25,6 +27,7 @@ class LibraryBackupService {
     return Isolate.run(
       () => LibraryBackup.capture(
         shelf: shelf,
+        shelfRemoved: shelfRemoved,
         history: snapshot.history,
         watched: snapshot.watched,
         readTime: readTime,
@@ -73,7 +76,10 @@ class LibraryBackupService {
       watched: backup.watched,
       readTime: backup.readTimeEntries,
     );
-    final shelf = await ShelfStore.instance.mergeBackup(backup.shelf);
+    final shelf = await ShelfStore.instance.mergeBackup(
+      backup.shelf,
+      removed: backup.shelfTombstones,
+    );
     final searchHistory = await SearchHistoryStore.instance.merge(
       backup.searchHistory,
     );

@@ -32,6 +32,9 @@ import 'services/playlet_share.dart';
 import 'services/poster_cache.dart';
 import 'services/shelf_store.dart';
 import 'services/swipe_guide_store.dart';
+import 'services/webdav_auto_sync.dart';
+import 'services/webdav_client.dart' show WebdavException;
+import 'services/webdav_sync_service.dart' show describeSyncReport;
 import 'widgets/lazy_indexed_stack.dart';
 import 'widgets/home/home_design.dart';
 
@@ -263,16 +266,117 @@ class RootShell extends StatefulWidget {
   State<RootShell> createState() => _RootShellState();
 }
 
-class _RootShellState extends State<RootShell> {
+class _RootShellState extends State<RootShell> with WidgetsBindingObserver {
   int _index = 0;
   bool _backendReady = false;
   String? _backendError;
 
+  /// 检查云端是否有更新时置位：回到前台可能连续触发几次，别把弹窗叠起来。
+  bool _checkingRemote = false;
+
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _startBackend();
+    // 首帧之后再问云端：启动不该等一次网络往返，检查失败也不该挡住首页。
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) unawaited(_checkRemoteUpdate());
+    });
   }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    switch (state) {
+      case AppLifecycleState.resumed:
+        unawaited(_checkRemoteUpdate());
+      case AppLifecycleState.paused:
+      case AppLifecycleState.hidden:
+        // 退到后台顺手同步一次：离开时的状态通常就是这一轮数据的最后状态。
+        // 失败只进日志（用户已经走了，弹窗没人看）。
+        unawaited(WebdavAutoSync.instance.syncOnBackground());
+      case AppLifecycleState.inactive:
+      case AppLifecycleState.detached:
+        break;
+    }
+  }
+
+  /// 云端比本机上次同步更新时，问一句「同步 / 忽略」。
+  ///
+  /// 判据是云端 `Last-Modified` 与本机 `lastSyncedAt` 的比较（legado 的闸门一），
+  /// 不是「本地旧」—— 谁更新必须下载后逐条合并才知道，那就是同步本身。
+  Future<void> _checkRemoteUpdate() async {
+    if (_checkingRemote || !mounted) return;
+    _checkingRemote = true;
+    try {
+      final update = await WebdavAutoSync.instance.check();
+      if (update == null || !mounted) return;
+      final lastSyncedAt = update.lastSyncedAt;
+      final answer = await showDialog<bool>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('云端有更新'),
+          content: Text(
+            '云端备份在 ${_stamp(update.remoteModified)} 改过，比本机上次同步'
+            '${lastSyncedAt == null ? '（本机还没有同步过）' : '（${_stamp(lastSyncedAt)}）'}更晚。\n\n'
+            '现在同步吗？',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('忽略'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text('立即同步'),
+            ),
+          ],
+        ),
+      );
+      if (!mounted) return;
+      if (answer == true) {
+        await _syncFromPrompt(update);
+      } else {
+        // 关掉也算「这一版先不管」：同一个云端版本不再追问，
+        // 云端再被改过才会重新提示。
+        await WebdavAutoSync.instance.dismiss(update);
+      }
+    } finally {
+      _checkingRemote = false;
+    }
+  }
+
+  Future<void> _syncFromPrompt(WebdavRemoteUpdate update) async {
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    messenger?.showSnackBar(
+      const SnackBar(content: Text('正在同步，请不要退出…')),
+    );
+    try {
+      final report = await WebdavAutoSync.instance.syncNow(update);
+      messenger
+        ?..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(content: Text(describeSyncReport(report, brief: true))),
+        );
+    } on WebdavException catch (error) {
+      messenger
+        ?..hideCurrentSnackBar()
+        ..showSnackBar(SnackBar(content: Text(error.message)));
+    } catch (_) {
+      messenger
+        ?..hideCurrentSnackBar()
+        ..showSnackBar(const SnackBar(content: Text('同步未完成，请稍后重试')));
+    }
+  }
+
+  static String _stamp(DateTime at) =>
+      at.toLocal().toString().split('.').first;
 
   Future<void> _startBackend() async {
     setState(() {

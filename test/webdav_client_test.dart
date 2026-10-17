@@ -78,7 +78,27 @@ class _FakeServer {
     }
     if (request.method == 'PROPFIND') {
       propfindBody = await utf8.decoder.bind(request).join();
-      if (largeBodyBytes > 0) {
+      if (request.uri.path == path) {
+        // 针对快照文件本身的 PROPFIND：只回时间戳，正文里带 getlastmodified。
+        if (files[request.uri.path] == null) {
+          response.statusCode = 404;
+        } else {
+          response.statusCode = 207;
+          response.headers.contentType = ContentType(
+            'application',
+            'xml',
+            charset: 'utf-8',
+          );
+          response.write(
+            '<?xml version="1.0" encoding="utf-8"?>'
+            '<d:multistatus xmlns:d="DAV:"><d:response><d:propstat><d:prop>'
+            '<d:getlastmodified>'
+            '${HttpDate.format(DateTime.utc(2026, 1, 2, 3, 4, 5))}'
+            '</d:getlastmodified>'
+            '</d:prop></d:propstat></d:response></d:multistatus>',
+          );
+        }
+      } else if (largeBodyBytes > 0) {
         response.statusCode = 207;
         response.add(Uint8List(largeBodyBytes));
       } else {
@@ -241,6 +261,22 @@ void main() {
         '{"format":"fqapp.library-backup"}',
       );
       expect(remote.modified, DateTime.utc(2026, 1, 2, 3, 4, 5));
+    });
+
+    test('remoteModified reads the timestamp without downloading', () async {
+      // 打开应用时的检查只该问一句「什么时候改的」，不该把整份备份拉下来。
+      server.files[server.path] = utf8.encode('{"version":3}');
+      expect(
+        await clientFor().remoteModified(),
+        DateTime.utc(2026, 1, 2, 3, 4, 5),
+      );
+      expect(server.methods, ['PROPFIND']);
+      expect(server.methods, isNot(contains('GET')));
+    });
+
+    test('remoteModified reports a missing file as absent', () async {
+      expect(await clientFor().remoteModified(), isNull);
+      expect(server.methods, ['PROPFIND']);
     });
 
     test('upload sends the snapshot the server then stores', () async {

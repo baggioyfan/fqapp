@@ -32,6 +32,12 @@ abstract interface class WebdavTransport {
   /// Null when the remote file does not exist yet.
   Future<({Uint8List bytes, DateTime? modified})?> download();
 
+  /// 只问「云端那份快照什么时候改过」，不取正文 —— 打开应用时的检查用它，
+  /// 不必为了看一眼时间戳就把整份备份下载下来。
+  ///
+  /// Null 表示云端还没有这个文件（首次同步前）。
+  Future<DateTime?> remoteModified();
+
   Future<void> upload(Uint8List bytes);
 
   void close();
@@ -40,9 +46,11 @@ abstract interface class WebdavTransport {
 /// Small WebDAV client over the `http` package.
 ///
 /// It speaks only what a snapshot sync needs: PROPFIND to prove the collection
-/// exists, GET to read the file, PUT to replace it and MKCOL to create a
-/// missing folder. Responses are parsed with the status code and the
-/// `Last-Modified` header, so no XML parsing is involved.
+/// exists and to read the snapshot's timestamp, GET to read the file, PUT to
+/// replace it and MKCOL to create a missing folder. Responses are parsed with
+/// the status code, the `Last-Modified` header and — for PROPFIND, which is the
+/// only reliable way to ask some servers for a timestamp — the single
+/// `getlastmodified` element, so no general XML parsing is involved.
 ///
 /// Redirects are not followed. A 3xx on PUT would otherwise be replayed as a
 /// different method by the underlying HTTP stack, which turns a failed upload
@@ -133,6 +141,27 @@ class WebdavClient implements WebdavTransport {
     if (response.statusCode == 404) return null;
     _requireSuccess(response, '无法读取云端备份');
     return (bytes: response.bodyBytes, modified: _lastModified(response));
+  }
+
+  @override
+  Future<DateTime?> remoteModified() async {
+    final response = await _read(
+      await _open(
+        'PROPFIND',
+        config.fileUri,
+        depth: '0',
+        body: utf8.encode(_propfindBody),
+        contentType: 'application/xml; charset=utf-8',
+      ),
+      limit: _controlLimit,
+    );
+    // 文件还不存在：首次同步前是正常状态，不算错误。
+    if (response.statusCode == 404) return null;
+    if (response.statusCode == 207 || response.statusCode == 200) {
+      return _lastModified(response) ?? _propfindModified(response.bodyBytes);
+    }
+    _requireSuccess(response, '无法读取云端备份信息');
+    return _lastModified(response);
   }
 
   @override
@@ -272,6 +301,25 @@ class WebdavClient implements WebdavTransport {
     } on Exception {
       // A server may send a date no HTTP parser accepts; the timestamp is only
       // shown in the page, so a missing one is not a sync failure.
+      return null;
+    }
+  }
+
+  /// PROPFIND 的 207 正文里的 `<d:getlastmodified>`。
+  ///
+  /// 只认这一个元素：WebDAV 服务器一定会回它，而 `Last-Modified` 头在 207 上
+  /// 不是必须的（坚果云就不保证）。解析失败按「没有时间戳」处理 —— 那只会让
+  /// 应用少提示一次，不该让同步失败。
+  static DateTime? _propfindModified(Uint8List body) {
+    final text = utf8.decode(body, allowMalformed: true);
+    final match = RegExp(
+      r'<[^>]*getlastmodified[^>]*>([^<]+)<',
+      caseSensitive: false,
+    ).firstMatch(text);
+    if (match == null) return null;
+    try {
+      return HttpDate.parse(match.group(1)!.trim());
+    } on Exception {
       return null;
     }
   }

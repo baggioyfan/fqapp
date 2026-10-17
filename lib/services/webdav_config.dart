@@ -87,6 +87,10 @@ class WebdavConfigStore {
   static const fileKey = 'webdav_file_name_v1';
   static const lastSyncKey = 'webdav_last_sync_v1';
 
+  /// 用户点过「忽略」的那一版云端时间戳。只用来避免同一个版本反复追问，
+  /// 不影响 [lastSyncedAt]（那是真的同步过才算）。
+  static const dismissedKey = 'webdav_dismissed_remote_v1';
+
   /// Null until the user saves a usable address; the page then shows the form
   /// instead of the sync state.
   Future<WebdavConfig?> load() async {
@@ -116,6 +120,7 @@ class WebdavConfigStore {
     await preferences.remove(userKey);
     await preferences.remove(fileKey);
     await preferences.remove(lastSyncKey);
+    await preferences.remove(dismissedKey);
   }
 
   Future<DateTime?> lastSyncedAt() async {
@@ -127,5 +132,16 @@ class WebdavConfigStore {
   Future<void> markSynced(DateTime at) async {
     final preferences = await SharedPreferences.getInstance();
     await preferences.setInt(lastSyncKey, at.millisecondsSinceEpoch);
+  }
+
+  Future<DateTime?> dismissedRemoteAt() async {
+    final preferences = await SharedPreferences.getInstance();
+    final value = preferences.getInt(dismissedKey);
+    return value == null ? null : DateTime.fromMillisecondsSinceEpoch(value);
+  }
+
+  Future<void> markDismissed(DateTime at) async {
+    final preferences = await SharedPreferences.getInstance();
+    await preferences.setInt(dismissedKey, at.millisecondsSinceEpoch);
   }
 }

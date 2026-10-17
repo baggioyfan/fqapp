@@ -18,7 +18,7 @@ import 'package:fqapp/services/webdav_sync_service.dart';
 /// the assertions can be about what was uploaded rather than about HTTP.
 class _FakeTransport implements WebdavTransport {
   Uint8List? remote;
-  DateTime? remoteModified;
+  DateTime? modified;
   Uint8List? uploaded;
   String? receivedPassword;
   bool ensured = false;
@@ -29,7 +29,11 @@ class _FakeTransport implements WebdavTransport {
 
   @override
   Future<({Uint8List bytes, DateTime? modified})?> download() async =>
-      remote == null ? null : (bytes: remote!, modified: remoteModified);
+      remote == null ? null : (bytes: remote!, modified: modified);
+
+  @override
+  Future<DateTime?> remoteModified() async =>
+      remote == null ? null : modified;
 
   @override
   Future<void> upload(Uint8List bytes) async => uploaded = bytes;
@@ -76,9 +80,11 @@ void main() {
 
   LibraryBackup snapshot({
     List<ShelfRecord> shelf = const [],
+    Map<String, DateTime> shelfRemoved = const {},
     List<Map<String, dynamic>> history = const [],
   }) => LibraryBackup.capture(
     shelf: shelf,
+    shelfRemoved: shelfRemoved,
     history: history,
     watched: const {},
     readTime: const [],
@@ -112,7 +118,7 @@ void main() {
         ),
       ],
     ).encode();
-    transport.remoteModified = DateTime.utc(2026, 1, 2);
+    transport.modified = DateTime.utc(2026, 1, 2);
 
     final report = await service.sync(config, password: 'hunter2');
 
@@ -130,6 +136,79 @@ void main() {
           .toSet(),
       {'local-1', 'remote-1'},
     );
+  });
+
+  test('a shelf removal survives its own sync', () async {
+    // 用户报的那个 bug：移出书架后点同步，云端那份又被合并回本机。
+    await ShelfStore.instance.add(_item('keep-1'));
+    await ShelfStore.instance.add(_item('local-1'));
+    await ShelfStore.instance.removeKeys([
+      ShelfStore.keyOf(_item('local-1')),
+    ]);
+
+    await service.sync(config, password: 'hunter2');
+    final uploaded = LibraryBackup.decode(transport.uploaded!);
+    expect(uploaded.shelf.map((record) => record.item.id), ['keep-1']);
+    expect(uploaded.shelfRemoved.keys, [ShelfStore.keyOf(_item('local-1'))]);
+
+    // 第二次同步把这份上传结果当云端：删除必须仍然成立。
+    transport.modified = DateTime.utc(2026, 1, 3);
+    await service.sync(config, password: 'hunter2');
+
+    expect(
+      ShelfStore.instance.records().map((record) => record.item.id),
+      ['keep-1'],
+    );
+    expect(
+      LibraryBackup.decode(transport.uploaded!).shelf.map((r) => r.item.id),
+      ['keep-1'],
+    );
+  });
+
+  test('a remote tombstone deletes the local copy', () async {
+    await ShelfStore.instance.add(_item('local-1'));
+    transport.remote = snapshot(
+      shelf: [
+        ShelfRecord(
+          item: _item('local-1'),
+          addedAt: DateTime.fromMillisecondsSinceEpoch(1000),
+        ),
+      ],
+      shelfRemoved: {
+        ShelfStore.keyOf(_item('local-1')): DateTime.now().add(
+          const Duration(minutes: 1),
+        ),
+      },
+    ).encode();
+
+    await service.sync(config, password: 'hunter2');
+
+    expect(ShelfStore.instance.records(), isEmpty);
+    // 墓碑要写回云端，另一台设备才会跟着删。
+    expect(
+      LibraryBackup.decode(transport.uploaded!).shelfRemoved.keys,
+      [ShelfStore.keyOf(_item('local-1'))],
+    );
+  });
+
+  test('a shelf entry added after the removal survives', () async {
+    await ShelfStore.instance.add(_item('local-1'));
+    transport.remote = snapshot(
+      shelfRemoved: {
+        ShelfStore.keyOf(_item('local-1')): DateTime.now().subtract(
+          const Duration(days: 1),
+        ),
+      },
+    ).encode();
+
+    await service.sync(config, password: 'hunter2');
+
+    expect(
+      ShelfStore.instance.records().map((record) => record.item.id),
+      ['local-1'],
+    );
+    // 删除已经被「重新加入」赢过，不该再跟着上传。
+    expect(LibraryBackup.decode(transport.uploaded!).shelfRemoved, isEmpty);
   });
 
   test('keeps the local position when the remote one is older', () async {
@@ -222,6 +301,9 @@ class _FailingTransport implements WebdavTransport {
   @override
   Future<({Uint8List bytes, DateTime? modified})?> download() =>
       inner.download();
+
+  @override
+  Future<DateTime?> remoteModified() => inner.remoteModified();
 
   @override
   Future<void> upload(Uint8List bytes) async {

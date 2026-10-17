@@ -109,6 +109,7 @@ void main() {
           ),
           ShelfRecord(item: _item('new'), addedAt: DateTime(2020)),
         ],
+        shelfRemoved: const {},
         history: [
           {'id': 'same', 'kind': 'book', 'episode': 1},
           for (var i = 0; i < 110; i++) {'id': 'new-$i', 'kind': 'book'},
@@ -151,6 +152,7 @@ void main() {
           jsonDecode(
                 LibraryBackup.capture(
                   shelf: [],
+                  shelfRemoved: const {},
                   history: [
                     {'id': 'valid', 'kind': 'book'},
                   ],

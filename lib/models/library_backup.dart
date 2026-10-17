@@ -23,15 +23,22 @@ class LibraryBackup {
   static const _maxEpisodes = 100000;
   static const _format = 'fqapp.library-backup';
 
-  /// 2 adds `readTime` and `searchHistory`; 1 files stay importable, their
-  /// missing lists simply read as empty.
-  static const _version = 2;
-  static const _supportedVersions = {1, 2};
+  /// 2 adds `readTime` and `searchHistory`; 3 adds `shelfRemoved`.
+  /// Older files stay importable, their missing lists simply read as empty.
+  static const _version = 3;
+  static const _supportedVersions = {1, 2, 3};
   static const _kinds = {'book', 'audio', 'manga', 'video', 'manju'};
   static final _idPattern = RegExp(r'^[a-zA-Z0-9_-]{1,128}$');
 
   final DateTime createdAt;
   final List<ShelfRecord> shelf;
+
+  /// 书架里被删掉的条目：`{kind}:{id} -> 删除时刻`。
+  ///
+  /// 没有它，「已从书架移除」和「从来不在书架」在文件里长得一样，并集合并只能
+  /// 把删掉的条目搬回来 —— 连删掉它的那台设备自己都会在合并那一步复活它。
+  /// key 用 `kind:id`（不带存储前缀），[shelfTombstones] 负责还原成存储键。
+  final Map<String, DateTime> shelfRemoved;
 
   /// IDs here are content IDs. Storage keys are reconstructed by LibraryStore.
   final List<Map<String, dynamic>> history;
@@ -46,12 +53,20 @@ class LibraryBackup {
   LibraryBackup._({
     required this.createdAt,
     required this.shelf,
+    required this.shelfRemoved,
     required this.history,
     required this.watched,
     required this.readTime,
     required this.searchHistory,
     required this.excludedLocalRecords,
   });
+
+  /// 删除记录还原成存储键，交给 `ShelfStore.mergeBackup` 的 `removed`。
+  Map<String, DateTime> get shelfTombstones => {
+    for (final entry in shelfRemoved.entries)
+      if (_splitBare(entry.key) case final parts?)
+        ShelfStore.keyFor(parts.kind, parts.id): entry.value,
+  };
 
   int get episodeCount =>
       watched.values.fold(0, (total, episodes) => total + episodes.length);
@@ -73,6 +88,7 @@ class LibraryBackup {
 
   factory LibraryBackup.capture({
     required List<ShelfRecord> shelf,
+    required Map<String, DateTime> shelfRemoved,
     required List<Map<String, dynamic>> history,
     required Map<String, Map<String, int>> watched,
     required List<({String id, String kind, Map<String, double> days})>
@@ -95,6 +111,16 @@ class LibraryBackup {
         for (final record in shelf)
           if (include(record.item.seriesId ?? record.item.id))
             {..._shelfJson(record), 'cover': _portableCover(record.item.cover)},
+      ],
+      'shelfRemoved': [
+        for (final entry in shelfRemoved.entries)
+          if (_splitBare(ShelfStore.bareKey(entry.key)) case final parts?)
+            if (include(parts.id))
+              {
+                'kind': parts.kind,
+                'id': parts.id,
+                'removedAt': entry.value.millisecondsSinceEpoch,
+              },
       ],
       'history': [
         for (final record in history)
@@ -179,6 +205,34 @@ class LibraryBackup {
           ),
         ),
       );
+    }
+    // 删除记录。同一作品可能被删过多次，取最晚的一次。
+    final shelfRemoved = <String, DateTime>{};
+    for (final value in _list(raw['shelfRemoved'] ?? const <dynamic>[])) {
+      final record = _map(value);
+      if (!_kinds.contains(record['kind'])) {
+        throw const FormatException('备份含未知作品类型');
+      }
+      final at = DateTime.fromMillisecondsSinceEpoch(
+        _integer(record['removedAt'], '删除时间', 8640000000000000),
+      );
+      final key = '${record['kind']}:${_id(record['id'])}';
+      final existing = shelfRemoved[key];
+      if (existing == null || at.isAfter(existing)) shelfRemoved[key] = at;
+    }
+    // 顺手把文件里自相矛盾的部分消掉：收藏和删除只留较晚的那一个。
+    final keptShelf = <ShelfRecord>[];
+    for (final record in shelf) {
+      final key = ShelfStore.bareKey(ShelfStore.keyOf(record.item));
+      final removedAt = shelfRemoved[key];
+      if (removedAt == null) {
+        keptShelf.add(record);
+      } else if (record.addedAt.isAfter(removedAt)) {
+        // 删掉之后又加了回来，以「加回来」为准。
+        shelfRemoved.remove(key);
+        keptShelf.add(record);
+      }
+      // 其余情况：删除更晚，这条收藏不该存在。
     }
     final history = <Map<String, dynamic>>[];
     final historyKeys = <String>{};
@@ -294,7 +348,8 @@ class LibraryBackup {
     }
     return LibraryBackup._(
       createdAt: DateTime.fromMillisecondsSinceEpoch(createdAt),
-      shelf: List.unmodifiable(shelf),
+      shelf: List.unmodifiable(keptShelf),
+      shelfRemoved: Map.unmodifiable(shelfRemoved),
       history: List.unmodifiable(history),
       watched: Map.unmodifiable(watched),
       readTime: List.unmodifiable(readTime),
@@ -325,6 +380,15 @@ class LibraryBackup {
         'version': _version,
         'createdAt': createdAt.millisecondsSinceEpoch,
         'shelf': shelf.map(_shelfJson).toList(),
+        'shelfRemoved': [
+          for (final entry in shelfRemoved.entries)
+            if (_splitBare(entry.key) case final parts?)
+              {
+                'kind': parts.kind,
+                'id': parts.id,
+                'removedAt': entry.value.millisecondsSinceEpoch,
+              },
+        ],
         'history': history,
         'watched': [
           for (final entry in watched.entries)
@@ -361,6 +425,17 @@ class LibraryBackup {
     final keys = dated.keys.toList()
       ..sort((a, b) => dated[a]!.compareTo(dated[b]!));
     return {for (final key in keys.sublist(keys.length - keep)) key: days[key]};
+  }
+
+  /// `book:123` -> `(kind: 'book', id: '123')`。作品标识里不会有冒号
+  /// （见 `_idPattern`），所以按第一个冒号切开就够。
+  static ({String kind, String id})? _splitBare(String bare) {
+    final separator = bare.indexOf(':');
+    if (separator <= 0 || separator == bare.length - 1) return null;
+    return (
+      kind: bare.substring(0, separator),
+      id: bare.substring(separator + 1),
+    );
   }
 
   /// `audio:123` -> `123`. Scoped-media storage keys never travel: a backup

@@ -41,6 +41,7 @@ void main() {
     List<String> searchHistory = const [],
   }) => LibraryBackup.capture(
     shelf: const [],
+    shelfRemoved: const {},
     history: history,
     watched: watched,
     readTime: readTime,
@@ -301,9 +302,10 @@ void main() {
       expect(backup.searchHistory, isEmpty);
       expect((await service.restore(backup)).history, 1);
       expect((await library.historyEntry('book-1'))?['episode'], 3);
-      // Exports move forward: a v1 file is re-encoded as v2.
+      // Exports move forward: a v1 file is re-encoded as the current version.
       final encoded = jsonDecode(utf8.decode(backup.encode())) as Map;
-      expect(encoded['version'], 2);
+      expect(encoded['version'], 3);
+      expect(encoded['shelfRemoved'], isEmpty);
       expect(encoded['readTime'], isEmpty);
       expect(encoded['searchHistory'], isEmpty);
     });
@@ -327,7 +329,7 @@ void main() {
         'excludedLocalRecords': 0,
       };
       final json = snapshot();
-      json['version'] = 3;
+      json['version'] = 4;
       expect(
         () => LibraryBackup.decode(
           Uint8List.fromList(utf8.encode(jsonEncode(json))),
