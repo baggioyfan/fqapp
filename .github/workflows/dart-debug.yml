@@ -1,0 +1,31 @@
+name: Dart Debug
+
+# 临时诊断用：把「挂住」变成「失败」，好让日志说出是哪个用例。
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  FLUTTER_VERSION: '3.44.6'
+
+jobs:
+  tests:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+
+      - name: Resolve Dart package dependencies
+        run: flutter pub get --enforce-lockfile
+
+      - name: Test with a short per-test timeout
+        continue-on-error: true
+        run: flutter test --no-pub --concurrency=2 --timeout=60s --reporter=expanded
