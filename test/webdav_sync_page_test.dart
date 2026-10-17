@@ -37,6 +37,14 @@ class _SpySync implements WebdavSyncService {
     if (failure case final error?) throw error;
     return report;
   }
+
+  /// 设置页只走整包那条路；热路径分片由 `progress_shard_test.dart` 覆盖。
+  @override
+  Future<ProgressSyncReport> syncProgress(
+    WebdavConfig config, {
+    required String password,
+    required bool localDirty,
+  }) async => (history: 0, uploadedBytes: 0);
 }
 
 /// An empty merge, for the cases that only care about the failure path.
