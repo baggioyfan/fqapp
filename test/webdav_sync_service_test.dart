@@ -149,7 +149,7 @@ void main() {
     await service.sync(config, password: 'hunter2');
     final uploaded = LibraryBackup.decode(transport.uploaded!);
     expect(uploaded.shelf.map((record) => record.item.id), ['keep-1']);
-    expect(uploaded.shelfRemoved.keys, [ShelfStore.keyOf(_item('local-1'))]);
+    expect(uploaded.shelfRemoved.keys, ['book:local-1']);
 
     // 第二次同步把这份上传结果当云端：删除必须仍然成立。
     transport.modified = DateTime.utc(2026, 1, 3);
@@ -187,7 +187,7 @@ void main() {
     // 墓碑要写回云端，另一台设备才会跟着删。
     expect(
       LibraryBackup.decode(transport.uploaded!).shelfRemoved.keys,
-      [ShelfStore.keyOf(_item('local-1'))],
+      ['book:local-1'],
     );
   });
 

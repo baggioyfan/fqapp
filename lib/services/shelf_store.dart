@@ -125,8 +125,9 @@ class ShelfStore {
     final key = keyOf(item);
     if (box.containsKey(key)) {
       await box.delete(key);
-      await _recordRemovals([key]);
       _revision.value++;
+      // 墓碑必须在返回前落盘：删完立刻同步时，快照里得有这条删除记录。
+      await _recordRemovals([key]);
       return false;
     }
     await box.put(key, _recordOf(item, DateTime.now()));
@@ -148,8 +149,9 @@ class ShelfStore {
     if (known.isEmpty) return;
     final removed = known.where(box.containsKey).toList();
     await box.deleteAll(removed);
-    await _recordRemovals(removed);
+    // 先让书架的变化可见，再落盘墓碑：界面只关心书架，不该等墓碑写完。
     _revision.value++;
+    await _recordRemovals(removed);
   }
 
   /// 撤销「移出书架」：把记录按**原 addedAt** 写回（`_recordOf` 含 addedAt
@@ -181,8 +183,8 @@ class ShelfStore {
     // 清空也是一次删除：不记墓碑的话，下次同步会把整架收藏搬回来。
     final everything = box.keys.whereType<String>().toList();
     await box.clear();
-    await _recordRemovals(everything);
     _revision.value++;
+    await _recordRemovals(everything);
   }
 
   /// 本机记录的删除：`key -> 删除时刻`。快照会把它一起上传，另一台设备靠它
