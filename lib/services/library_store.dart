@@ -178,7 +178,15 @@ class LibraryStore implements ReaderStore {
     final sp = await SharedPreferences.getInstance();
     if (sp.getBool(_readTimeModelKey) == true) return;
     try {
-      await ReadTimeStore.instance.migrateFromLegacy(legacyReadTimeSnapshot());
+      final legacy = legacyReadTimeSnapshot();
+      // 新装的机器没有老数据，连盒子都不用碰：`clear()` 是一次真实写盘，
+      // 在 widget 测试的 fake-async 路径上永远等不到完成，引导页就会一直
+      // 转圈（pumpAndSettle 也就永远不 settle）。
+      if (legacy.isEmpty) {
+        await sp.setBool(_readTimeModelKey, true);
+        return;
+      }
+      await ReadTimeStore.instance.migrateFromLegacy(legacy);
       await _readTimeBox.clear();
       await sp.setBool(_readTimeModelKey, true);
     } catch (_) {
