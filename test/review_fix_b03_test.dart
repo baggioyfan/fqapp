@@ -70,12 +70,12 @@ void main() {
       120,
       at: DateTime(2026, 9, 8),
     );
-    expect(store.readTimeSnapshot(), isNotEmpty);
+    expect(store.readTimeBookTotals(), isNotEmpty);
 
     await store.clearReadingData();
 
     expect(store.historySnapshot(), isEmpty);
-    expect(store.readTimeSnapshot(), isEmpty);
+    expect(store.readTimeBookTotals(), isEmpty);
     expect(Hive.box('history').isEmpty, isTrue);
     expect(Hive.box('read_time').isEmpty, isTrue);
   });

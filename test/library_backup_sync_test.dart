@@ -7,7 +7,6 @@ import 'package:hive_ce/hive.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:fqapp/models/library_backup.dart';
-import 'package:fqapp/services/encrypted_hive.dart';
 import 'package:fqapp/services/library_backup_service.dart';
 import 'package:fqapp/services/library_store.dart';
 import 'package:fqapp/services/search_history_store.dart';
@@ -37,7 +36,8 @@ void main() {
   LibraryBackup backupWith({
     List<Map<String, dynamic>> history = const [],
     Map<String, Map<String, int>> watched = const {},
-    List<({String id, String kind, Map<String, double> days})> readTime =
+    Map<String, Map<String, double>> daily = const {},
+    List<({String id, String kind, Map<String, double> devices})> books =
         const [],
     List<String> searchHistory = const [],
   }) => LibraryBackup.capture(
@@ -45,7 +45,8 @@ void main() {
     shelfRemoved: const {},
     history: history,
     watched: watched,
-    readTime: readTime,
+    daily: daily,
+    books: books,
     searchHistory: searchHistory,
   );
 
@@ -179,85 +180,95 @@ void main() {
 
   group('read time merge', () {
     test('capture carries the user-visible totals out of the app store', () async {
-      await EncryptedHive.box(Hive, 'read_time').put('book-1', {
-        '2026-1-5': 1800.0,
-        '_media_kind_v1': 'book',
-      });
+      await library.accumulateReadTime(
+        'book-1',
+        'book',
+        1800,
+        at: DateTime(2026, 1, 5),
+      );
       await SearchHistoryStore.instance.add('本机词');
       final backup = await service.capture();
-      expect(backup.readTime, hasLength(1));
-      expect(backup.readTime.single['id'], 'book-1');
-      expect(backup.readTime.single['kind'], 'book');
-      expect(backup.readTime.single['days'], {'2026-1-5': 1800.0});
+      expect(backup.books, hasLength(1));
+      expect(backup.books.single.id, 'book-1');
+      expect(backup.books.single.kind, 'book');
+      expect(backup.books.single.devices.values.single, 1800.0);
+      expect(backup.daily['2026-1-5']!.values.single, 1800.0);
       expect(backup.searchHistory, ['本机词']);
     });
 
-    test('takes the per-day maximum and stays idempotent', () async {
-      await EncryptedHive.box(Hive, 'read_time').put('book-1', {
-        '2026-1-5': 1800.0,
-        '_media_kind_v1': 'book',
-      });
+    test('sums two devices instead of picking one, and stays idempotent', () async {
+      await library.accumulateReadTime(
+        'book-1',
+        'book',
+        1800,
+        at: DateTime(2026, 1, 5),
+      );
       final backup = backupWith(
-        readTime: [
-          (
-            id: 'book-1',
-            kind: 'book',
-            days: {'2026-1-5': 1200.0, '2026-1-6': 600.0},
-          ),
+        daily: {
+          '2026-1-5': {'other-device': 1200.0},
+          '2026-1-6': {'other-device': 600.0},
+        },
+        books: [
+          (id: 'book-1', kind: 'book', devices: {'other-device': 1200.0}),
         ],
       );
-      expect((await service.restore(backup)).readTime, 1);
-      expect(library.readTimeSnapshot()['book-1'], {
-        '2026-1-5': 1800.0,
+      // 取大会丢掉一台设备的时长；分设备求和才两头都算。
+      final first = await service.restore(backup);
+      expect(first.readTime, greaterThan(0));
+      expect(library.readTimeBookTotals()['book-1'], 3000.0);
+      expect(library.readTimeDailyTotals(), {
+        '2026-1-5': 3000.0,
         '2026-1-6': 600.0,
       });
-      expect((await service.restore(backup)).readTime, 1);
-      expect(library.readTimeSnapshot()['book-1'], {
-        '2026-1-5': 1800.0,
-        '2026-1-6': 600.0,
-      });
+      final second = await service.restore(backup);
+      expect(second.readTime, 0);
+      expect(library.readTimeBookTotals()['book-1'], 3000.0);
+      expect(library.readTimeDailyTotals()['2026-1-5'], 3000.0);
     });
 
-    test('skips identities whose buckets were re-assigned to another kind', () async {
-      await EncryptedHive.box(Hive, 'read_time').put('shared', {
-        '2026-1-5': 900.0,
-        '_allocated_media_time_v1': {'2026-1-5': 600.0},
-      });
+    test('a scoped restore lands on the scoped key, not the bare one', () async {
       final backup = backupWith(
-        readTime: [
-          (id: 'shared', kind: 'book', days: {'2026-1-5': 5000.0}),
+        daily: {
+          '2026-1-5': {'other-device': 5000.0},
+        },
+        books: [
+          (id: 'shared', kind: 'audio', devices: {'other-device': 5000.0}),
         ],
       );
-      expect((await service.restore(backup)).readTime, 0);
-      final stored = EncryptedHive.box(Hive, 'read_time').get('shared') as Map;
-      expect(stored['2026-1-5'], 900.0);
-      expect(stored['_allocated_media_time_v1'], {'2026-1-5': 600.0});
+      expect((await service.restore(backup)).readTime, greaterThan(0));
+      expect(library.readTimeBookTotals()['audio:shared'], 5000.0);
+      expect(library.readTimeBookTotals().containsKey('shared'), isFalse);
     });
 
     test('creates an identity the device has never tracked', () async {
       final backup = backupWith(
-        readTime: [
+        daily: {
+          '2026-2-1': {'other-device': 300.0},
+        },
+        books: [
           // A content ID, not the scoped storage key.
-          (id: 'new', kind: 'audio', days: {'2026-2-1': 300.0}),
+          (id: 'new', kind: 'audio', devices: {'other-device': 300.0}),
         ],
       );
-      expect((await service.restore(backup)).readTime, 1);
-      expect(library.readTimeSnapshot()['audio:new'], {'2026-2-1': 300.0});
+      expect((await service.restore(backup)).readTime, greaterThan(0));
+      expect(library.readTimeBookTotals()['audio:new'], 300.0);
       expect(library.readTimeKindSnapshot()['audio:new'], 'audio');
     });
 
     test('round-trips a scoped identity through its content ID', () async {
-      await EncryptedHive.box(Hive, 'read_time').put('audio:series-9', {
-        '2026-3-2': 420.0,
-        '_media_kind_v1': 'audio',
-      });
+      await library.accumulateReadTime(
+        'audio:series-9',
+        'audio',
+        420,
+        at: DateTime(2026, 3, 2),
+      );
       final backup = await service.capture();
-      expect(backup.readTime, hasLength(1));
-      expect(backup.readTime.single['id'], 'series-9');
-      expect(backup.readTime.single['kind'], 'audio');
-      await EncryptedHive.box(Hive, 'read_time').delete('audio:series-9');
-      expect((await service.restore(backup)).readTime, 1);
-      expect(library.readTimeSnapshot()['audio:series-9'], {'2026-3-2': 420.0});
+      expect(backup.books, hasLength(1));
+      expect(backup.books.single.id, 'series-9');
+      expect(backup.books.single.kind, 'audio');
+      // 恢复时还原成 audio:series-9，同设备取大所以计数不变。
+      expect((await service.restore(backup)).readTime, 0);
+      expect(library.readTimeBookTotals()['audio:series-9'], 420.0);
       expect(library.readTimeKindSnapshot()['audio:series-9'], 'audio');
     });
   });
@@ -299,19 +310,22 @@ void main() {
       final backup = LibraryBackup.decode(
         Uint8List.fromList(utf8.encode(jsonEncode(json))),
       );
-      expect(backup.readTime, isEmpty);
+      expect(backup.books, isEmpty);
+      expect(backup.daily, isEmpty);
       expect(backup.searchHistory, isEmpty);
       expect((await service.restore(backup)).history, 1);
       expect((await library.historyEntry('book-1'))?['episode'], 3);
       // Exports move forward: a v1 file is re-encoded as the current version.
       final encoded = jsonDecode(utf8.decode(backup.encode())) as Map;
-      expect(encoded['version'], 3);
+      expect(encoded['version'], 4);
       expect(encoded['shelfRemoved'], isEmpty);
-      expect(encoded['readTime'], isEmpty);
+      expect(encoded['books'], isEmpty);
+      expect(encoded['daily'], isEmpty);
       expect(encoded['searchHistory'], isEmpty);
     });
 
     test('rejects an unsupported version and malformed read time', () {
+      // v2 的 (书 × 天) 形态仍然要能被校验，即使导出已经换成了 v4 的两张表。
       Map<String, dynamic> snapshot() => {
         'format': 'fqapp.library-backup',
         'version': 2,
@@ -329,11 +343,11 @@ void main() {
         'searchHistory': <dynamic>[],
         'excludedLocalRecords': 0,
       };
-      final json = snapshot();
-      json['version'] = 4;
+      final unsupported = snapshot();
+      unsupported['version'] = 99;
       expect(
         () => LibraryBackup.decode(
-          Uint8List.fromList(utf8.encode(jsonEncode(json))),
+          Uint8List.fromList(utf8.encode(jsonEncode(unsupported))),
         ),
         throwsFormatException,
       );

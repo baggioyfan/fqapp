@@ -128,7 +128,8 @@ void main() {
       },
       history: const [],
       watched: const {},
-      readTime: const [],
+      daily: const {},
+      books: const [],
       searchHistory: const [],
     );
 
@@ -153,7 +154,8 @@ void main() {
       },
       history: const [],
       watched: const {},
-      readTime: const [],
+      daily: const {},
+      books: const [],
       searchHistory: const [],
     );
     final map = jsonDecode(utf8.decode(backup.encode())) as Map<String, dynamic>

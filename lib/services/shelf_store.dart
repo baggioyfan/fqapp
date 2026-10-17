@@ -3,6 +3,7 @@ import 'package:hive_ce/hive.dart';
 
 import '../models/media_item.dart';
 import 'encrypted_hive.dart';
+import 'webdav_auto_sync.dart';
 
 /// One 加入书架 record.
 class ShelfRecord {
@@ -117,6 +118,12 @@ class ShelfStore {
     return records;
   }
 
+  /// 书架增删是用户主动操作，可感知，值得尽快推上去（比连续写入的防抖窗口短）。
+  /// 合并云端数据时不调用它，否则「合并 → 变脏 → 同步 → 再合并」会自激。
+  static void _markSyncDirty() => WebdavAutoSync.instance.markDirty(
+    delay: const Duration(seconds: 5),
+  );
+
   /// Adds the item, or removes it when it is already on the shelf.
   /// Returns true when the item is on the shelf afterwards.
   Future<bool> toggle(MediaItem item) async {
@@ -128,10 +135,12 @@ class ShelfStore {
       _revision.value++;
       // 墓碑必须在返回前落盘：删完立刻同步时，快照里得有这条删除记录。
       await _recordRemovals([key]);
+      _markSyncDirty();
       return false;
     }
     await box.put(key, _recordOf(item, DateTime.now()));
     _revision.value++;
+    _markSyncDirty();
     return true;
   }
 
@@ -140,6 +149,7 @@ class ShelfStore {
     if (box == null) return;
     await box.put(keyOf(item), _recordOf(item, DateTime.now()));
     _revision.value++;
+    _markSyncDirty();
   }
 
   Future<void> removeKeys(Iterable<String> keys) async {
@@ -152,6 +162,7 @@ class ShelfStore {
     // 先让书架的变化可见，再落盘墓碑：界面只关心书架，不该等墓碑写完。
     _revision.value++;
     await _recordRemovals(removed);
+    _markSyncDirty();
   }
 
   /// 撤销「移出书架」：把记录按**原 addedAt** 写回（`_recordOf` 含 addedAt
@@ -174,7 +185,10 @@ class ShelfStore {
       final keys = [for (final record in records) keyOf(record.item)];
       await tombstones.deleteAll(keys.where(tombstones.containsKey));
     }
-    if (wrote) _revision.value++;
+    if (wrote) {
+      _revision.value++;
+      _markSyncDirty();
+    }
   }
 
   Future<void> clear() async {
@@ -185,6 +199,7 @@ class ShelfStore {
     await box.clear();
     _revision.value++;
     await _recordRemovals(everything);
+    _markSyncDirty();
   }
 
   /// 本机记录的删除：`key -> 删除时刻`。快照会把它一起上传，另一台设备靠它

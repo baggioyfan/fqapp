@@ -298,12 +298,20 @@ class _RootShellState extends State<RootShell> with WidgetsBindingObserver {
         unawaited(_checkRemoteUpdate());
       case AppLifecycleState.paused:
       case AppLifecycleState.hidden:
-        // 退到后台顺手同步一次：离开时的状态通常就是这一轮数据的最后状态。
-        // 失败只进日志（用户已经走了，弹窗没人看）。
-        unawaited(WebdavAutoSync.instance.syncOnBackground());
+        // 兜底触发点：页面自己的「离开时同步」可能还没跑完，或者根本来不及
+        // （用户直接回到桌面）。这里再推一次，`minInterval` 保证不会连成串。
+        //
+        // Flutter 没有「保证请求在退出前完成」的 API（Android 没有
+        // `onTaskRemoved`，iOS 没有 `beginBackgroundTask`），所以真正的保证
+        // 不是「退出时传完」，而是**平时就把脏数据推上去**，让退出时几乎没事可做。
+        unawaited(WebdavAutoSync.instance.flush());
       case AppLifecycleState.inactive:
-      case AppLifecycleState.detached:
+        // inactive 会在下拉通知栏、来电时触发，太频繁，不当作退出。
         break;
+      case AppLifecycleState.detached:
+        // 进程即将结束，只做「把待发标记落定」这种同步动作；真正的网络
+        // 请求在这里不保证有结果，兜底仍然是上面的 paused/hidden。
+        unawaited(WebdavAutoSync.instance.flush());
     }
   }
 

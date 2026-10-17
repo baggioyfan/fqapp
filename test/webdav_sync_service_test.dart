@@ -87,7 +87,8 @@ void main() {
     shelfRemoved: shelfRemoved,
     history: history,
     watched: const {},
-    readTime: const [],
+    daily: const {},
+    books: const [],
     searchHistory: const [],
   );
 

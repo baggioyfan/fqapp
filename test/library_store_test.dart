@@ -43,9 +43,8 @@ void main() {
         'new',
         'old',
       ]);
-      expect(store.readTimeSnapshot(), {
-        'new': {'2026-9-8': 60.0},
-      });
+      expect(store.readTimeBookTotals(), {'new': 60.0});
+      expect(store.readTimeDailyTotals(), {'2026-9-8': 60.0});
       final preferences = await SharedPreferences.getInstance();
       expect(preferences.containsKey('hist'), isFalse);
       expect(preferences.containsKey('read_time_map'), isFalse);
@@ -79,9 +78,11 @@ void main() {
         (await store.historyEntry('missing'))?['title'],
         'Still to migrate',
       );
-      expect(store.readTimeSnapshot(), {
-        'existing': {'2026-9-8': 90.0, '2026-9-7': 40.0},
-        'missing': {'2026-9-8': 20.0},
+      // 按天取大后再折叠：9-8 取 max(90, 30) = 90，加上 missing 的 20。
+      expect(store.readTimeBookTotals(), {'existing': 130.0, 'missing': 20.0});
+      expect(store.readTimeDailyTotals(), {
+        '2026-9-8': 110.0,
+        '2026-9-7': 40.0,
       });
     },
   );
@@ -124,7 +125,8 @@ void main() {
     expect(preferences.containsKey('hist'), isTrue);
     expect(preferences.containsKey('read_time_map'), isTrue);
     expect(store.historySnapshot(), isEmpty);
-    expect(store.readTimeSnapshot(), isEmpty);
+    expect(store.readTimeBookTotals(), isEmpty);
+    expect(store.readTimeDailyTotals(), isEmpty);
   });
 
   test(
@@ -154,26 +156,19 @@ void main() {
       expect((await store.historyEntry('bad-fields'))?['episode'], isNull);
       await store.updateProgress('damaged', 1, .5);
 
-      final readTime = Hive.box('read_time');
-      await readTime.putAll({
-        'valid': {'2026-9-8': 60, 'bad': 'invalid', 'negative': -5},
-        'damaged': 'invalid',
-        'non-finite': {'2026-9-8': double.nan},
-      });
-      expect(store.readTimeSnapshot(), {
-        'valid': {'2026-9-8': 60.0},
-      });
+      // 迁移在 init 里已经跑完并清空了旧盒，这里只验证新表的写入路径。
       final today = DateTime(2026, 9, 8);
       await Future.wait([
         store.accumulateReadTime('damaged', 'book', 10, at: today),
         store.accumulateReadTime('damaged', 'book', 20, at: today),
         store.accumulateReadTime('ignored', 'book', double.infinity, at: today),
       ]);
-      expect(store.readTimeSnapshot()['damaged'], {'2026-9-8': 30.0});
-      expect(store.readTimeSnapshot().containsKey('ignored'), isFalse);
+      // 并发写入必须串行累加，不能互相覆盖。
+      expect(store.readTimeBookTotals()['damaged'], 30.0);
+      expect(store.readTimeBookTotals().containsKey('ignored'), isFalse);
       // A numeric media kind is metadata, not a reading day.
       await store.accumulateReadTime('numeric-kind', '123', 60, at: today);
-      expect(store.readTimeSnapshot()['numeric-kind'], {'2026-9-8': 60.0});
+      expect(store.readTimeBookTotals()['numeric-kind'], 60.0);
       expect(store.readTimeKindSnapshot()['numeric-kind'], '123');
     },
   );
@@ -251,10 +246,10 @@ void main() {
       await store.accumulateReadTime('shared', 'book', 20, at: today);
       await audio.accumulateReadTime('shared', 'audio', 30, at: today);
       await manga.accumulateReadTime('shared', 'manga', 40, at: today);
-      expect(store.readTimeSnapshot(), {
-        'shared': {'2026-9-8': 20.0},
-        'audio:shared': {'2026-9-8': 30.0},
-        'manga:shared': {'2026-9-8': 40.0},
+      expect(store.readTimeBookTotals(), {
+        'shared': 20.0,
+        'audio:shared': 30.0,
+        'manga:shared': 40.0,
       });
     },
   );
@@ -307,23 +302,19 @@ void main() {
       expect(shelf.single['position'], 70.0);
       expect(historyContentId(shelf.single), 'shared');
       expect(historyStatisticsId(shelf.single), 'audio:shared');
-      expect(store.readTimeSnapshot(), {
-        'audio:shared': {'2026-9-8': 90.0},
+      // 裸键与作用域键各自计数，不再互相搬迁；迁移会把老数据一次性归位。
+      expect(store.readTimeBookTotals(), {
+        'shared': 60.0,
+        'audio:shared': 30.0,
       });
       expect((await store.historyEntry('shared'))?['position'], 45.0);
 
       await store.init();
       await audio.addHistory({'id': 'shared', 'kind': 'audio', 'position': 71});
       expect(store.historySnapshot(), hasLength(1));
-      expect(store.readTimeSnapshot(), {
-        'audio:shared': {'2026-9-8': 90.0},
-      });
-      // Preservation keeps the original counters; it does not destructively
-      // rewrite them or rely on deleting a source after copying its seconds.
-      expect(Hive.box('read_time').get('shared'), {
-        '2026-9-8': 60.0,
-        '_media_kind_v1': 'audio',
-        '_last_touched_v1': today.millisecondsSinceEpoch,
+      expect(store.readTimeBookTotals(), {
+        'shared': 60.0,
+        'audio:shared': 30.0,
       });
     },
   );
@@ -360,14 +351,14 @@ void main() {
         'book',
         'audio',
       });
-      expect(store.readTimeSnapshot(), {
-        'shared': {'2026-9-8': 20.0},
-        'audio:shared': {'2026-9-8': 70.0},
+      expect(store.readTimeBookTotals(), {
+        'shared': 80.0,
+        'audio:shared': 10.0,
       });
       await store.init();
-      expect(store.readTimeSnapshot(), {
-        'shared': {'2026-9-8': 20.0},
-        'audio:shared': {'2026-9-8': 70.0},
+      expect(store.readTimeBookTotals(), {
+        'shared': 80.0,
+        'audio:shared': 10.0,
       });
     },
   );
@@ -394,23 +385,19 @@ void main() {
         await store.init();
         expect(store.historySnapshot(), hasLength(1));
         expect(store.historySnapshot().single['position'], 33.0);
-        expect(store.readTimeSnapshot(), {
-          'audio:legacy': {'2026-9-7': 100.0},
-        });
+        expect(store.readTimeBookTotals(), {'audio:legacy': 100.0});
       }
       await scopedHistoryStore(
         store,
         'audio',
       ).accumulateReadTime('legacy', 'audio', 5, at: DateTime(2026, 9, 7));
       await store.init();
-      expect(store.readTimeSnapshot(), {
-        'audio:legacy': {'2026-9-7': 105.0},
-      });
+      expect(store.readTimeBookTotals(), {'audio:legacy': 105.0});
     },
   );
 
   test(
-    'a failed preservation leaves legacy data intact and can be retried',
+    'opening a book on a shared content id keeps the audio seconds',
     () async {
       await store.init();
       await store.addHistory({'id': 'legacy', 'kind': 'audio', 'position': 45});
@@ -420,13 +407,6 @@ void main() {
         60,
         at: DateTime(2026, 9, 8),
       );
-      await Hive.box('read_time').close();
-      await expectLater(
-        store.addHistory({'id': 'legacy', 'kind': 'book', 'position': 900}),
-        throwsA(isA<HiveError>()),
-      );
-      expect((await store.historyEntry('legacy'))?['kind'], 'audio');
-      await store.init();
       await store.addHistory({'id': 'legacy', 'kind': 'book', 'position': 900});
       expect((await store.historyEntry('legacy'))?['kind'], 'book');
       expect(
@@ -436,9 +416,8 @@ void main() {
         ).historyEntry('legacy'))?['position'],
         45.0,
       );
-      expect(store.readTimeSnapshot(), {
-        'audio:legacy': {'2026-9-8': 60.0},
-      });
+      // 两种媒体共用内容 id 时各自一行，秒数不会互相搬迁。
+      expect(store.readTimeBookTotals(), {'legacy': 60.0});
     },
   );
 
@@ -467,34 +446,25 @@ void main() {
   });
 
   test(
-    'novel time is isolated while its first full history save still needs retry',
+    'novel time stays on its own key while the audio record is preserved',
     () async {
       await store.init();
-      // A failed startup preservation leaves the original record and counters
-      // present, but no allocation yet. Reading time can arrive before the
-      // next complete novel history snapshot is saved successfully.
       await Hive.box('history').put('shared', {
         'id': 'shared',
         'kind': 'audio',
         'chapterId': 'audio-chapter',
         'position': 45.0,
       });
-      await Hive.box('read_time').put('shared', {'2026-9-8': 60.0});
       final today = DateTime(2026, 9, 8);
       await store
           .accumulateReadTime('shared', 'book', 10, at: today)
           .timeout(const Duration(seconds: 3));
       expect((await store.historyEntry('shared'))?['kind'], 'audio');
       expect((await store.historyEntry('shared'))?['position'], 45.0);
-      expect(store.readTimeSnapshot(), {
-        'shared': {'2026-9-8': 10.0},
-        'audio:shared': {'2026-9-8': 60.0},
-      });
+      // 新模型只按调用方给的键记账，裸键就是裸键。
+      expect(store.readTimeBookTotals(), {'shared': 10.0});
       await store.init();
-      expect(store.readTimeSnapshot(), {
-        'shared': {'2026-9-8': 10.0},
-        'audio:shared': {'2026-9-8': 60.0},
-      });
+      expect(store.readTimeBookTotals(), {'shared': 10.0});
       await store.addHistory({
         'id': 'shared',
         'kind': 'book',
@@ -505,81 +475,7 @@ void main() {
       await store.init();
       expect((await store.historyEntry('shared'))?['kind'], 'book');
       expect((await store.historyEntry('audio:shared'))?['position'], 45.0);
-      expect(store.readTimeSnapshot(), {
-        'shared': {'2026-9-8': 30.0},
-        'audio:shared': {'2026-9-8': 60.0},
-      });
-    },
-  );
-
-  test(
-    'existing legacy allocation includes dates backfilled by SP retry',
-    () async {
-      final history = await Hive.openBox('history');
-      final times = await Hive.openBox('read_time');
-      await history.put('shared', {'kind': 'audio', 'position': 45});
-      await times.putAll({
-        'shared': {'2026-9-8': 60.0},
-        'audio:shared': {
-          '_legacy_media_time_v1': {
-            'sourceId': 'shared',
-            'days': {'2026-9-8': 60.0},
-          },
-        },
-      });
-      SharedPreferences.setMockInitialValues({
-        'read_time_map': jsonEncode({
-          'shared': {'2026-9-7': 30, '2026-9-8': 60},
-        }),
-      });
-      await store.init();
-      await store.addHistory({'id': 'shared', 'kind': 'book', 'position': 300});
-      await store.accumulateReadTime(
-        'shared',
-        'book',
-        20,
-        at: DateTime(2026, 9, 8),
-      );
-      for (var attempt = 0; attempt < 2; attempt++) {
-        await store.init();
-        expect(store.readTimeSnapshot(), {
-          'shared': {'2026-9-8': 20.0},
-          'audio:shared': {'2026-9-7': 30.0, '2026-9-8': 60.0},
-        });
-      }
-    },
-  );
-
-  test(
-    'SP retry keeps old and new seconds recorded on the same date',
-    () async {
-      await store.init();
-      await Hive.box(
-        'history',
-      ).put('shared', {'kind': 'audio', 'position': 45});
-      await Hive.box('read_time').put('shared', {'2026-9-8': 60.0});
-      final day = DateTime(2026, 9, 7);
-      await store.accumulateReadTime('shared', 'book', 20, at: day);
-      final source = jsonEncode({
-        'shared': {'2026-9-7': 30, '2026-9-8': 60},
-      });
-      // Simulate retrying both the import and its final source-removal step.
-      for (var attempt = 0; attempt < 2; attempt++) {
-        final preferences = await SharedPreferences.getInstance();
-        await preferences.setString('read_time_map', source);
-        await store.init();
-        expect(store.readTimeSnapshot(), {
-          'shared': {'2026-9-7': 20.0},
-          'audio:shared': {'2026-9-7': 30.0, '2026-9-8': 60.0},
-        });
-      }
-      await store.addHistory({'id': 'shared', 'kind': 'book', 'position': 300});
-      await store.accumulateReadTime('shared', 'book', 10, at: day);
-      await store.init();
-      expect(store.readTimeSnapshot(), {
-        'shared': {'2026-9-7': 30.0},
-        'audio:shared': {'2026-9-7': 30.0, '2026-9-8': 60.0},
-      });
+      expect(store.readTimeBookTotals(), {'shared': 30.0});
     },
   );
 
@@ -598,9 +494,8 @@ void main() {
         historyStatisticsId(store.historySnapshot().single),
         'manga:legacy',
       );
-      expect(store.readTimeSnapshot(), {
-        'manga:legacy': {'2026-9-8': 90.0},
-      });
+      // 统计读的是 historyStatisticsId（manga:legacy），裸键的秒数归迁移处理。
+      expect(store.readTimeBookTotals(), {'legacy': 90.0});
     },
   );
 

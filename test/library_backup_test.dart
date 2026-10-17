@@ -117,7 +117,8 @@ void main() {
         watched: {
           'series-1': {'ep-1': 100, 'ep-2': 200},
         },
-        readTime: const [],
+        daily: const {},
+        books: const [],
         searchHistory: const [],
       );
       final service = LibraryBackupService();
@@ -157,7 +158,8 @@ void main() {
                     {'id': 'valid', 'kind': 'book'},
                   ],
                   watched: {},
-                  readTime: const [],
+                  daily: const {},
+        books: const [],
                   searchHistory: const [],
                 ).encodeAsText(),
               )

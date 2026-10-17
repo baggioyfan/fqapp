@@ -6,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'encrypted_hive.dart';
 import 'reader_underline_store.dart';
+import 'read_time_store.dart';
 
 abstract interface class ReaderStore {
   Future<Map<String, dynamic>?> historyEntry(String id);
@@ -94,6 +95,9 @@ class LibraryStore implements ReaderStore {
   static const _kindKey = '_media_kind_v1';
   static const _touchedKey = '_last_touched_v1';
 
+  /// 「交叉表 → 按天 + 按书」的迁移标记，跑完置 true，之后不再折叠。
+  static const _readTimeModelKey = 'read_time_model_v2';
+
   /// Most recent day buckets kept per read-time identity. Older days are
   /// dropped, so a long-lived install cannot grow without bound.
   @visibleForTesting
@@ -123,12 +127,20 @@ class LibraryStore implements ReaderStore {
     return write;
   }
 
+  /// 等排队中的写入全部落盘。
+  ///
+  /// 退出同步必须先等这一步：页面在 `dispose`/`paused` 里提交的进度写入是
+  /// 异步排队的，直接发起同步会读到「上一秒的进度」，看起来就像退出没同步。
+  Future<void> idle() => _serialize(() async {});
+
   /// Hive-backed notifications for retained tabs. Visible pages update after
   /// writes; hidden pages defer their snapshots until the next visit.
   bool get isInitialized => EncryptedHive.isBoxOpen(Hive, _histBoxName);
   ValueListenable<Box<dynamic>> get historyListenable => _histBox.listenable();
-  ValueListenable<Box<dynamic>> get readTimeListenable =>
-      _readTimeBox.listenable();
+
+  /// 阅读时长落在「按天 + 按书」两张表里（见 [ReadTimeStore]），这里暴露
+  /// 它们的合并监听流。
+  Listenable get readTimeListenable => ReadTimeStore.instance.listenable;
 
   Future<void> init() async {
     _writes = Future<void>.value();
@@ -152,6 +164,27 @@ class LibraryStore implements ReaderStore {
     // Upgrade path: bound records written before retention existed, and enforce
     // the identity cap on an already oversized box.
     await _sweepReadTime();
+    await ReadTimeStore.instance.init();
+    await _migrateReadTimeModel();
+  }
+
+  /// 把老版本「书 × 天」交叉表折叠成「按天 + 按书」两张表，只跑一次。
+  ///
+  /// 折叠用的是 [readTimeSnapshot] 的现有视图 —— 它已经把那四份并存的 day
+  /// map（`days` / `_new_media_time_v1` / `_legacy_media_time_v1` /
+  /// `_allocated_media_time_v1`）算成了用户可见的秒数，所以这里不需要重写
+  /// 那套分配逻辑。折叠完清空旧盒子，旧代码自然退化成空转。
+  Future<void> _migrateReadTimeModel() async {
+    final sp = await SharedPreferences.getInstance();
+    if (sp.getBool(_readTimeModelKey) == true) return;
+    try {
+      await ReadTimeStore.instance.migrateFromLegacy(legacyReadTimeSnapshot());
+      await _readTimeBox.clear();
+      await sp.setBool(_readTimeModelKey, true);
+    } catch (_) {
+      // 迁移失败就保留旧盒子，下次启动重试；新表是取大合并，重复折叠
+      // 不会把时长翻倍。
+    }
   }
 
   /// Prunes every over-limit read-time record at startup and enforces the
@@ -332,8 +365,8 @@ class LibraryStore implements ReaderStore {
   Future<({int history, int episodes, int readTime})> mergeBackup({
     required List<Map<String, dynamic>> history,
     required Map<String, Map<String, int>> watched,
-    required List<({String id, String kind, Map<String, double> days})>
-    readTime,
+    required DailyTable daily,
+    required List<BookTime> books,
   }) {
     final guard = ReadingDataWriteGuard(this);
     return _serializeResult(() async {
@@ -373,10 +406,11 @@ class LibraryStore implements ReaderStore {
         await _watchedBox.put(entry.key, {...current, ...missing});
         addedEpisodes += missing.length;
       }
-      final mergedReadTime = await _mergeReadTimeInWrite(readTime);
+      final mergedReadTime = await ReadTimeStore.instance.merge(daily, books);
       await _histBox.flush();
       await _watchedBox.flush();
       await _readTimeBox.flush();
+      await ReadTimeStore.instance.flush();
       return (
         history: writtenHistory,
         episodes: addedEpisodes,
@@ -404,52 +438,8 @@ class LibraryStore implements ReaderStore {
     return pa > pb;
   }
 
-  /// Merges exported read-time buckets by taking the per-day maximum.
-  ///
-  /// Max is idempotent: importing the same snapshot twice cannot inflate a
-  /// total, which an additive merge could never guarantee. Two devices reading
-  /// the same day therefore keep the longer session instead of their sum.
-  /// Identities whose buckets were already re-assigned to another media kind
-  /// are skipped: that allocation is device-local bookkeeping, and merging its
-  /// exported (already re-assigned) days back would count the seconds twice.
-  /// Exported IDs are content IDs, so scoped media get their `kind:id` key back.
-  Future<int> _mergeReadTimeInWrite(
-    List<({String id, String kind, Map<String, double> days})> incoming,
-  ) async {
-    var merged = 0;
-    final touched = DateTime.now().millisecondsSinceEpoch;
-    for (final entry in incoming) {
-      if (entry.id.isEmpty || entry.days.isEmpty) continue;
-      final scoped = entry.kind == 'audio' || entry.kind == 'manga';
-      final key = scoped ? '${entry.kind}:${entry.id}' : entry.id;
-      final raw = _readTimeBox.get(key);
-      if (raw is Map &&
-          (raw[_allocatedTimeKey] is Map || raw[_legacyTimeKey] is Map)) {
-        continue;
-      }
-      final days = <String, double>{
-        for (final day in entry.days.entries)
-          if (_parseDayKey(day.key) != null &&
-              day.value.isFinite &&
-              day.value >= 0)
-            day.key: day.value,
-      };
-      if (days.isEmpty) continue;
-      final record = _readTimeStorage(raw);
-      _mergeMaxDays(record, days);
-      final kind = entry.kind.trim();
-      if (kind.isNotEmpty) record[_kindKey] = kind;
-      // Refresh the eviction order: a restored identity must not look like the
-      // least recently touched one and be dropped by the identity cap.
-      record[_touchedKey] = touched;
-      _pruneRecordDays(record);
-      await _readTimeBox.put(key, record);
-      merged++;
-    }
-    if (merged > 0) await _trimReadTimeIdentities();
-    return merged;
-  }
-
+  /// 阅读时长的合并已经搬到 [ReadTimeStore.merge]（同设备取大）。老版本
+  /// 「书 × 天」交叉表的合并逻辑随迁移一起退场。
   static Map<String, int> _watchedRecord(dynamic raw) {
     if (raw is List) return {for (final id in raw) id.toString(): 0};
     if (raw is! Map) return {};
@@ -641,6 +631,7 @@ class LibraryStore implements ReaderStore {
       await _removeLegacySource(preferences, 'read_time_map');
       await _histBox.clear();
       await _readTimeBox.clear();
+      await ReadTimeStore.instance.clear();
       await _watchedBox.clear();
     });
   }
@@ -659,7 +650,10 @@ class LibraryStore implements ReaderStore {
     }
   }
 
-  Map<String, Map<String, double>> readTimeSnapshot() {
+  /// 老版本「书 × 天」交叉表的用户可见视图，**只服务于一次性迁移**
+  /// （[_migrateReadTimeModel]）。页面不该再调用它：日历要按天、排行要按书，
+  /// 直接用 [readTimeDailyTotals] / [readTimeBookTotals]。
+  Map<String, Map<String, double>> legacyReadTimeSnapshot() {
     final out = <String, Map<String, double>>{};
     for (final key in _readTimeBox.keys) {
       final days = _readTimeRecord(_readTimeBox.get(key));
@@ -734,38 +728,22 @@ class LibraryStore implements ReaderStore {
     };
   }
 
-  Future<Map<String, Map<String, double>>> readTimeMap() async =>
-      readTimeSnapshot();
-
   /// The media kind recorded with each read-time identity, when known. Used by
   /// statistics to open read-time-only rows with the right content type.
-  Map<String, String> readTimeKindSnapshot() {
-    final out = <String, String>{};
-    for (final key in _readTimeBox.keys) {
-      final raw = _readTimeBox.get(key);
-      final kind = raw is Map ? raw[_kindKey] : null;
-      if (kind is String && kind.trim().isNotEmpty) {
-        out[key.toString()] = kind.trim();
-      }
-    }
-    return out;
-  }
+  Map<String, String> readTimeKindSnapshot() => ReadTimeStore.instance.kinds();
 
-  /// The portable shape a backup stores: one entry per read-time identity,
-  /// carrying its media kind so a restored device can label the statistics row.
-  List<({String id, String kind, Map<String, double> days})>
-  readTimeBackupSnapshot() {
-    final kinds = readTimeKindSnapshot();
-    return [
-      for (final entry in readTimeSnapshot().entries)
-        if (entry.value.isNotEmpty)
-          (
-            id: entry.key,
-            kind: kinds[entry.key] ?? 'book',
-            days: Map<String, double>.unmodifiable(entry.value),
-          ),
-    ];
-  }
+  /// 按天总时长（秒），已跨设备求和。日历、累计、月度、今日阅读都读这一份。
+  Map<String, double> readTimeDailyTotals() =>
+      ReadTimeStore.instance.dailyTotals();
+
+  /// 每本书的总时长（秒），已跨设备求和。阅读排行只读这一份。
+  Map<String, double> readTimeBookTotals() =>
+      ReadTimeStore.instance.bookTotals();
+
+  /// The portable shape a backup stores: a per-day table and a per-book table,
+  /// both keyed by device so a merge never has to choose between two devices.
+  ({DailyTable daily, List<BookTime> books}) readTimeBackupSnapshot() =>
+      ReadTimeStore.instance.export();
 
   @override
   Future<void> accumulateReadTime(
@@ -777,33 +755,9 @@ class LibraryStore implements ReaderStore {
     if (!seconds.isFinite || seconds <= 0 || bookId.isEmpty) {
       return Future<void>.value();
     }
-    final day = _dayKey(at ?? DateTime.now());
-    return _serialize(() async {
-      final history = _historyRecord(_histBox.get(bookId), id: bookId);
-      final legacy = history != null && _legacyMediaKey(history) != null;
-      final newTime = !legacy || history['kind'] != kind;
-      if (legacy && newTime) {
-        // This callback already owns the queue. Preserve directly so a failed
-        // history insert cannot make new novel seconds part of the old media.
-        await _preserveLegacyMediaInWrite(history);
-      }
-      final raw = _readTimeBox.get(bookId);
-      final perBook = _readTimeStorage(raw);
-      final days = _readTimeRecord(raw);
-      perBook[day] = (days[day] ?? 0) + seconds;
-      final kindLabel = kind.trim();
-      if (kindLabel.isNotEmpty) perBook[_kindKey] = kindLabel;
-      if (newTime) {
-        final newDays = _newReadTime(raw);
-        newDays[day] = (newDays[day] ?? 0) + seconds;
-        // Persist the counter and its classification atomically.
-        perBook[_newTimeKey] = newDays;
-      }
-      perBook[_touchedKey] = (at ?? DateTime.now()).millisecondsSinceEpoch;
-      _pruneRecordDays(perBook);
-      await _readTimeBox.put(bookId, perBook);
-      await _trimReadTimeIdentities();
-    });
+    return _serialize(
+      () => ReadTimeStore.instance.accumulate(bookId, kind, seconds, at: at),
+    );
   }
 
   static (String, String) _historyIdentity(Map<String, dynamic> record) => (
@@ -1090,8 +1044,6 @@ class LibraryStore implements ReaderStore {
       }
     }
   }
-
-  static String _dayKey(DateTime d) => '${d.year}-${d.month}-${d.day}';
 
   static num? _finiteNumber(dynamic value) {
     final number = value is num

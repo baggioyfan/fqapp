@@ -11,11 +11,6 @@ import 'media_item.dart';
 class LibraryBackup {
   static const maxBytes = 16 * 1024 * 1024;
 
-  /// Past this the exporter retries with a shorter read-time window instead of
-  /// failing outright: day buckets dominate the payload, and an install that
-  /// has been tracking for years can approach the hard limit on its own.
-  static const _trimAboveBytes = 8 * 1024 * 1024;
-  static const _trimmedReadTimeDays = 365;
   static const _maxDaySeconds = 1e9;
   static const _maxSearchTerms = 20;
   static const _maxSearchTermLength = 200;
@@ -23,12 +18,21 @@ class LibraryBackup {
   static const _maxEpisodes = 100000;
   static const _format = 'fqapp.library-backup';
 
-  /// 2 adds `readTime` and `searchHistory`; 3 adds `shelfRemoved`.
-  /// Older files stay importable, their missing lists simply read as empty.
-  static const _version = 3;
-  static const _supportedVersions = {1, 2, 3};
+  /// 2 adds `readTime` and `searchHistory`; 3 adds `shelfRemoved`;
+  /// 4 replaces the (book × day) `readTime` cross-tab with `daily` + `books`,
+  /// both counted per device.
+  /// Older files stay importable: a v1–v3 `readTime` list is folded into the
+  /// two new tables on read, so no export ever loses the totals.
+  static const _version = 4;
+  static const _supportedVersions = {1, 2, 3, 4};
   static const _kinds = {'book', 'audio', 'manga', 'video', 'manju'};
   static final _idPattern = RegExp(r'^[a-zA-Z0-9_-]{1,128}$');
+  static final _devicePattern = RegExp(r'^[a-zA-Z0-9_~-]{1,32}$');
+
+  /// 旧文件没有设备维度，读进来时先挂在这个哨兵下；真正合并时
+  /// [ReadTimeStore.merge] 会把它换成本机 id，这样同一台设备重复导入
+  /// 只会取大，不会把时长翻倍。
+  static const legacyDeviceKey = '~local';
 
   final DateTime createdAt;
   final List<ShelfRecord> shelf;
@@ -44,9 +48,15 @@ class LibraryBackup {
   final List<Map<String, dynamic>> history;
   final Map<String, Map<String, int>> watched;
 
-  /// `{id, kind, days: {day: seconds}}` — the user-visible read-time totals,
-  /// never the internal allocation/migration keys those totals are derived from.
-  final List<Map<String, dynamic>> readTime;
+  /// 阅读时长按天表：`{day: {deviceId: seconds}}`。
+  ///
+  /// 按设备分桶而不是直接存一个总数，是因为合并只能取大（加法不幂等），
+  /// 而取大会让「手机读一小时 + 平板读四十分钟」丢掉一台。分设备之后
+  /// 合并取大、展示求和，两个设备都不丢，重复导入也不会翻倍。
+  final Map<String, Map<String, double>> daily;
+
+  /// 阅读时长按书表：`{id, kind, devices: {deviceId: seconds}}`。
+  final List<({String id, String kind, Map<String, double> devices})> books;
   final List<String> searchHistory;
   final int excludedLocalRecords;
 
@@ -56,7 +66,8 @@ class LibraryBackup {
     required this.shelfRemoved,
     required this.history,
     required this.watched,
-    required this.readTime,
+    required this.daily,
+    required this.books,
     required this.searchHistory,
     required this.excludedLocalRecords,
   });
@@ -75,28 +86,14 @@ class LibraryBackup {
   int get episodeCount =>
       watched.values.fold(0, (total, episodes) => total + episodes.length);
 
-  /// The read-time entries in the typed shape the store's merge consumes:
-  /// `id` is a content ID and `kind` scopes the storage key, as with history.
-  List<({String id, String kind, Map<String, double> days})>
-  get readTimeEntries => [
-    for (final entry in readTime)
-      (
-        id: entry['id'] as String,
-        kind: entry['kind'] as String,
-        days: {
-          for (final day in (entry['days'] as Map).entries)
-            day.key as String: (day.value as num).toDouble(),
-        },
-      ),
-  ];
-
   factory LibraryBackup.capture({
     required List<ShelfRecord> shelf,
     required Map<String, DateTime> shelfRemoved,
     required List<Map<String, dynamic>> history,
     required Map<String, Map<String, int>> watched,
-    required List<({String id, String kind, Map<String, double> days})>
-    readTime,
+    required Map<String, Map<String, double>> daily,
+    required List<({String id, String kind, Map<String, double> devices})>
+    books,
     required Iterable<String> searchHistory,
   }) {
     var excluded = 0;
@@ -141,17 +138,27 @@ class LibraryBackup {
         for (final entry in watched.entries)
           if (include(entry.key)) {'id': entry.key, 'episodes': entry.value},
       ],
-      'readTime': [
-        for (final entry in readTime)
-          if (include(entry.id) && entry.days.isNotEmpty)
+      'daily': {
+        for (final day in daily.entries)
+          if (_parseDayKey(day.key) != null && day.value.isNotEmpty)
+            day.key: {
+              for (final device in day.value.entries)
+                if (device.value.isFinite && device.value > 0)
+                  device.key: device.value,
+            },
+      },
+      'books': [
+        for (final book in books)
+          if (include(book.id) && book.devices.isNotEmpty)
             {
               // Stored by content ID, like history: the store rebuilds the
               // `kind:id` key for scoped media on restore.
-              'id': _bareId(entry.id),
-              'kind': entry.kind,
-              'days': {
-                for (final day in entry.days.entries)
-                  if (_parseDayKey(day.key) != null) day.key: day.value,
+              'id': _bareId(book.id),
+              'kind': book.kind,
+              'devs': {
+                for (final device in book.devices.entries)
+                  if (device.value.isFinite && device.value > 0)
+                    device.key: device.value,
               },
             },
       ],
@@ -308,35 +315,77 @@ class LibraryBackup {
           _id(entry.key): _integer(entry.value, '已看时间', 8640000000000000),
       });
     }
-    final readTime = <Map<String, dynamic>>[];
-    final readTimeIds = <String>{};
-    for (final value in _list(raw['readTime'] ?? const <dynamic>[])) {
-      final record = _map(value);
-      final id = _id(record['id']);
-      if (!_kinds.contains(record['kind'])) {
-        throw const FormatException('阅读时长含未知作品类型');
-      }
-      if (!readTimeIds.add(id)) throw const FormatException('备份中有重复的阅读时长');
-      final days = <String, double>{};
-      for (final day in _map(record['days']).entries) {
-        final seconds = day.value;
-        if (_parseDayKey(day.key) == null ||
-            seconds is! num ||
-            !seconds.isFinite ||
-            seconds < 0 ||
-            seconds > _maxDaySeconds) {
-          throw const FormatException('备份中的阅读时长无效');
+    // 阅读时长：v4 起是「按天表 + 按书表」，两张都按设备分桶。
+    final daily = <String, Map<String, double>>{};
+    final books = <String, ({String id, String kind, Map<String, double> devices})>{};
+    final dailyJson = raw['daily'];
+    final booksJson = raw['books'];
+    if (dailyJson != null) {
+      for (final entry in _map(dailyJson).entries) {
+        if (_parseDayKey(entry.key) == null) {
+          throw const FormatException('备份中的阅读时长日期无效');
         }
-        days[day.key] = seconds.toDouble();
+        final devices = _deviceSeconds(entry.value);
+        if (devices.isNotEmpty) daily[entry.key] = Map.unmodifiable(devices);
       }
-      if (days.isEmpty) continue;
-      readTime.add(
-        Map.unmodifiable({
-          'id': id,
-          'kind': record['kind'],
-          'days': Map.unmodifiable(days),
-        }),
-      );
+    }
+    if (booksJson != null) {
+      for (final value in _list(booksJson)) {
+        final record = _map(value);
+        final id = _id(record['id']);
+        if (!_kinds.contains(record['kind'])) {
+          throw const FormatException('阅读时长含未知作品类型');
+        }
+        if (books.containsKey(id)) {
+          throw const FormatException('备份中有重复的阅读时长');
+        }
+        final devices = _deviceSeconds(record['devs']);
+        if (devices.isEmpty) continue;
+        books[id] = (
+          id: id,
+          kind: record['kind'] as String,
+          devices: Map.unmodifiable(devices),
+        );
+      }
+    }
+    // v1–v3 的 (书 × 天) 交叉表：在内存里折叠一次，不写回。旧文件没有设备
+    // 维度，先挂在哨兵下，合并时再换成本机 id —— 这样重复导入只取大，不翻倍。
+    if (dailyJson == null && booksJson == null) {
+      for (final value in _list(raw['readTime'] ?? const <dynamic>[])) {
+        final record = _map(value);
+        final id = _id(record['id']);
+        if (!_kinds.contains(record['kind'])) {
+          throw const FormatException('阅读时长含未知作品类型');
+        }
+        final days = <String, double>{};
+        for (final day in _map(record['days']).entries) {
+          final seconds = day.value;
+          if (_parseDayKey(day.key) == null ||
+              seconds is! num ||
+              !seconds.isFinite ||
+              seconds < 0 ||
+              seconds > _maxDaySeconds) {
+            throw const FormatException('备份中的阅读时长无效');
+          }
+          if (seconds <= 0) continue;
+          days[day.key] = seconds.toDouble();
+        }
+        if (days.isEmpty) continue;
+        var total = 0.0;
+        for (final day in days.entries) {
+          final current = daily[day.key] ?? const <String, double>{};
+          daily[day.key] = Map.unmodifiable({
+            ...current,
+            legacyDeviceKey: (current[legacyDeviceKey] ?? 0) + day.value,
+          });
+          total += day.value;
+        }
+        books[id] = (
+          id: id,
+          kind: record['kind'] as String,
+          devices: Map.unmodifiable({legacyDeviceKey: total}),
+        );
+      }
     }
     final searchHistory = <String>[];
     final searchSeen = <String>{};
@@ -357,7 +406,8 @@ class LibraryBackup {
       shelfRemoved: Map.unmodifiable(shelfRemoved),
       history: List.unmodifiable(history),
       watched: Map.unmodifiable(watched),
-      readTime: List.unmodifiable(readTime),
+      daily: Map.unmodifiable(daily),
+      books: List.unmodifiable(books.values),
       searchHistory: List.unmodifiable(searchHistory),
       excludedLocalRecords: _integer(
         raw['excludedLocalRecords'] ?? 0,
@@ -367,61 +417,73 @@ class LibraryBackup {
     );
   }
 
+  /// 不再有「超 8 MB 就悄悄把阅读时长裁到一年」的降级：两张表分别由
+  /// 天数（365）和书数（5000）封顶，最坏也就几百 KB，够不到上限。
+  /// 这一条很关键 —— 旧逻辑裁掉明细后，新设备恢复出来的累计总时长会静默变少。
   Uint8List encode() {
-    var bytes = _encodeBytes();
-    if (bytes.length > _trimAboveBytes) {
-      // Retry once with the read-time window shortened; the rest of the payload
-      // is bounded by record counts and cannot be trimmed meaningfully.
-      bytes = _encodeBytes(readTimeDays: _trimmedReadTimeDays);
+    final bytes = Uint8List.fromList(utf8.encode(jsonEncode(_toJson())));
+    if (bytes.length > maxBytes) {
+      throw const FormatException('备份数据超过 16 MB');
     }
-    if (bytes.length > maxBytes) throw const FormatException('备份数据超过 16 MB');
     return bytes;
   }
 
-  Uint8List _encodeBytes({int? readTimeDays}) => Uint8List.fromList(
-    utf8.encode(
-      jsonEncode({
-        'format': _format,
-        'version': _version,
-        'createdAt': createdAt.millisecondsSinceEpoch,
-        'shelf': shelf.map(_shelfJson).toList(),
-        'shelfRemoved': _shelfRemovedJson(),
-        'history': history,
-        'watched': [
-          for (final entry in watched.entries)
-            {'id': entry.key, 'episodes': entry.value},
-        ],
-        'readTime': [
-          for (final entry in readTime)
-            if (readTimeDays == null)
-              entry
-            else
-              {...entry, 'days': _recentDays(entry['days'], readTimeDays)},
-        ],
-        'searchHistory': searchHistory,
-        'excludedLocalRecords': excludedLocalRecords,
-      }),
-    ),
-  );
+  Map<String, dynamic> _toJson() => {
+    'format': _format,
+    'version': _version,
+    'createdAt': createdAt.millisecondsSinceEpoch,
+    'shelf': shelf.map(_shelfJson).toList(),
+    'shelfRemoved': _shelfRemovedJson(),
+    'history': history,
+    'watched': [
+      for (final entry in watched.entries)
+        {'id': entry.key, 'episodes': entry.value},
+    ],
+    'daily': {
+      for (final entry in daily.entries) entry.key: entry.value,
+    },
+    'books': [
+      for (final book in books)
+        {'id': book.id, 'kind': book.kind, 'devs': book.devices},
+    ],
+    'searchHistory': searchHistory,
+    'excludedLocalRecords': excludedLocalRecords,
+  };
 
-  /// Drops day buckets older than the newest [keep] days. Only used by the
-  /// size fallback, so a normal export keeps the full stored window.
-  static Map<String, dynamic> _recentDays(Object? days, int keep) {
-    if (days is! Map) return const {};
-    final dated = <String, DateTime>{};
-    for (final entry in days.entries) {
-      final key = entry.key.toString();
-      final date = _parseDayKey(key);
-      if (date != null) dated[key] = date;
+  /// 恢复时用的书表：把内容 id 还原成存储键（音频/漫画带 `kind:` 前缀），
+  /// 和历史的键规则保持一致。
+  List<({String id, String kind, Map<String, double> devices})>
+  get bookEntries => [
+    for (final book in books)
+      (
+        id: book.kind == 'audio' || book.kind == 'manga'
+            ? '${book.kind}:${book.id}'
+            : book.id,
+        kind: book.kind,
+        devices: book.devices,
+      ),
+  ];
+
+  /// `{deviceId: seconds}`，逐项校验；秒数 <= 0 的条目直接丢掉。
+  static Map<String, double> _deviceSeconds(dynamic raw) {
+    if (raw is! Map) throw const FormatException('备份中的阅读时长无效');
+    final out = <String, double>{};
+    for (final entry in raw.entries) {
+      final device = entry.key.toString();
+      if (!_devicePattern.hasMatch(device)) {
+        throw const FormatException('备份中的设备标识无效');
+      }
+      final seconds = entry.value;
+      if (seconds is! num ||
+          !seconds.isFinite ||
+          seconds < 0 ||
+          seconds > _maxDaySeconds) {
+        throw const FormatException('备份中的阅读时长无效');
+      }
+      if (seconds <= 0) continue;
+      out[device] = seconds.toDouble();
     }
-    if (dated.length <= keep) {
-      return {
-        for (final entry in days.entries) entry.key.toString(): entry.value,
-      };
-    }
-    final keys = dated.keys.toList()
-      ..sort((a, b) => dated[a]!.compareTo(dated[b]!));
-    return {for (final key in keys.sublist(keys.length - keep)) key: days[key]};
+    return out;
   }
 
   /// `book:123` -> `(kind: 'book', id: '123')`。作品标识里不会有冒号

@@ -86,7 +86,7 @@ void main() {
       await Future.wait([first, second, cleared]);
 
       expect(store.historySnapshot(), isEmpty);
-      expect(store.readTimeSnapshot(), isEmpty);
+      expect(store.readTimeBookTotals(), isEmpty);
     });
 
     test('$kind save after clearing keeps its own new reading time', () async {
@@ -99,7 +99,7 @@ void main() {
       final history = store.historySnapshot();
       expect(history, hasLength(1));
       expect(historyContentId(history.single), 'new');
-      final time = store.readTimeSnapshot();
+      final time = store.readTimeBookTotals();
       expect(time.keys, [_hasAudioScope(kind) ? 'audio:new' : 'new']);
       expect(_totalSeconds(store), 7);
     });
@@ -129,7 +129,7 @@ void main() {
     final newer = store.accumulateReadTime('new', 'book', 7);
     await Future.wait([cleared, newer]);
 
-    expect(store.readTimeSnapshot().keys, ['new']);
+    expect(store.readTimeBookTotals().keys, ['new']);
     expect(_totalSeconds(store), 7);
   });
 
@@ -158,7 +158,7 @@ void main() {
       expect(history, hasLength(1));
       expect(history.single['id'], 'audio:shared');
       expect(history.single['position'], 12);
-      expect(store.readTimeSnapshot().keys, ['audio:shared']);
+      expect(store.readTimeBookTotals().keys, ['audio:shared']);
       expect(_totalSeconds(store), 7);
     },
   );
@@ -227,8 +227,6 @@ Future<void> _save(
 }
 
 double _totalSeconds(LibraryStore store) =>
-    store.readTimeSnapshot().values.fold(
-      0.0,
-      (total, days) =>
-          total + days.values.fold(0.0, (sum, seconds) => sum + seconds),
-    );
+    store.readTimeBookTotals().values.fold(0.0, (total, seconds) {
+      return total + seconds;
+    });

@@ -29,7 +29,9 @@ const double _flatBookMinutes = 10;
 class _StatsPageState extends State<StatsPage> {
   DateTime _selected = DateTime.now();
   List<Map<String, dynamic>> _history = [];
-  Map<String, Map<String, double>> _readTimeMap = {};
+  /// 按天总秒数、按书总秒数。两张表分别对应「日历/累计」和「排行」两个维度，
+  /// 不再需要「某书某天」的交叉明细。按天表算完就折进 `_dayMinutes`，不留字段。
+  Map<String, double> _bookSeconds = const {};
   bool _loading = true;
   // Derived aggregates, computed once per load so build() (which may be
   // called several times per frame for different cards) doesn't rebuild them.
@@ -43,18 +45,17 @@ class _StatsPageState extends State<StatsPage> {
 
   Map<String, double> _computeDayMinutes(
     List<Map<String, dynamic>> history,
-    Map<String, Map<String, double>> readTimeMap,
+    Map<String, double> daySeconds,
+    Map<String, double> bookSeconds,
   ) {
     final map = <String, double>{};
     void add(String day, double minutes) =>
         map[day] = (map[day] ?? 0) + minutes;
     // Real recorded reading time (seconds → minutes).
-    for (final days in readTimeMap.values) {
-      days.forEach((day, secs) => add(day, secs / 60));
-    }
+    daySeconds.forEach((day, secs) => add(day, secs / 60));
     // Fallback estimates for books without real data yet, so older history
     // still shows up during the transition. Drops out once real data exists.
-    final withRealData = readTimeMap.keys.toSet();
+    final withRealData = bookSeconds.keys.toSet();
     for (final entry in history) {
       final id = historyStatisticsId(entry);
       if (withRealData.contains(id)) continue;
@@ -128,13 +129,14 @@ class _StatsPageState extends State<StatsPage> {
     _storeDirty = false;
     final store = LibraryStore.instance;
     final history = store.historySnapshot();
-    final timeMap = store.readTimeSnapshot();
+    final daySeconds = store.readTimeDailyTotals();
+    final bookSeconds = store.readTimeBookTotals();
     final kinds = store.readTimeKindSnapshot();
     setState(() {
       _history = history;
-      _readTimeMap = timeMap;
-      _dayMinutes = _computeDayMinutes(history, timeMap);
-      _rankItems = _computeRankItems(history, timeMap, kinds);
+      _bookSeconds = bookSeconds;
+      _dayMinutes = _computeDayMinutes(history, daySeconds, bookSeconds);
+      _rankItems = _computeRankItems(history, bookSeconds, kinds);
       _loading = false;
     });
   }
@@ -201,13 +203,13 @@ class _StatsPageState extends State<StatsPage> {
 
   List<_RankItem> _computeRankItems(
     List<Map<String, dynamic>> history,
-    Map<String, Map<String, double>> readTimeMap,
+    Map<String, double> bookSeconds,
     Map<String, String> readTimeKinds,
   ) {
     final byBook = <String, _RankItem>{};
     // Real recorded reading time.
-    readTimeMap.forEach((bookId, days) {
-      final totalMin = days.values.fold<double>(0, (a, b) => a + b) / 60;
+    bookSeconds.forEach((bookId, secs) {
+      final totalMin = secs / 60;
       if (totalMin <= 0) return;
       final entry = history.firstWhere(
         (e) => historyStatisticsId(e) == bookId,
@@ -216,7 +218,7 @@ class _StatsPageState extends State<StatsPage> {
       byBook[bookId] = _RankItem(entry: entry, minutes: totalMin, index: 0);
     });
     // Fallback for history books without real data yet.
-    final withRealData = readTimeMap.keys.toSet();
+    final withRealData = bookSeconds.keys.toSet();
     for (final entry in history) {
       final id = historyStatisticsId(entry);
       if (withRealData.contains(id)) continue;
@@ -288,7 +290,7 @@ class _StatsPageState extends State<StatsPage> {
           const SizedBox(height: 12),
           _RecentBooksCard(
             history: _history,
-            readTimeMap: _readTimeMap,
+            bookSeconds: _bookSeconds,
             onTap: _openHistory,
           ),
           const SizedBox(height: 12),
@@ -408,13 +410,11 @@ String _formatMonth(DateTime d) => '${d.month}月';
 /// otherwise the flat per-entry estimate (pre-tracking history).
 double _bookMinutesOf(
   Map<String, dynamic> entry,
-  Map<String, Map<String, double>> timeMap,
+  Map<String, double> bookSeconds,
 ) {
   final id = historyStatisticsId(entry);
-  final days = timeMap[id];
-  if (days != null && days.isNotEmpty) {
-    return days.values.fold<double>(0, (a, b) => a + b) / 60;
-  }
+  final seconds = bookSeconds[id];
+  if (seconds != null && seconds > 0) return seconds / 60;
   return _flatBookMinutes;
 }
 
@@ -720,12 +720,12 @@ class _Heatmap extends StatelessWidget {
 
 class _RecentBooksCard extends StatelessWidget {
   final List<Map<String, dynamic>> history;
-  final Map<String, Map<String, double>> readTimeMap;
+  final Map<String, double> bookSeconds;
   final void Function(Map<String, dynamic>) onTap;
 
   const _RecentBooksCard({
     required this.history,
-    required this.readTimeMap,
+    required this.bookSeconds,
     required this.onTap,
   });
 
@@ -799,7 +799,7 @@ class _RecentBooksCard extends StatelessWidget {
               ),
             ),
             Text(
-              _formatDuring(_bookMinutesOf(entry, readTimeMap)),
+              _formatDuring(_bookMinutesOf(entry, bookSeconds)),
               style: const TextStyle(fontSize: 12, color: Colors.grey),
             ),
           ],

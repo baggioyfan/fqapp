@@ -22,6 +22,7 @@ import '../services/reader_preferences.dart';
 import '../services/reader_tap_zones.dart';
 import '../services/reader_underline_store.dart';
 import '../services/system_tts.dart';
+import '../services/webdav_auto_sync.dart';
 import '../widgets/chapter_cache_sheet.dart';
 import '../widgets/reader/reader_appearance_sheet.dart';
 import '../widgets/reader/reader_bubble.dart';
@@ -987,6 +988,10 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     _settleReadTime();
     _sessionActive = false;
     unawaited(_persistProgress());
+    // 离开阅读页就把这次进度推上去。应用还在前台，请求跑得完；真正「退出」
+    // 时的兜底是 root 的 paused/hidden（见 main.dart）。同步内部会先等
+    // 上面那次写入落盘，所以推上去的不会是被截断的旧进度。
+    unawaited(WebdavAutoSync.instance.syncOnLeave());
     _scrollController.dispose();
     super.dispose();
   }
@@ -1002,6 +1007,9 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
       _sessionActive = false;
       _appActive = false;
       unawaited(_persistProgress());
+      // 只是标记「有改动」，真正发请求的是 root 的 paused 兜底 —— 那里会先
+      // 等这次写入落盘，避免把上一秒的进度推上去。
+      WebdavAutoSync.instance.markDirty();
     } else if (resumed && !_appActive) {
       _appActive = true;
       _syncSystemBars();

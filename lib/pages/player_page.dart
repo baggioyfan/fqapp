@@ -21,6 +21,7 @@ import '../services/drama_download_store.dart';
 import 'drama_download_sheet.dart';
 import '../services/library_store.dart';
 import '../services/native_player.dart';
+import '../services/webdav_auto_sync.dart';
 import '../services/playback_issue.dart';
 import '../services/player_history.dart';
 import '../services/player_load_diagnostics.dart';
@@ -1075,7 +1076,11 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       _syncWatchClock();
       _progressTimer = Timer.periodic(const Duration(seconds: 2), (_) {
         // A paused episode must not keep re-stamping its history record.
-        if (_playing) unawaited(_persistProgress());
+        if (_playing) {
+          unawaited(_persistProgress());
+          // 播放期间写入不会停，所以走节流而不是防抖（防抖永远等不到静默）。
+          WebdavAutoSync.instance.markPlaybackWrite();
+        }
       });
     } catch (error) {
       if (_current(generation)) {

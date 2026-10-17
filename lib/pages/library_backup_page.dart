@@ -91,7 +91,7 @@ class _LibraryBackupPageState extends State<LibraryBackupPage> {
 
   static String _counts(LibraryBackup backup) =>
       '${backup.shelf.length} 条收藏、${backup.history.length} 条进度、'
-      '${backup.episodeCount} 集已看标记、${backup.readTime.length} 项阅读时长、'
+      '${backup.episodeCount} 集已看标记、${backup.books.length} 项阅读时长、'
       '${backup.searchHistory.length} 条搜索历史';
 
   @override

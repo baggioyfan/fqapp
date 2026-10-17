@@ -138,7 +138,7 @@ void main() {
       });
       await store.init();
       expect(await store.historyEntry('kept-book'), isNotNull);
-      expect(store.readTimeSnapshot()['kept-book'], {'2026-9-17': 30.0});
+      expect(store.readTimeBookTotals()['kept-book'], 30.0);
       final preferences = await SharedPreferences.getInstance();
       expect(preferences.containsKey('hist'), isTrue);
       expect(preferences.containsKey('read_time_map'), isTrue);
@@ -163,11 +163,11 @@ void main() {
           }
           expect(store.historySnapshot(), isEmpty);
           expect(
-            store.readTimeSnapshot(),
+            store.readTimeBookTotals(),
             clearAll
                 ? isEmpty
                 : equals({
-                    'kept-book': {'2026-9-17': 30.0},
+                    'kept-book': 30.0,
                   }),
           );
 
@@ -176,11 +176,11 @@ void main() {
 
           expect(store.historySnapshot(), isEmpty);
           expect(
-            store.readTimeSnapshot(),
+            store.readTimeBookTotals(),
             clearAll
                 ? isEmpty
                 : equals({
-                    'kept-book': {'2026-9-17': 30.0},
+                    'kept-book': 30.0,
                   }),
           );
           final preferences = await SharedPreferences.getInstance();
@@ -221,7 +221,7 @@ void main() {
               throwsA(throws ? isA<PlatformException>() : isA<StateError>()),
             );
             expect(await store.historyEntry('kept-book'), isNotNull);
-            expect(store.readTimeSnapshot()['kept-book'], {'2026-9-17': 30.0});
+            expect(store.readTimeBookTotals()['kept-book'], 30.0);
             final preferences = await SharedPreferences.getInstance();
             // SharedPreferences mutates its cache before its platform write.
             expect(preferences.containsKey(scenario.failedKey), isFalse);
@@ -246,11 +246,11 @@ void main() {
             await store.init();
             expect(store.historySnapshot(), isEmpty);
             expect(
-              store.readTimeSnapshot(),
+              store.readTimeBookTotals(),
               scenario.clearAll
                   ? isEmpty
                   : equals({
-                      'kept-book': {'2026-9-17': 30.0},
+                      'kept-book': 30.0,
                     }),
             );
             expect(

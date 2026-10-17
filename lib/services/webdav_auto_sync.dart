@@ -1,4 +1,7 @@
+import 'dart:async';
+
 import 'app_log.dart';
+import 'library_store.dart';
 import 'secret_store.dart';
 import 'webdav_client.dart';
 import 'webdav_config.dart';
@@ -51,6 +54,15 @@ class WebdavAutoSync {
   /// 没有这个间隔就会把同步连成一串。
   static const minInterval = Duration(seconds: 30);
 
+  /// 写入会停的场景用防抖：翻页、退出阅读、改书架都是「一阵一阵」的，
+  /// 最后一次写入之后静默这么久才真正同步，中间的写入全部合并成一次。
+  static const debounceWindow = Duration(minutes: 3);
+
+  /// 写入不会停的场景用节流：后台播放每 2~5 秒就写一次进度，防抖永远等不到
+  /// 静默。这里按固定间隔放行，和 [debounceWindow] 是两个不同的东西 ——
+  /// 「写入会停 → 防抖；写入不会停 → 节流」。
+  static const playbackThrottle = Duration(minutes: 5);
+
   static WebdavTransport _webdavTransport(
     WebdavConfig config,
     String password,
@@ -62,6 +74,56 @@ class WebdavAutoSync {
   final _secrets = SecretStore.instance;
 
   DateTime? _lastAutoAt;
+  DateTime? _lastPlaybackAt;
+  Timer? _debounce;
+  bool _dirty = false;
+
+  /// 本机是否有还没推上去的改动。
+  bool get isDirty => _dirty;
+
+  /// 内容变了，安排一次防抖同步。
+  ///
+  /// 只标记、不立刻发请求：一次阅读会写入几十次进度，每次都同步等于把
+  /// 整包反复 PUT。真正兜底的是应用退到后台那一次（见 [syncOnBackground]）。
+  /// [delay] 让「用户主动操作」（改书架）比「连续写入」（翻页）更快落地。
+  void markDirty({Duration delay = debounceWindow}) {
+    _dirty = true;
+    _debounce?.cancel();
+    _debounce = Timer(delay, () {
+      _debounce = null;
+      unawaited(syncOnBackground(reason: 'debounce'));
+    });
+  }
+
+  /// 后台播放专用的节流入口：写入不会停，所以按固定间隔放行。
+  void markPlaybackWrite() {
+    _dirty = true;
+    final now = DateTime.now();
+    final last = _lastPlaybackAt;
+    if (last != null && now.difference(last) < playbackThrottle) return;
+    _lastPlaybackAt = now;
+    _debounce?.cancel();
+    _debounce = null;
+    unawaited(syncOnBackground(reason: 'playback'));
+  }
+
+  /// 离开阅读/播放页面时调用：取消防抖，立刻同步一次。
+  ///
+  /// 页面在离开前已经把进度落盘（`_persistProgress`），所以这里读到的是
+  /// 最新值。`minInterval` 仍然生效，连续进出页面不会连成一串。
+  Future<bool> syncOnLeave() {
+    _debounce?.cancel();
+    _debounce = null;
+    return syncOnBackground(reason: 'leave');
+  }
+
+  /// 应用退到后台或即将被回收时调用：把待发的改动立刻推上去。
+  Future<bool> flush() => syncOnLeave();
+
+  void dispose() {
+    _debounce?.cancel();
+    _debounce = null;
+  }
 
   /// 云端有更新时返回它，否则 null（没配置、没网、云端还没有文件、
   /// 已经是同步过的版本、用户点过忽略 —— 都是 null）。
@@ -105,12 +167,15 @@ class WebdavAutoSync {
   Future<void> dismiss(WebdavRemoteUpdate update) =>
       _config.markDismissed(update.remoteModified);
 
-  /// 退到后台时静默同步一次（用户点「回到桌面」或切走应用就会触发）。
+  /// 退到后台 / 离开页面 / 防抖到期时静默同步一次（用户点「回到桌面」、
+  /// 切走应用、翻完一章离开阅读页都会走到这里）。
   ///
   /// 只写日志不弹窗：用户已经离开，失败提示没人看。返回是否真的跑了同步。
-  Future<bool> syncOnBackground() async {
+  /// [reason] 只进日志，用来区分是哪条触发路径出的问题。
+  Future<bool> syncOnBackground({String reason = 'background'}) async {
     final now = DateTime.now();
     final last = _lastAutoAt;
+    // 失败也占用这个窗口：一次断网不该让后面每次写入都再撞一次墙。
     if (last != null && now.difference(last) < minInterval) return false;
     // 手动同步正在进行时让位，别把两次「读-合并-写」交错在一起。
     if (WebdavSyncService.isSyncing) return false;
@@ -118,15 +183,24 @@ class WebdavAutoSync {
     try {
       final config = await _config.load();
       if (config == null) return false;
+      // 先等本机排队中的写入落盘：页面在 dispose/paused 里提交的进度是异步
+      // 排队的，不等就会把上一秒的进度推上去。
+      await LibraryStore.instance.idle();
       final report = await _service.sync(config, password: await _password());
       await _config.markSynced(DateTime.now());
+      _dirty = false;
       AppLog.i(
         'webdav-auto',
-        '退到后台自动同步完成：收藏 ${report.shelf} 条、进度 ${report.history} 条',
+        '自动同步完成（$reason）：收藏 ${report.shelf} 条、进度 ${report.history} 条',
       );
       return true;
     } catch (error, stack) {
-      AppLog.w('webdav-auto', '退到后台自动同步失败', error: error, stack: stack);
+      AppLog.w(
+        'webdav-auto',
+        '自动同步失败（$reason）',
+        error: error,
+        stack: stack,
+      );
       return false;
     }
   }

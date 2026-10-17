@@ -30,7 +30,8 @@ class LibraryBackupService {
         shelfRemoved: shelfRemoved,
         history: snapshot.history,
         watched: snapshot.watched,
-        readTime: readTime,
+        daily: readTime.daily,
+        books: readTime.books,
         searchHistory: searchHistory,
       ),
     );
@@ -74,7 +75,8 @@ class LibraryBackupService {
     final library = await LibraryStore.instance.mergeBackup(
       history: backup.history,
       watched: backup.watched,
-      readTime: backup.readTimeEntries,
+      daily: backup.daily,
+      books: backup.bookEntries,
     );
     final shelf = await ShelfStore.instance.mergeBackup(
       backup.shelf,
