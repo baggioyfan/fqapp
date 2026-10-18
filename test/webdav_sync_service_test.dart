@@ -470,7 +470,9 @@ void main() {
       );
       expect(
         LibraryBackup.decode(transport.remote!).shelf.map((r) => r.item.id),
-        ['first', 'second'],
+        // 书架是「后加的在前」：ShelfStore.records() 按 addedAt 倒序排，
+        // 所以第二次同步写上去的并集是 second 在前。
+        ['second', 'first'],
       );
       expect(transport.shards.containsKey('fqapp-sync.json.tmp'), isFalse);
     });
