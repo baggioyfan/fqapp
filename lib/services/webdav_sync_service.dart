@@ -103,10 +103,28 @@ class WebdavSyncService {
     final transport = _transport(config, password);
     try {
       await transport.ensureCollection();
+      // 同 _syncOnce：412 会重新读合并，上一轮合并进本机的条目不会在下一轮
+      // 再出现，计数必须跨轮累加。
+      var carried = 0;
       var attempt = 0;
       while (true) {
+        final prepared = await _progressPrepare(
+          transport,
+          localDirty: localDirty,
+        );
+        carried += prepared.merged;
+        final bytes = prepared.bytes;
+        if (bytes == null) {
+          return (history: carried, uploadedBytes: 0);
+        }
         try {
-          return await _progressPass(transport, localDirty: localDirty);
+          await _progressWrite(
+            transport,
+            bytes,
+            ifMatch: prepared.ifMatch,
+          );
+          await _config.markProgressSynced(DateTime.now());
+          return (history: carried, uploadedBytes: bytes.length);
         } on WebdavException catch (error) {
           if (error.statusCode != 412 || attempt >= maxConditionalRetries) {
             rethrow;
@@ -123,7 +141,9 @@ class WebdavSyncService {
     }
   }
 
-  Future<ProgressSyncReport> _progressPass(
+  /// 读云端分片并合并；`bytes` 为 null 表示「云端没变、本机也没改」，
+  /// 这一趟什么都不用写。
+  Future<({int merged, Uint8List? bytes, String? ifMatch})> _progressPrepare(
     WebdavTransport transport, {
     required bool localDirty,
   }) async {
@@ -145,7 +165,7 @@ class WebdavSyncService {
         if (latest != null) merged += await _restoreProgress(latest.bytes);
         ifMatch = latest?.versionKey ?? remote.versionKey;
       } else {
-        if (!localDirty) return (history: 0, uploadedBytes: 0);
+        if (!localDirty) return (merged: merged, bytes: null, ifMatch: null);
         ifMatch = remote.versionKey;
       }
     }
@@ -153,20 +173,28 @@ class WebdavSyncService {
     final bytes = await Isolate.run(
       () => ProgressShard.capture(history).encode(),
     );
+    return (merged: merged, bytes: bytes, ifMatch: ifMatch);
+  }
+
+  /// 写分片并记下新版本。
+  ///
+  /// 服务器不回 ETag（坚果云就不回）时回读一次。多一个往返，换来下一次
+  /// 同步能直接走「版本相同直传」那条闸门；不回读的话本机永远不知道
+  /// 「刚写的是哪一版」，于是每次都会退化成完整读回。
+  Future<void> _progressWrite(
+    WebdavTransport transport,
+    Uint8List bytes, {
+    String? ifMatch,
+  }) async {
     var version = await transport.upload(
       bytes,
       name: ProgressShard.fileName,
       ifMatch: ifMatch,
     );
-    // 服务器不回 ETag（坚果云就不回）时回读一次。多一个往返，换来下一次
-    // 同步能直接走第 3 条闸门；不回读的话本机永远不知道「刚写的是哪一版」，
-    // 于是每次都会退化成第 1 条的完整读回。
     version ??= (await transport.remoteFile(
       name: ProgressShard.fileName,
     ))?.versionKey;
     await _config.markProgressVersion(version);
-    await _config.markProgressSynced(DateTime.now());
-    return (history: merged, uploadedBytes: bytes.length);
   }
 
   Future<int> _restoreProgress(Uint8List bytes) async {
@@ -228,10 +256,48 @@ class WebdavSyncService {
     final transport = _transport(config, password);
     try {
       await transport.ensureCollection();
+      // 412 之后会「重新读、重新合并、再写」，而上一轮合并进本机的条目
+      // 不会在下一轮的 merge 里再出现一次 —— 所以计数必须跨轮累加，
+      // 否则重试过的同步会少报（极端情况下报成 0，看起来像什么都没同步）。
+      var carried = (
+        shelf: 0,
+        history: 0,
+        episodes: 0,
+        readTime: 0,
+        searchHistory: 0,
+      );
+      var remoteExisted = false;
+      DateTime? remoteModified;
       var attempt = 0;
       while (true) {
+        final prepared = await _prepare(transport, config);
+        carried = (
+          shelf: carried.shelf + prepared.merged.shelf,
+          history: carried.history + prepared.merged.history,
+          episodes: carried.episodes + prepared.merged.episodes,
+          readTime: carried.readTime + prepared.merged.readTime,
+          searchHistory: carried.searchHistory + prepared.merged.searchHistory,
+        );
+        remoteExisted = prepared.remoteExisted;
+        remoteModified = prepared.remoteModified;
         try {
-          return await _fullPass(transport, config);
+          await _commit(
+            transport,
+            config,
+            bytes: prepared.bytes,
+            history: prepared.snapshot.history,
+            ifMatch: prepared.versionKey,
+          );
+          return (
+            remoteExisted: remoteExisted,
+            remoteModified: remoteModified,
+            uploadedBytes: prepared.bytes.length,
+            shelf: carried.shelf,
+            history: carried.history,
+            episodes: carried.episodes,
+            readTime: carried.readTime,
+            searchHistory: carried.searchHistory,
+          );
         } on WebdavException catch (error) {
           if (error.statusCode != 412 || attempt >= maxConditionalRetries) {
             rethrow;
@@ -299,15 +365,25 @@ class WebdavSyncService {
     }
   }
 
-  /// 一次「读云端 → 合并 → 带版本写回」。
+  /// 读云端、合并进本机，并算出这次要写上去的字节。
   ///
-  /// 写回走三步替换（见 [_writeAtomically]），读回带两层兜底：撞上替换窗口
-  /// 时等一下再看，主文件读不懂时退到上一版。这两条合起来，才让「一次失败
+  /// 与写回分开，是为了让 412 重试时能「重新读一遍再合并」—— 上一轮的合并
+  /// 结果已经在本地数据里，所以每一轮都必须重新 capture，不能复用上一次的
+  /// 字节。
+  ///
+  /// 读回带两层兜底：撞上替换窗口时等一下再看（[_downloadPrimary]），主文件
+  /// 读不懂时退到上一版（[_decodeWithBackup]）。这两条合起来，才让「一次失败
   /// 的上传」不再等于「两台设备永远锁死」。
-  Future<WebdavSyncReport> _fullPass(
-    WebdavTransport transport,
-    WebdavConfig config,
-  ) async {
+  Future<({
+    LibraryBackup snapshot,
+    Uint8List bytes,
+    ({int shelf, int history, int episodes, int readTime, int searchHistory})
+    merged,
+    String? versionKey,
+    bool remoteExisted,
+    DateTime? remoteModified,
+  })>
+  _prepare(WebdavTransport transport, WebdavConfig config) async {
     final primary = await _downloadPrimary(transport, config);
     var merged = (
       shelf: 0,
@@ -323,11 +399,29 @@ class WebdavSyncService {
     }
     final snapshot = await _backups.capture();
     final bytes = await Isolate.run(snapshot.encode);
+    return (
+      snapshot: snapshot,
+      bytes: bytes,
+      merged: merged,
+      versionKey: primary?.versionKey,
+      remoteExisted: primary != null,
+      remoteModified: primary?.modified,
+    );
+  }
+
+  /// 把合并后的快照原子写回，并顺手刷新热路径分片。
+  Future<void> _commit(
+    WebdavTransport transport,
+    WebdavConfig config, {
+    required Uint8List bytes,
+    required List<Map<String, dynamic>> history,
+    String? ifMatch,
+  }) async {
     final version = await _writeAtomically(
       transport,
       config,
       bytes,
-      ifMatch: primary?.versionKey,
+      ifMatch: ifMatch,
     );
     await _config.markFullVersion(version);
     // 整包里也带着进度，顺手把热路径分片写成同一份内容。
@@ -337,7 +431,7 @@ class WebdavSyncService {
     // 分片不走三步替换：它只有几十 KB、频率高，多三个往返不值得；而且它
     // 的内容能从整包重建，坏掉不是灾难 —— 整包才是。
     final progressBytes = await Isolate.run(
-      () => ProgressShard.capture(snapshot.history).encode(),
+      () => ProgressShard.capture(history).encode(),
     );
     final progressRemote = await transport.remoteFile(
       name: ProgressShard.fileName,
@@ -351,18 +445,9 @@ class WebdavSyncService {
       name: ProgressShard.fileName,
     ))?.versionKey;
     await _config.markProgressVersion(progressVersion);
-    await _config.markSynced(DateTime.now());
-    await _config.markProgressSynced(DateTime.now());
-    return (
-      remoteExisted: primary != null,
-      remoteModified: primary?.modified,
-      uploadedBytes: bytes.length,
-      shelf: merged.shelf,
-      history: merged.history,
-      episodes: merged.episodes,
-      readTime: merged.readTime,
-      searchHistory: merged.searchHistory,
-    );
+    final now = DateTime.now();
+    await _config.markSynced(now);
+    await _config.markProgressSynced(now);
   }
 
   /// 读整包；撞上「别人正在替换」的窗口时等一下重看一次。
