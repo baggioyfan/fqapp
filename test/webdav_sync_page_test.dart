@@ -31,6 +31,7 @@ class _SpySync implements WebdavSyncService {
   Future<WebdavSyncReport> sync(
     WebdavConfig config, {
     required String password,
+    SyncPriority priority = SyncPriority.manual,
   }) async {
     receivedConfig = config;
     receivedPassword = password;
@@ -44,6 +45,7 @@ class _SpySync implements WebdavSyncService {
     WebdavConfig config, {
     required String password,
     required bool localDirty,
+    SyncPriority priority = SyncPriority.manual,
   }) async => (history: 0, uploadedBytes: 0);
 
   /// 「用本机覆盖云端」是逃生口，页面上只按钮到方法的一跳，真正的写入由

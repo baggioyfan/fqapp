@@ -129,15 +129,36 @@ class WebdavClient implements WebdavTransport {
     required this.password,
     http.Client? client,
     this.timeout = const Duration(seconds: 30),
+    this.readIdleTimeout = defaultReadIdleTimeout,
+    this.readDeadline = defaultReadDeadline,
   }) : _client = client ?? http.Client(),
        _ownsClient = client == null;
 
   final WebdavConfig config;
   final String password;
+
+  /// 等到响应头（`_client.send` 那一刻）的上限。正文另算，见 [_read]。
   final Duration timeout;
+
+  /// 正文分块之间的间隔上限。
+  final Duration readIdleTimeout;
+
+  /// 一次响应正文读到底的总时长上限。
+  final Duration readDeadline;
 
   final http.Client _client;
   final bool _ownsClient;
+
+  /// 服务器把响应头发完就沉默时，最多等这么久。
+  ///
+  /// [timeout] 只包住「等到响应头」。头到了、正文一个字节都不来，`await for`
+  /// 没有自己的超时，同步会永远挂在待办队列里：之后每一次同步都排在它后面，
+  /// 页面上就是一直转圈，而且没有任何错误可显示。分块计时是唯一能发现
+  /// 「连接还在、但对面不说话了」的手段。
+  static const defaultReadIdleTimeout = Duration(seconds: 20);
+
+  /// 慢速滴流的兜底：每块都没超时、总量却可以拖几个小时。
+  static const defaultReadDeadline = Duration(minutes: 2);
 
   /// Control responses carry a few hundred bytes; capping them keeps a hostile
   /// or misconfigured server from being buffered without limit.
@@ -349,26 +370,95 @@ class WebdavClient implements WebdavTransport {
 
   /// Buffers a response, refusing anything above [limit] instead of letting a
   /// wrong URL pull an unbounded body into memory.
+  ///
+  /// 两把超时锁住「连接还在但不说话」：
+  /// - [readIdleTimeout] 管相邻两块之间的空档（`Stream.timeout`）；
+  /// - [readDeadline] 管整段正文的总时长（慢速滴流每块都不超时）。
+  ///
+  /// 任何一条触发都会取消订阅并抛 [WebdavException]：宁可让这次同步失败，
+  /// 也不能让一个半死的连接把后面所有同步都堵在队列里。
   Future<http.Response> _read(
     http.StreamedResponse streamed, {
     required int limit,
-  }) async {
+  }) {
     final body = BytesBuilder(copy: false);
-    await for (final chunk in streamed.stream) {
-      if (body.length + chunk.length > limit) {
-        throw WebdavException(
-          '服务器返回的内容超过 ${(limit / (1024 * 1024)).toStringAsFixed(1)} MB，'
-          '已停止读取',
-        );
-      }
-      body.add(chunk);
+    final done = Completer<http.Response>();
+
+    void fail(Object error) {
+      if (done.isCompleted) return;
+      done.completeError(_asWebdav(error));
     }
-    return http.Response.bytes(
-      body.takeBytes(),
-      streamed.statusCode,
-      headers: streamed.headers,
-      request: streamed.request,
+
+    late final StreamSubscription<List<int>> subscription;
+    final deadline = Timer(readDeadline, () {
+      if (done.isCompleted) return;
+      fail(
+        WebdavException(
+          '读取云端数据超过 ${readDeadline.inSeconds} 秒仍未完成，已中断，请稍后重试',
+        ),
+      );
+    });
+
+    subscription = streamed.stream.timeout(readIdleTimeout).listen(
+      (chunk) {
+        if (body.length + chunk.length > limit) {
+          fail(
+            WebdavException(
+              '服务器返回的内容超过 ${(limit / (1024 * 1024)).toStringAsFixed(1)} MB，'
+              '已停止读取',
+            ),
+          );
+          return;
+        }
+        body.add(chunk);
+      },
+      onError: fail,
+      onDone: () {
+        if (done.isCompleted) return;
+        done.complete(
+          http.Response.bytes(
+            body.takeBytes(),
+            streamed.statusCode,
+            headers: streamed.headers,
+            request: streamed.request,
+          ),
+        );
+      },
+      cancelOnError: true,
     );
+
+    return done.future.whenComplete(() {
+      deadline.cancel();
+      // 错误路径上 `cancelOnError` 已经取消过订阅，重复取消是安全的；
+      // 成功路径上这一句让底层连接有机会释放。
+      unawaited(subscription.cancel());
+    });
+  }
+
+  /// 把读正文时才冒出来的异常翻译成 [WebdavException]。
+  ///
+  /// 这些异常在 `_open` 里已经处理过一轮，但那时只覆盖「建立连接」这一段；
+  /// 连接在中途断掉是另一条路径，原始 `SocketException` 直接冒到页面上只会
+  /// 显示成一行看不清的英文。
+  WebdavException _asWebdav(Object error) {
+    if (error is WebdavException) return error;
+    if (error is TimeoutException) {
+      return WebdavException(
+        '服务器超过 ${readIdleTimeout.inSeconds} 秒没有返回数据，连接已断开，'
+        '请检查网络或稍后重试',
+      );
+    }
+    if (error is SocketException) {
+      final detail = error.osError?.message ?? error.message;
+      return WebdavException('与服务器的连接中断（$detail）');
+    }
+    if (error is http.ClientException) {
+      return WebdavException('请求失败：${error.message}');
+    }
+    if (error is HttpException) {
+      return const WebdavException('与服务器的连接中断，请稍后重试');
+    }
+    return const WebdavException('读取云端数据时连接中断，请稍后重试');
   }
 
   Future<http.StreamedResponse> _open(

@@ -200,6 +200,8 @@ class WebdavAutoSync {
         config,
         password: await _password(),
         localDirty: _dirty,
+        // 后台发起的：排队时可以被用户点的「立即同步」直接取代。
+        priority: SyncPriority.background,
       );
       if (report.uploadedBytes > 0) {
         _dirty = false;
@@ -328,7 +330,11 @@ class WebdavAutoSync {
       // 先等本机排队中的写入落盘：页面在 dispose/paused 里提交的进度是异步
       // 排队的，不等就会把上一秒的进度推上去。
       await LibraryStore.instance.idle();
-      final report = await _service.sync(config, password: await _password());
+      final report = await _service.sync(
+        config,
+        password: await _password(),
+        priority: SyncPriority.background,
+      );
       await _config.markSynced(DateTime.now());
       _dirty = false;
       _coldDirty = false;

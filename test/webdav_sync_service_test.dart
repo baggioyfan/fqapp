@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
@@ -50,6 +51,9 @@ class _FakeTransport implements WebdavTransport {
   /// 三步替换的第一步就该发现它并放弃替换。
   bool truncateUploads = false;
 
+  /// 卡住第一个请求不返回：用来测「超过总时长预算会中止」和「排队」。
+  Completer<void>? hold;
+
   var _counter = 0;
 
   /// 主文件在假服务端里是 [remote]，也就是 `name == null` 那一路。
@@ -82,7 +86,10 @@ class _FakeTransport implements WebdavTransport {
   }
 
   @override
-  Future<void> ensureCollection() async => ensured = true;
+  Future<void> ensureCollection() async {
+    ensured = true;
+    if (hold case final gate?) await gate.future;
+  }
 
   @override
   Future<({Uint8List bytes, DateTime? modified, String? versionKey})?>
@@ -558,6 +565,76 @@ void main() {
       throwsA(isA<WebdavException>()),
     );
     expect(transport.closed, isTrue);
+  });
+
+  group('time budget and queue', () {
+    test('a sync that outlives its budget fails instead of hanging', () async {
+      // 队列是串行的：一次永远不返回的同步会把之后每一次都堵住，
+      // 页面上只剩「一直转圈」——没有错误，也没有出路。
+      await ShelfStore.instance.add(_item('local-1'));
+      transport.hold = Completer<void>();
+      final shortBudget = WebdavSyncService(
+        transport: (config, password) => transport,
+        budget: const Duration(milliseconds: 120),
+      );
+
+      await expectLater(
+        shortBudget.sync(config, password: 'hunter2'),
+        throwsA(
+          isA<WebdavException>().having(
+            (error) => error.message,
+            'message',
+            contains('仍未完成'),
+          ),
+        ),
+      );
+      // 超时后必须自己把连接关掉：挂起的请求留在那儿，下一次同步只是
+      // 换了个排队的人，问题没有消失。
+      expect(transport.closed, isTrue);
+      // 队列也确实空了 —— 后续同步能开始，而不是永远等在它后面。
+      expect(WebdavSyncService.isSyncing, isFalse);
+    });
+
+    test('a manual sync drops a queued background job instead of waiting', () async {
+      await ShelfStore.instance.add(_item('local-1'));
+      final gate = Completer<void>();
+      transport.hold = gate;
+
+      // 第一个任务占住队列。
+      final running = service.syncProgress(
+        config,
+        password: 'hunter2',
+        localDirty: true,
+        priority: SyncPriority.background,
+      );
+      // 第二个后台任务只能在后面排着。
+      final queued = service.syncProgress(
+        config,
+        password: 'hunter2',
+        localDirty: true,
+        priority: SyncPriority.background,
+      );
+      expect(WebdavSyncService.state, SyncRunState.running);
+
+      // 用户这时点了「立即同步」：排队那个已经没有意义了。
+      final manual = service.sync(config, password: 'hunter2');
+
+      await expectLater(
+        queued,
+        throwsA(
+          isA<WebdavException>().having(
+            (error) => error.message,
+            'message',
+            contains('已被手动同步取代'),
+          ),
+        ),
+      );
+
+      gate.complete();
+      await running;
+      await manual;
+      expect(WebdavSyncService.isSyncing, isFalse);
+    });
   });
 }
 

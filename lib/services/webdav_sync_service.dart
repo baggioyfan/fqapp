@@ -24,6 +24,42 @@ typedef WebdavSyncReport = ({
 /// 进度分片的一次同步：合并了几条、写上去多少字节。
 typedef ProgressSyncReport = ({int history, int uploadedBytes});
 
+/// 同步队列的状态。
+///
+/// 以前只有一个 `isSyncing` 布尔量，页面上能表达的只有「在跑 / 没跑」。
+/// 拆开之后「排队中」可以说出口：用户点了按钮却看着上一个任务收尾，那里
+/// 本来该显示「排队中」，而不是让按钮一直转圈。
+enum SyncRunState { idle, queued, running }
+
+/// 谁发起的这次同步。
+///
+/// 只在排队时起作用：手动同步（设置页按钮、打开应用时的提示弹窗）会把
+/// **还在排队、尚未开始**的后台任务直接作废 —— 手动这次会把它们要做的事
+/// 一起做掉，让用户等一个后台任务收尾没有意义。
+///
+/// 已经在跑的任务不会被抢断：「读 → 合并 → 写」中途换人，正是这套闸门
+/// 一开始要防的那种交错。
+enum SyncPriority { manual, background }
+
+/// 队列里的一个位置。
+class _SyncJob {
+  _SyncJob(this.priority);
+
+  final SyncPriority priority;
+
+  /// 轮到自己跑完了（或没跑就被作废）。排在后面的任务等的是它。
+  final Completer<void> finished = Completer<void>();
+
+  /// 还没开始就被手动同步取代了。
+  ///
+  /// 单独一个信号，是为了让被取代的那个**立刻**醒来：它当时正挂着等前一个
+  /// 任务，如果只能等那个 future 完成，用户还是得看完整整一轮后台同步才会
+  /// 收到「已跳过」。
+  final Completer<void> cancelled = Completer<void>();
+
+  bool get dropped => cancelled.isCompleted;
+}
+
 /// Builds the transport for one sync, so tests can substitute an in-memory
 /// server for a real one.
 typedef WebdavTransportFactory = WebdavTransport Function(
@@ -46,8 +82,20 @@ class WebdavSyncService {
   WebdavSyncService({
     LibraryBackupService? backups,
     WebdavTransportFactory? transport,
+    this.budget = defaultBudget,
   }) : _backups = backups ?? LibraryBackupService(),
        _transport = transport ?? _webdavTransport;
+
+  /// 一次同步的总时长上限。
+  ///
+  /// 单个请求已经各自有超时（见 `WebdavClient`），但一次整包同步最多六个
+  /// 往返，三步替换还要再加两次 MOVE；逐个超时叠起来能到好几分钟。而
+  /// 「很久」和「卡死」在页面上长得一样。这里给整趟一个预算，超了就中止
+  /// 并关掉连接 —— 关连接会立刻打断挂起的请求，排队中的下一次同步才真正
+  /// 开始得了。
+  static const defaultBudget = Duration(seconds: 90);
+
+  final Duration budget;
 
   static WebdavTransport _webdavTransport(
     WebdavConfig config,
@@ -99,45 +147,65 @@ class WebdavSyncService {
     WebdavConfig config, {
     required String password,
     required bool localDirty,
+    SyncPriority priority = SyncPriority.manual,
+  }) => _schedule(
+    priority,
+    () => _progressOnce(config, password: password, localDirty: localDirty),
+  );
+
+  Future<ProgressSyncReport> _progressOnce(
+    WebdavConfig config, {
+    required String password,
+    required bool localDirty,
   }) async {
     final transport = _transport(config, password);
     try {
-      await transport.ensureCollection();
-      // 同 _syncOnce：412 会重新读合并，上一轮合并进本机的条目不会在下一轮
-      // 再出现，计数必须跨轮累加。
-      var carried = 0;
-      var attempt = 0;
-      while (true) {
-        final prepared = await _progressPrepare(
-          transport,
-          localDirty: localDirty,
-        );
-        carried += prepared.merged;
-        final bytes = prepared.bytes;
-        if (bytes == null) {
-          return (history: carried, uploadedBytes: 0);
-        }
-        try {
-          await _progressWrite(
-            transport,
-            bytes,
-            ifMatch: prepared.ifMatch,
-          );
-          await _config.markProgressSynced(DateTime.now());
-          return (history: carried, uploadedBytes: bytes.length);
-        } on WebdavException catch (error) {
-          if (error.statusCode != 412 || attempt >= maxConditionalRetries) {
-            rethrow;
-          }
-          attempt++;
-          AppLog.i(
-            'webdav-sync',
-            '进度写回时云端已被改动，重新合并后重试（第 $attempt 次）',
-          );
-        }
-      }
+      return await _withBudget(
+        () => _progressPasses(transport, localDirty: localDirty),
+        onExpire: transport.close,
+      );
     } finally {
       transport.close();
+    }
+  }
+
+  Future<ProgressSyncReport> _progressPasses(
+    WebdavTransport transport, {
+    required bool localDirty,
+  }) async {
+    await transport.ensureCollection();
+    // 同 _syncOnce：412 会重新读合并，上一轮合并进本机的条目不会在下一轮
+    // 再出现，计数必须跨轮累加。
+    var carried = 0;
+    var attempt = 0;
+    while (true) {
+      final prepared = await _progressPrepare(
+        transport,
+        localDirty: localDirty,
+      );
+      carried += prepared.merged;
+      final bytes = prepared.bytes;
+      if (bytes == null) {
+        return (history: carried, uploadedBytes: 0);
+      }
+      try {
+        await _progressWrite(
+          transport,
+          bytes,
+          ifMatch: prepared.ifMatch,
+        );
+        await _config.markProgressSynced(DateTime.now());
+        return (history: carried, uploadedBytes: bytes.length);
+      } on WebdavException catch (error) {
+        if (error.statusCode != 412 || attempt >= maxConditionalRetries) {
+          rethrow;
+        }
+        attempt++;
+        AppLog.i(
+          'webdav-sync',
+          '进度写回时云端已被改动，重新合并后重试（第 $attempt 次）',
+        );
+      }
     }
   }
 
@@ -213,41 +281,100 @@ class WebdavSyncService {
 
   /// 同一时刻只跑一次同步。手动按钮与「退到后台自动同步」可能撞上，
   /// 两次「读云端 → 合并 → 写回」交错，结果就取决于谁最后上传。
-  /// 排队而不是丢弃：手动那次不该被静默跳过。
-  static Future<void> _queue = Future<void>.value();
-  static int _pending = 0;
+  ///
+  /// 队列是静态的：配置和凭据本来就是全局单例，两台设备之间也好、页面和
+  /// 后台任务之间也好，同一份 WebDAV 目录同时只该有一条同步在写。
+  static final List<_SyncJob> _jobs = <_SyncJob>[];
+  static _SyncJob? _running;
+
+  /// 队列现在的样子，供页面显示「排队中」还是「正在同步」。
+  static SyncRunState get state {
+    if (_running != null) return SyncRunState.running;
+    return _jobs.isEmpty ? SyncRunState.idle : SyncRunState.queued;
+  }
 
   /// 有同步正在排队或进行中。自动同步用它让位于手动同步。
-  static bool get isSyncing => _pending > 0;
+  static bool get isSyncing => state != SyncRunState.idle;
+
+  /// 排进队列、轮到它时执行 [body]。
+  ///
+  /// 手动任务会把还没开始的后台任务标成 dropped 并移出队列 —— 它的
+  /// future 等到轮到自己时才抛出「已被取代」，所以调用方仍然能拿到一个
+  /// 明确的失败，而不是永远挂着。
+  Future<T> _schedule<T>(
+    SyncPriority priority,
+    Future<T> Function() body,
+  ) async {
+    if (priority == SyncPriority.manual) {
+      for (final job in _jobs) {
+        if (job.priority != SyncPriority.background) continue;
+        if (!job.cancelled.isCompleted) job.cancelled.complete();
+        // 它不会再跑了，排在它后面的任务不该继续等它。
+        if (!job.finished.isCompleted) job.finished.complete();
+      }
+      _jobs.removeWhere((job) => job.dropped);
+    }
+    final job = _SyncJob(priority);
+    _jobs.add(job);
+    // 排队的那一刻就把「前面有谁」定下来。队列之后还会变（手动同步会抽走
+    // 后台任务），但每个任务的 future 只会完成一次，按快照等就不会漏。
+    final ahead = _jobs.sublist(0, _jobs.length - 1);
+    try {
+      for (final other in ahead) {
+        await Future.any([other.finished.future, job.cancelled.future]);
+        if (job.dropped) break;
+      }
+      if (job.dropped) {
+        throw const WebdavException('本次后台同步已被手动同步取代，已跳过');
+      }
+      _running = job;
+      return await body();
+    } finally {
+      if (identical(_running, job)) _running = null;
+      _jobs.remove(job);
+      if (!job.finished.isCompleted) job.finished.complete();
+    }
+  }
+
+  /// 给 [body] 一个总时长上限；超时先用 [onExpire] 打断它，再以
+  /// [WebdavException] 结束 —— 调用方看到的是一次正常失败，而不是一个
+  /// 永远不会完成的 future。
+  Future<T> _withBudget<T>(
+    Future<T> Function() body, {
+    required void Function() onExpire,
+  }) {
+    final result = Completer<T>();
+    final timer = Timer(budget, () {
+      if (result.isCompleted) return;
+      onExpire();
+      result.completeError(
+        WebdavException(
+          '同步超过 ${budget.inSeconds} 秒仍未完成，已中止。'
+          '请检查网络后重试；云端文件未被改动。',
+        ),
+      );
+    });
+    body().then(
+      (value) {
+        if (!result.isCompleted) result.complete(value);
+      },
+      onError: (Object error, StackTrace stack) {
+        if (!result.isCompleted) result.completeError(error, stack);
+      },
+    );
+    return result.future.whenComplete(timer.cancel);
+  }
 
   /// [password] may be empty: a server that allows anonymous access needs no
   /// credentials, and an empty account is still sent as HTTP Basic.
   Future<WebdavSyncReport> sync(
     WebdavConfig config, {
     required String password,
-  }) {
-    final previous = _queue;
-    final gate = Completer<void>();
-    _queue = gate.future;
-    _pending++;
-    return _run(previous, gate, config, password);
-  }
-
-  Future<WebdavSyncReport> _run(
-    Future<void> previous,
-    Completer<void> gate,
-    WebdavConfig config,
-    String password,
-  ) async {
-    // previous 只可能是上一条 gate.future，永远不会带错误抛出。
-    await previous;
-    try {
-      return await _syncOnce(config, password: password);
-    } finally {
-      _pending--;
-      gate.complete();
-    }
-  }
+    SyncPriority priority = SyncPriority.manual,
+  }) => _schedule(
+    priority,
+    () => _syncOnce(config, password: password),
+  );
 
   Future<WebdavSyncReport> _syncOnce(
     WebdavConfig config, {
@@ -255,62 +382,77 @@ class WebdavSyncService {
   }) async {
     final transport = _transport(config, password);
     try {
-      await transport.ensureCollection();
-      // 412 之后会「重新读、重新合并、再写」，而上一轮合并进本机的条目
-      // 不会在下一轮的 merge 里再出现一次 —— 所以计数必须跨轮累加，
-      // 否则重试过的同步会少报（极端情况下报成 0，看起来像什么都没同步）。
-      var carried = (
-        shelf: 0,
-        history: 0,
-        episodes: 0,
-        readTime: 0,
-        searchHistory: 0,
+      // 整趟放进预算里：超时先关掉 transport，把挂起的请求打断，队列里的
+      // 下一次同步才真的能开始 —— 否则它只是在等一个不会回来的应答。
+      return await _withBudget(
+        () => _mergedPasses(transport, config),
+        onExpire: transport.close,
       );
-      var remoteExisted = false;
-      DateTime? remoteModified;
-      var attempt = 0;
-      while (true) {
-        final prepared = await _prepare(transport, config);
-        carried = (
-          shelf: carried.shelf + prepared.merged.shelf,
-          history: carried.history + prepared.merged.history,
-          episodes: carried.episodes + prepared.merged.episodes,
-          readTime: carried.readTime + prepared.merged.readTime,
-          searchHistory: carried.searchHistory + prepared.merged.searchHistory,
-        );
-        remoteExisted = prepared.remoteExisted;
-        remoteModified = prepared.remoteModified;
-        try {
-          await _commit(
-            transport,
-            config,
-            bytes: prepared.bytes,
-            history: prepared.snapshot.history,
-            ifMatch: prepared.versionKey,
-          );
-          return (
-            remoteExisted: remoteExisted,
-            remoteModified: remoteModified,
-            uploadedBytes: prepared.bytes.length,
-            shelf: carried.shelf,
-            history: carried.history,
-            episodes: carried.episodes,
-            readTime: carried.readTime,
-            searchHistory: carried.searchHistory,
-          );
-        } on WebdavException catch (error) {
-          if (error.statusCode != 412 || attempt >= maxConditionalRetries) {
-            rethrow;
-          }
-          attempt++;
-          AppLog.i(
-            'webdav-sync',
-            '整包写回时云端已被改动，重新合并后重试（第 $attempt 次）',
-          );
-        }
-      }
     } finally {
       transport.close();
+    }
+  }
+
+  /// 读云端 → 合并 → 写回，412 时重来。
+  ///
+  /// 与 [_syncOnce] 分开，只是因为「超时了谁来关连接」必须留在外层手里。
+  Future<WebdavSyncReport> _mergedPasses(
+    WebdavTransport transport,
+    WebdavConfig config,
+  ) async {
+    await transport.ensureCollection();
+    // 412 之后会「重新读、重新合并、再写」，而上一轮合并进本机的条目
+    // 不会在下一轮的 merge 里再出现一次 —— 所以计数必须跨轮累加，
+    // 否则重试过的同步会少报（极端情况下报成 0，看起来像什么都没同步）。
+    var carried = (
+      shelf: 0,
+      history: 0,
+      episodes: 0,
+      readTime: 0,
+      searchHistory: 0,
+    );
+    var remoteExisted = false;
+    DateTime? remoteModified;
+    var attempt = 0;
+    while (true) {
+      final prepared = await _prepare(transport, config);
+      carried = (
+        shelf: carried.shelf + prepared.merged.shelf,
+        history: carried.history + prepared.merged.history,
+        episodes: carried.episodes + prepared.merged.episodes,
+        readTime: carried.readTime + prepared.merged.readTime,
+        searchHistory: carried.searchHistory + prepared.merged.searchHistory,
+      );
+      remoteExisted = prepared.remoteExisted;
+      remoteModified = prepared.remoteModified;
+      try {
+        await _commit(
+          transport,
+          config,
+          bytes: prepared.bytes,
+          history: prepared.snapshot.history,
+          ifMatch: prepared.versionKey,
+        );
+        return (
+          remoteExisted: remoteExisted,
+          remoteModified: remoteModified,
+          uploadedBytes: prepared.bytes.length,
+          shelf: carried.shelf,
+          history: carried.history,
+          episodes: carried.episodes,
+          readTime: carried.readTime,
+          searchHistory: carried.searchHistory,
+        );
+      } on WebdavException catch (error) {
+        if (error.statusCode != 412 || attempt >= maxConditionalRetries) {
+          rethrow;
+        }
+        attempt++;
+        AppLog.i(
+          'webdav-sync',
+          '整包写回时云端已被改动，重新合并后重试（第 $attempt 次）',
+        );
+      }
     }
   }
 
@@ -323,46 +465,67 @@ class WebdavSyncService {
   ///
   /// 不带 `If-Match`：这是用户明确要求的「以本机为准」，不是并发写，不该被
   /// 一次版本不符挡回去。旧文件仍然会被挪进 `.bak`，所以还能取回。
+  ///
+  /// 仍然走同步队列：它做的也是「三步替换 + 写分片」，和一次普通同步交错在
+  /// 一起同样会互相踩。（以前它绕开队列，正好是那条路径唯一的例外。）
   Future<WebdavSyncReport> overwriteRemote(
+    WebdavConfig config, {
+    required String password,
+  }) => _schedule(
+    SyncPriority.manual,
+    () => _overwriteOnce(config, password: password),
+  );
+
+  Future<WebdavSyncReport> _overwriteOnce(
     WebdavConfig config, {
     required String password,
   }) async {
     final transport = _transport(config, password);
     try {
-      await transport.ensureCollection();
-      final snapshot = await _backups.capture();
-      final bytes = await Isolate.run(snapshot.encode);
-      final version = await _writeAtomically(transport, config, bytes);
-      await _config.markFullVersion(version);
-      final progressBytes = await Isolate.run(
-        () => ProgressShard.capture(snapshot.history).encode(),
-      );
-      final writtenProgress = await transport.upload(
-        progressBytes,
-        name: ProgressShard.fileName,
-      );
-      await _config.markProgressVersion(
-        writtenProgress ??
-            (await transport.remoteFile(
-              name: ProgressShard.fileName,
-            ))?.versionKey,
-      );
-      final now = DateTime.now();
-      await _config.markSynced(now);
-      await _config.markProgressSynced(now);
-      return (
-        remoteExisted: true,
-        remoteModified: (await transport.remoteFile())?.modified ?? now,
-        uploadedBytes: bytes.length,
-        shelf: snapshot.shelf.length,
-        history: snapshot.history.length,
-        episodes: snapshot.watched.length,
-        readTime: snapshot.daily.length,
-        searchHistory: snapshot.searchHistory.length,
+      return await _withBudget(
+        () => _overwritePasses(transport, config),
+        onExpire: transport.close,
       );
     } finally {
       transport.close();
     }
+  }
+
+  Future<WebdavSyncReport> _overwritePasses(
+    WebdavTransport transport,
+    WebdavConfig config,
+  ) async {
+    await transport.ensureCollection();
+    final snapshot = await _backups.capture();
+    final bytes = await Isolate.run(snapshot.encode);
+    final version = await _writeAtomically(transport, config, bytes);
+    await _config.markFullVersion(version);
+    final progressBytes = await Isolate.run(
+      () => ProgressShard.capture(snapshot.history).encode(),
+    );
+    final writtenProgress = await transport.upload(
+      progressBytes,
+      name: ProgressShard.fileName,
+    );
+    await _config.markProgressVersion(
+      writtenProgress ??
+          (await transport.remoteFile(
+            name: ProgressShard.fileName,
+          ))?.versionKey,
+    );
+    final now = DateTime.now();
+    await _config.markSynced(now);
+    await _config.markProgressSynced(now);
+    return (
+      remoteExisted: true,
+      remoteModified: (await transport.remoteFile())?.modified ?? now,
+      uploadedBytes: bytes.length,
+      shelf: snapshot.shelf.length,
+      history: snapshot.history.length,
+      episodes: snapshot.watched.length,
+      readTime: snapshot.daily.length,
+      searchHistory: snapshot.searchHistory.length,
+    );
   }
 
   /// 读云端、合并进本机，并算出这次要写上去的字节。
