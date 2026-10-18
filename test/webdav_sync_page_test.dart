@@ -45,6 +45,22 @@ class _SpySync implements WebdavSyncService {
     required String password,
     required bool localDirty,
   }) async => (history: 0, uploadedBytes: 0);
+
+  /// 「用本机覆盖云端」是逃生口，页面上只按钮到方法的一跳，真正的写入由
+  /// `webdav_sync_service_test.dart` 覆盖。这里记录调用即可。
+  @override
+  Future<WebdavSyncReport> overwriteRemote(
+    WebdavConfig config, {
+    required String password,
+  }) async {
+    overwriteCalls++;
+    receivedConfig = config;
+    receivedPassword = password;
+    if (failure case final error?) throw error;
+    return report;
+  }
+
+  int overwriteCalls = 0;
 }
 
 /// An empty merge, for the cases that only care about the failure path.
@@ -269,5 +285,47 @@ void main() {
     // "已把本机数据上传（收藏 0 条…）" would read as "nothing was uploaded".
     expect(find.textContaining('收藏 0 条'), findsNothing);
     expect(await configStore.lastSyncedAt(), isNotNull);
+  });
+
+  testWidgets('overwriting the cloud copy asks first, then replaces it', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({
+      WebdavConfigStore.urlKey: 'https://dav.example.com/dav/',
+      'secret_v1_webdav_password': 'sealed:hunter2',
+    });
+    final service = await pumpPage(
+      tester,
+      report: (
+        remoteExisted: true,
+        remoteModified: DateTime.utc(2026, 1, 2),
+        uploadedBytes: 4096,
+        shelf: 0,
+        history: 0,
+        episodes: 0,
+        readTime: 0,
+        searchHistory: 0,
+      ),
+    );
+
+    await tester.tap(find.text('用本机覆盖云端'));
+    await tester.pumpAndSettle();
+    // 覆盖是单向的，弹窗必须先把代价说清楚，并且此时的「取消」真的取消。
+    expect(find.text('用本机数据覆盖云端？'), findsOneWidget);
+    expect(find.textContaining('.bak'), findsWidgets);
+
+    await tester.tap(find.text('取消'));
+    await tester.pumpAndSettle();
+    expect(service.overwriteCalls, 0);
+
+    await tester.tap(find.text('用本机覆盖云端'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('覆盖'));
+    await tester.pumpAndSettle();
+
+    expect(service.overwriteCalls, 1);
+    expect(find.textContaining('已用本机数据覆盖云端'), findsOneWidget);
+    expect(find.textContaining('4.0 KB'), findsOneWidget);
+    expect(service.receivedPassword, 'hunter2');
   });
 }
