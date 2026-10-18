@@ -68,6 +68,10 @@ class _SpySync implements WebdavSyncService {
   /// `webdav_sync_service_test.dart` 覆盖）。
   @override
   Duration get budget => WebdavSyncService.defaultBudget;
+
+  /// 页面在 dispose 里放开复用的连接；假 service 没有连接可放。
+  @override
+  void close() {}
 }
 
 /// An empty merge, for the cases that only care about the failure path.

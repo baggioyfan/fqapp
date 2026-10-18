@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:isolate';
 import 'dart:typed_data';
 
+import 'package:http/http.dart' as http;
+
 import '../models/library_backup.dart';
 import '../models/progress_shard.dart';
 import 'app_log.dart';
@@ -84,7 +86,7 @@ class WebdavSyncService {
     WebdavTransportFactory? transport,
     this.budget = defaultBudget,
   }) : _backups = backups ?? LibraryBackupService(),
-       _transport = transport ?? _webdavTransport;
+       _injected = transport;
 
   /// 一次同步的总时长上限。
   ///
@@ -97,13 +99,44 @@ class WebdavSyncService {
 
   final Duration budget;
 
-  static WebdavTransport _webdavTransport(
-    WebdavConfig config,
-    String password,
-  ) => WebdavClient(config: config, password: password);
-
   final LibraryBackupService _backups;
-  final WebdavTransportFactory _transport;
+  final WebdavTransportFactory? _injected;
+
+  /// 延迟解析：没注入时才用自己那条连接，测试注入假 transport 时连
+  /// `http.Client` 都不会创建。
+  late final WebdavTransportFactory _transport = _injected ?? _ownTransport;
+
+  /// 复用的底层连接。
+  ///
+  /// 以前每次同步都新建一个 `http.Client` 再关掉，也就是每次都要重做一次
+  /// TCP + TLS 握手 —— 而热路径一共才三个往返，握手常常比它们加起来还贵，
+  /// 手机上还会把射频从空闲唤醒一次。
+  ///
+  /// 懒建：只用假 transport 的测试根本不碰网络，不该为它创建连接。
+  http.Client? _connection;
+
+  http.Client get _httpClient => _connection ??= http.Client();
+
+  /// 关掉复用的连接。之后再用会重新建一个，所以调用方不必操心顺序。
+  void close() {
+    _connection?.close();
+    _connection = null;
+  }
+
+  WebdavTransport _ownTransport(WebdavConfig config, String password) =>
+      WebdavClient(config: config, password: password, client: _httpClient);
+
+  /// 超时后真的打断挂起的请求。
+  ///
+  /// 只调 `transport.close()` 是不够的：连接是复用的，`WebdavClient` 并不
+  /// 拥有它，那一下什么都不会关，挂起的请求会一直留在后台 —— 队列看起来
+  /// 空了，实际上下一次同步只是又接上了一条半死的连接。这里连复用连接
+  /// 一起丢掉，下一次同步重建。
+  void Function() _expireWith(WebdavTransport transport) => () {
+    transport.close();
+    close();
+  };
+
   final _config = WebdavConfigStore.instance;
 
   /// 条件写被拒（412）后最多重来几次。
@@ -162,7 +195,7 @@ class WebdavSyncService {
     try {
       return await _withBudget(
         () => _progressPasses(transport, localDirty: localDirty),
-        onExpire: transport.close,
+        onExpire: _expireWith(transport),
       );
     } finally {
       transport.close();
@@ -386,7 +419,7 @@ class WebdavSyncService {
       // 下一次同步才真的能开始 —— 否则它只是在等一个不会回来的应答。
       return await _withBudget(
         () => _mergedPasses(transport, config),
-        onExpire: transport.close,
+        onExpire: _expireWith(transport),
       );
     } finally {
       transport.close();
@@ -484,7 +517,7 @@ class WebdavSyncService {
     try {
       return await _withBudget(
         () => _overwritePasses(transport, config),
-        onExpire: transport.close,
+        onExpire: _expireWith(transport),
       );
     } finally {
       transport.close();

@@ -244,6 +244,8 @@ class WebdavAutoSync {
 
   void dispose() {
     _cancelPendingTimers();
+    // 连接是复用的，连着销毁时一起放掉；之后再用会重建，不影响共享它的页面。
+    _service.close();
   }
 
   /// 云端有本机没见过的版本时返回它，否则 null（没配置、没网、云端还没有

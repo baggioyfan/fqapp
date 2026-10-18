@@ -6,14 +6,27 @@ import 'dart:typed_data';
 import 'package:http/http.dart' as http;
 
 import '../models/library_backup.dart';
+import 'transient_retry.dart';
 import 'webdav_config.dart';
 
 /// Carries text that is already safe to show in the settings page.
 class WebdavException implements Exception {
-  const WebdavException(this.message, {this.statusCode});
+  const WebdavException(
+    this.message, {
+    this.statusCode,
+    this.retryable = false,
+  });
 
   final String message;
   final int? statusCode;
+
+  /// 重发一次**可能**成功。
+  ///
+  /// 只看连接层：连接被复位、DNS 抖动、服务端 5xx/429 这类。不包含超时 ——
+  /// 一次读超时已经让用户等了两分钟，再重发一次只是把失败推后。也不包含
+  /// 412：那是另一台设备先写了，重发同一份字节只会再拿一次 412，
+  /// 由调用方重新读、重新合并。
+  final bool retryable;
 
   @override
   String toString() => 'WebdavException($statusCode: $message)';
@@ -160,6 +173,12 @@ class WebdavClient implements WebdavTransport {
   /// 慢速滴流的兜底：每块都没超时、总量却可以拖几个小时。
   static const defaultReadDeadline = Duration(minutes: 2);
 
+  /// 连接层失败后隔多久重发。
+  ///
+  /// 只重发一次：连接复位与瞬时 5xx 通常立刻就好，重发两次以上基本是在
+  /// 跟一个真的挂掉的服务端较劲，而用户正看着「正在同步」。
+  static const retryDelay = Duration(milliseconds: 400);
+
   /// Control responses carry a few hundred bytes; capping them keeps a hostile
   /// or misconfigured server from being buffered without limit.
   static const _controlLimit = 256 * 1024;
@@ -200,14 +219,12 @@ class WebdavClient implements WebdavTransport {
 
   @override
   Future<void> ensureCollection() async {
-    final response = await _read(
-      await _open(
-        'PROPFIND',
-        config.collectionUri,
-        depth: '0',
-        body: utf8.encode(_propfindBody),
-        contentType: 'application/xml; charset=utf-8',
-      ),
+    final response = await _request(
+      'PROPFIND',
+      config.collectionUri,
+      depth: '0',
+      body: utf8.encode(_propfindBody),
+      contentType: 'application/xml; charset=utf-8',
       limit: _controlLimit,
     );
     switch (response.statusCode) {
@@ -224,8 +241,10 @@ class WebdavClient implements WebdavTransport {
   }
 
   Future<void> _createCollection() async {
-    final response = await _read(
-      await _open('MKCOL', config.collectionUri),
+    // MKCOL 可以被重发：目录已经建好时服务端回 405，下面那行正是把它当成功。
+    final response = await _request(
+      'MKCOL',
+      config.collectionUri,
       limit: _controlLimit,
     );
     // 405 means the folder appeared between the two requests.
@@ -240,8 +259,9 @@ class WebdavClient implements WebdavTransport {
   Future<({Uint8List bytes, DateTime? modified, String? versionKey})?> download({
     String? name,
   }) async {
-    final response = await _read(
-      await _open('GET', _uriFor(name)),
+    final response = await _request(
+      'GET',
+      _uriFor(name),
       limit: LibraryBackup.maxBytes,
     );
     if (response.statusCode == 404) return null;
@@ -256,14 +276,12 @@ class WebdavClient implements WebdavTransport {
 
   @override
   Future<RemoteFile?> remoteFile({String? name}) async {
-    final response = await _read(
-      await _open(
-        'PROPFIND',
-        _uriFor(name),
-        depth: '0',
-        body: utf8.encode(_propfindBody),
-        contentType: 'application/xml; charset=utf-8',
-      ),
+    final response = await _request(
+      'PROPFIND',
+      _uriFor(name),
+      depth: '0',
+      body: utf8.encode(_propfindBody),
+      contentType: 'application/xml; charset=utf-8',
       limit: _controlLimit,
     );
     // 文件还不存在：首次同步前是正常状态，不算错误。
@@ -296,14 +314,13 @@ class WebdavClient implements WebdavTransport {
     String? name,
     String? ifMatch,
   }) async {
-    final response = await _read(
-      await _open(
-        'PUT',
-        _uriFor(name),
-        body: bytes,
-        contentType: 'application/json; charset=utf-8',
-        ifMatch: ifMatch,
-      ),
+    // PUT 可以被重发：同样的字节再写一遍就是同样的结果。
+    final response = await _request(
+      'PUT',
+      _uriFor(name),
+      body: bytes,
+      contentType: 'application/json; charset=utf-8',
+      ifMatch: ifMatch,
       limit: _controlLimit,
     );
     switch (response.statusCode) {
@@ -337,9 +354,13 @@ class WebdavClient implements WebdavTransport {
 
   @override
   Future<void> move({String? from, required String? to}) async {
-    final response = await _read(
-      await _open('MOVE', _uriFor(from), destination: _uriFor(to)),
+    // MOVE 不重发：已经挪走的那次会以 404/409 回来，把成功报成失败。
+    final response = await _request(
+      'MOVE',
+      _uriFor(from),
+      destination: _uriFor(to),
       limit: _controlLimit,
+      retry: false,
     );
     switch (response.statusCode) {
       case 200:
@@ -359,13 +380,51 @@ class WebdavClient implements WebdavTransport {
 
   @override
   Future<void> delete({String? name}) async {
-    final response = await _read(
-      await _open('DELETE', _uriFor(name)),
+    // DELETE 本来就幂等（不存在也算成功），重发没有副作用。
+    final response = await _request(
+      'DELETE',
+      _uriFor(name),
       limit: _controlLimit,
     );
     // 已经在的删除请求（重试、或另一台设备先删了）不该算失败。
     if (response.statusCode == 404) return;
     _requireSuccess(response, '无法删除云端文件');
+  }
+
+  /// 发一次请求并把正文读完；[retry] 为 true 时对连接层失败重发一次。
+  ///
+  /// `MOVE` 传 false：它不幂等，重发一次拿到的是 404（源已经挪走）或 409
+  /// （目标已存在），把「其实已经成功」报成失败比不重试更糟。
+  Future<http.Response> _request(
+    String method,
+    Uri uri, {
+    required int limit,
+    String? depth,
+    List<int>? body,
+    String? contentType,
+    String? ifMatch,
+    Uri? destination,
+    bool retry = true,
+  }) {
+    Future<http.Response> once() async => _read(
+      await _open(
+        method,
+        uri,
+        depth: depth,
+        body: body,
+        contentType: contentType,
+        ifMatch: ifMatch,
+        destination: destination,
+      ),
+      limit: limit,
+    );
+    if (!retry) return once();
+    return retryTransient(
+      once,
+      attempts: 2,
+      baseDelay: retryDelay,
+      shouldRetry: (error) => error is WebdavException && error.retryable,
+    );
   }
 
   /// Buffers a response, refusing anything above [limit] instead of letting a
@@ -450,15 +509,15 @@ class WebdavClient implements WebdavTransport {
     }
     if (error is SocketException) {
       final detail = error.osError?.message ?? error.message;
-      return WebdavException('与服务器的连接中断（$detail）');
+      return WebdavException('与服务器的连接中断（$detail）', retryable: true);
     }
     if (error is http.ClientException) {
-      return WebdavException('请求失败：${error.message}');
+      return WebdavException('请求失败：${error.message}', retryable: true);
     }
     if (error is HttpException) {
-      return const WebdavException('与服务器的连接中断，请稍后重试');
+      return const WebdavException('与服务器的连接中断，请稍后重试', retryable: true);
     }
-    return const WebdavException('读取云端数据时连接中断，请稍后重试');
+    return const WebdavException('读取云端数据时连接中断，请稍后重试', retryable: true);
   }
 
   Future<http.StreamedResponse> _open(
@@ -492,11 +551,11 @@ class WebdavClient implements WebdavTransport {
       throw const WebdavException('安全连接失败：服务器证书不被信任');
     } on SocketException catch (error) {
       final detail = error.osError?.message ?? error.message;
-      throw WebdavException('无法连接服务器（$detail）');
+      throw WebdavException('无法连接服务器（$detail）', retryable: true);
     } on http.ClientException catch (error) {
-      throw WebdavException('请求失败：${error.message}');
+      throw WebdavException('请求失败：${error.message}', retryable: true);
     } on HttpException {
-      throw const WebdavException('与服务器的连接中断，请稍后重试');
+      throw const WebdavException('与服务器的连接中断，请稍后重试', retryable: true);
     }
   }
 
@@ -529,6 +588,9 @@ class WebdavClient implements WebdavTransport {
         statusCode: status,
       );
     }
+    // 只有「再来一次可能就好」的状态码才重发：500/502/503/504 是上游抖动，
+    // 408/429 是让我等等。401/403/404/409/423/507 再发一百次也是同一句话。
+    const transient = {408, 429, 500, 502, 503, 504};
     return WebdavException(
       switch (status) {
         401 => '认证失败：请检查用户名和密码',
@@ -541,6 +603,7 @@ class WebdavClient implements WebdavTransport {
         _ => '$what：服务器返回 $status',
       },
       statusCode: status,
+      retryable: transient.contains(status),
     );
   }
 

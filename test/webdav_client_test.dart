@@ -40,6 +40,11 @@ class _FakeServer {
   /// PUT 是否因为 `If-Match` 不匹配被拒 —— 用来断言「条件写真的发出去了」。
   int rejectedByIfMatch = 0;
 
+  /// 让某个方法的前 [failTimes] 次请求回 503，模拟上游抖一下就好。
+  /// [failMethod] 为 null 时对所有方法生效。
+  String? failMethod;
+  int failTimes = 0;
+
   /// 真实坚果云在 PUT 响应里不给 ETag；打开这个开关才模拟「会回 ETag」的服务端。
   bool sendEtagOnPut = false;
 
@@ -62,6 +67,9 @@ class _FakeServer {
   Future<void> stop() => _server.close(force: true);
 
   String get origin => 'http://127.0.0.1:${_server.port}';
+
+  /// 当前打开着的 TCP 连接数。用来验证「复用一个 client 不会重复握手」。
+  int get connections => _server.connectionsInfo().total;
 
   String get path => '/dav/fqapp-sync.json';
 
@@ -94,6 +102,12 @@ class _FakeServer {
     }
     if (forcedStatus case final status?) {
       response.statusCode = status;
+      await response.close();
+      return;
+    }
+    if (failTimes > 0 && (failMethod == null || failMethod == request.method)) {
+      failTimes--;
+      response.statusCode = 503;
       await response.close();
       return;
     }
@@ -465,6 +479,76 @@ void main() {
           ),
         ),
       );
+    });
+  });
+
+  group('transient retry', () {
+    Uint8List body(String text) => Uint8List.fromList(utf8.encode(text));
+
+    test('a 503 is retried once instead of failing the sync', () async {
+      // 弱网上游抖一下就够了：不重发的话用户看到的是「同步失败」，
+      // 实际下一次尝试就会成功。
+      server.files[server.path] = body('{"v":1}');
+      server.failTimes = 1;
+
+      final file = await clientFor().remoteFile();
+
+      expect(file, isNotNull);
+      expect(server.methods.where((method) => method == 'PROPFIND').length, 2);
+    });
+
+    test('a 412 is not retried', () async {
+      // 412 的意思是「别人先写了」，重发同一份字节只会再拿一次 412；
+      // 处理它的是上层「重新读、重新合并」，不是这里。
+      server.files[server.path] = body('{"v":1}');
+      server.forcedStatus = 412;
+
+      await expectLater(
+        clientFor().upload(body('{"v":2}')),
+        throwsA(
+          isA<WebdavException>().having(
+            (error) => error.statusCode,
+            'statusCode',
+            412,
+          ),
+        ),
+      );
+      expect(server.methods.where((method) => method == 'PUT').length, 1);
+    });
+
+    test('a 503 on MOVE is not replayed', () async {
+      // MOVE 不幂等：重发一次会拿到 404（源已经挪走），把「其实成功了」
+      // 报成失败。宁可让它失败一次。
+      server.files[server.path] = body('{"v":1}');
+      server.failMethod = 'MOVE';
+      server.failTimes = 1;
+
+      await expectLater(
+        clientFor().move(to: 'fqapp-sync.json.bak'),
+        throwsA(isA<WebdavException>()),
+      );
+      expect(server.methods.where((method) => method == 'MOVE').length, 1);
+    });
+
+    test('两个 client 共用一个连接时不会握手两次', () async {
+      // 这就是 WebdavSyncService 复用一个 http.Client 的理由：热路径一共才
+      // 三个往返，而每建一次 client 都要重做一次 TCP + TLS 握手。
+      server.files[server.path] = body('{"v":1}');
+      final shared = http.Client();
+      addTearDown(shared.close);
+
+      await WebdavClient(
+        config: configFor(),
+        password: 'secret',
+        client: shared,
+      ).remoteFile();
+      await WebdavClient(
+        config: configFor(),
+        password: 'secret',
+        client: shared,
+      ).remoteFile();
+
+      expect(server.connections, 1, reason: '第二次请求应复用同一条连接');
     });
   });
 

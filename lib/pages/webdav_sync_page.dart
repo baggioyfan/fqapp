@@ -47,6 +47,9 @@ class _WebdavSyncPageState extends State<WebdavSyncPage> {
 
   @override
   void dispose() {
+    // 复用连接的 service 是这页自己造的（测试注入的那个不属于它，但 close
+    // 只放连接、下次用会重建，所以两种情况都安全）。
+    _service.close();
     _url.dispose();
     _user.dispose();
     _password.dispose();
