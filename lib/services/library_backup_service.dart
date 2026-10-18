@@ -39,8 +39,9 @@ class LibraryBackupService {
 
   /// 只取进度那一段，给热路径分片用。
   ///
-  /// 整包的 `history` 字段仍然保留（降级保护：旧版本只认整包），所以这里
-  /// 不是「搬走」，而是「同一份数据再导出一份更小的」。
+  /// 从 v5 起整包（`fqapp-sync.json`）**不再带 history**，进度只在这条热路径
+  /// 上走：整包负责书架/已看/时长/搜索历史，分片负责进度。手动导出的备份
+  /// 仍然两者都含，所以换机时一个文件也够。
   Future<List<Map<String, dynamic>>> captureProgress() async {
     final library = LibraryStore.instance;
     if (!library.isInitialized) throw StateError('本机数据尚未初始化');

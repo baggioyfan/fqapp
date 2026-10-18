@@ -520,17 +520,18 @@ class WebdavSyncService {
       remoteExisted = prepared.remoteExisted;
       remoteModified = prepared.remoteModified;
       try {
-        await _commit(
+        final written = await _commit(
           transport,
           config,
           bytes: prepared.bytes,
           history: prepared.snapshot.history,
           ifMatch: prepared.versionKey,
+          progressIfMatch: prepared.progressVersionKey,
         );
         return (
           remoteExisted: remoteExisted,
           remoteModified: remoteModified,
-          uploadedBytes: prepared.bytes.length,
+          uploadedBytes: written,
           shelf: carried.shelf,
           history: carried.history,
           episodes: carried.episodes,
@@ -608,7 +609,8 @@ class WebdavSyncService {
     return (
       remoteExisted: true,
       remoteModified: (await transport.remoteFile())?.modified ?? now,
-      uploadedBytes: bytes.length,
+      // 整包 + 进度分片：v5 起整包不含进度，只报整包会少报一半。
+      uploadedBytes: bytes.length + progressBytes.length,
       shelf: snapshot.shelf.length,
       history: snapshot.history.length,
       episodes: snapshot.watched.length,
@@ -632,6 +634,7 @@ class WebdavSyncService {
     ({int shelf, int history, int episodes, int readTime, int searchHistory})
     merged,
     String? versionKey,
+    String? progressVersionKey,
     bool remoteExisted,
     DateTime? remoteModified,
   })>
@@ -649,6 +652,40 @@ class WebdavSyncService {
         await _decodeWithBackup(transport, config, primary),
       );
     }
+    // v5 起整包不带进度（它在 `progress.json` 里），所以这里得单独合并一次。
+    // 不合并的后果不是「少同步几条」，而是**抹掉**：`_commit` 会拿本机这份
+    // history 去覆盖分片，而「设置 → 立即同步」并不经过 `syncProgress` ——
+    // 一台刚装的设备点一下按钮，就能把另一台设备的全部进度写成空表。
+    final shard = await transport.download(name: ProgressShard.fileName);
+    String? progressVersionKey;
+    if (shard != null) {
+      progressVersionKey =
+          shard.versionKey ??
+          (await transport.remoteFile(
+            name: ProgressShard.fileName,
+          ))?.versionKey;
+      // 云端那份就是本机上次写上去的：本机已经是最新，不必再读一遍。
+      final known = await _config.progressDigest();
+      if (known == null || known != digestOf(shard.bytes)) {
+        try {
+          merged = (
+            shelf: merged.shelf,
+            history: merged.history + await _restoreProgress(shard.bytes),
+            episodes: merged.episodes,
+            readTime: merged.readTime,
+            searchHistory: merged.searchHistory,
+          );
+        } on WebdavException catch (error) {
+          // 分片坏了不该拖累整包 —— 书架、已看、时长还是照常同步。这一趟
+          // 结束时 `_commit` 会用本机这份把它重写成一个有效文件。
+          AppLog.w(
+            'webdav-sync',
+            '云端的进度分片无法读取，本次只同步整包',
+            error: error,
+          );
+        }
+      }
+    }
     final snapshot = await _backups.capture();
     final bytes = await _encode(snapshot);
     return (
@@ -656,18 +693,23 @@ class WebdavSyncService {
       bytes: bytes,
       merged: merged,
       versionKey: primary?.versionKey,
+      progressVersionKey: progressVersionKey,
       remoteExisted: primary != null,
       remoteModified: primary?.modified,
     );
   }
 
   /// 把合并后的快照原子写回，并顺手刷新热路径分片。
-  Future<void> _commit(
+  ///
+  /// 返回本次真正写上去的字节数（整包 + 分片）。从 v5 起整包不再含进度，
+  /// 只报整包会少报一半 —— 界面上那句「共 xx KB 写回云端」得照实说。
+  Future<int> _commit(
     WebdavTransport transport,
     WebdavConfig config, {
     required Uint8List bytes,
     required List<Map<String, dynamic>> history,
     String? ifMatch,
+    String? progressIfMatch,
   }) async {
     final version = await _writeAtomically(
       transport,
@@ -676,27 +718,27 @@ class WebdavSyncService {
       ifMatch: ifMatch,
     );
     await _config.markFullVersion(version);
-    // 整包里也带着进度，顺手把热路径分片写成同一份内容。
-    // 不这么做的话，刚同步完整包、进度分片还停在旧值，下一次「离开阅读页」
-    // 会推一份过期数据上去。
+    // 整包不再带进度（v5），所以这里必须把分片写成合并后的那一份：不这么
+    // 做的话，刚同步完整包、进度分片还停在旧值，下一次「离开阅读页」会推
+    // 一份过期数据上去，把刚合并进来的对方进度盖掉。
     //
     // 分片不走三步替换：它只有几十 KB、频率高，多三个往返不值得；而且它
     // 的内容能从整包重建，坏掉不是灾难 —— 整包才是。
+    //
+    // `progressIfMatch` 由 `_prepare` 读分片时一并带回，省掉一次 PROPFIND。
     final progressBytes = await Isolate.run(
       () => ProgressShard.capture(history).encode(),
-    );
-    final progressRemote = await transport.remoteFile(
-      name: ProgressShard.fileName,
     );
     await transport.upload(
       progressBytes,
       name: ProgressShard.fileName,
-      ifMatch: progressRemote?.versionKey,
+      ifMatch: progressIfMatch,
     );
     await _config.markProgressDigest(digestOf(progressBytes));
     final now = DateTime.now();
     await _config.markSynced(now);
     await _config.markProgressSynced(now);
+    return bytes.length + progressBytes.length;
   }
 
   /// 读整包；撞上「别人正在替换」的窗口时等一下重看一次。
@@ -843,12 +885,18 @@ class WebdavSyncService {
 
   /// 编码同样离开主 isolate。
   ///
+  /// **整包不带 `history`**：进度已经由 `progress.json` 单独上传，整包里再写
+  /// 一遍只会让云端多存一份（实测整包的一半体积）。手动导出的备份不受影响，
+  /// 那条路径仍用默认的 `includeHistory: true`，备份文件依旧自包含。
+  ///
   /// `LibraryBackup.encode()` 超上限时抛的是 `FormatException`。不翻译的话它
   /// 会一路冒到页面的兜底分支，显示成「请检查地址、账号和网络后重试」——
   /// 但这件事跟网络、地址、账号都没有关系，能做的只有腾空间。
   Future<Uint8List> _encode(LibraryBackup snapshot) async {
     try {
-      return await Isolate.run(snapshot.encode);
+      return await Isolate.run(
+        () => snapshot.encode(includeHistory: false),
+      );
     } on FormatException catch (error) {
       if (error.message.contains('16 MB')) {
         throw const WebdavException(

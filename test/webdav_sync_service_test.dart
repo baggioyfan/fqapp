@@ -9,6 +9,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:fqapp/models/library_backup.dart';
 import 'package:fqapp/models/media_item.dart';
+import 'package:fqapp/models/progress_shard.dart';
 import 'package:fqapp/services/library_store.dart';
 import 'package:fqapp/services/shelf_store.dart';
 import 'package:fqapp/services/webdav_client.dart';
@@ -238,7 +239,12 @@ void main() {
     expect(transport.receivedPassword, 'hunter2');
     expect(report.remoteExisted, isFalse);
     expect(report.shelf, 0);
-    expect(report.uploadedBytes, transport.uploaded!.length);
+    // v5 起整包不含进度，报的字节数是「整包 + 进度分片」两份之和。
+    expect(
+      report.uploadedBytes,
+      transport.uploaded!.length +
+          transport.shards[ProgressShard.fileName]!.length,
+    );
     expect(
       LibraryBackup.decode(transport.uploaded!).shelf.map((r) => r.item.id),
       ['local-1'],
@@ -371,9 +377,37 @@ void main() {
     final report = await service.sync(config, password: 'hunter2');
 
     expect(report.history, 0);
-    final record = LibraryBackup.decode(transport.uploaded!).history.single;
+    // v5 起整包不再写 history：同一份记录只走 progress.json，云端不再存两份。
+    expect(LibraryBackup.decode(transport.uploaded!).history, isEmpty);
+    final shard = ProgressShard.decode(
+      transport.shards[ProgressShard.fileName]!,
+    );
+    final record = shard.history.single;
     expect(record['episode'], 10);
     expect(record['time'], 2000);
+  });
+
+  test('a full sync merges the progress shard before overwriting it', () async {
+    // 刚装好的设备：本机一条进度都没有。整包（v5）也不再带 history，
+    // 所以如果整包同步不单独合并一次分片，后面那次 `_commit` 就会用空的
+    // 本机进度把云端的进度写成空表 —— 这是「设置 → 立即同步」的必经路径，
+    // 它并不经过 syncProgress。
+    await ShelfStore.instance.add(_item('local-1'));
+    transport.remote = snapshot().encode(includeHistory: false);
+    transport.shards[ProgressShard.fileName] = ProgressShard.capture(const [
+      {'id': 'book-1', 'kind': 'book', 'episode': 7, 'time': 900},
+    ]).encode();
+
+    await service.sync(config, password: 'hunter2');
+
+    expect(
+      (await LibraryStore.instance.historyEntry('book-1'))?['episode'],
+      7,
+    );
+    final written = ProgressShard.decode(
+      transport.shards[ProgressShard.fileName]!,
+    );
+    expect(written.history.single['episode'], 7);
   });
 
   test('a remote file that is not a snapshot stops the sync', () async {

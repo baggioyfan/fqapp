@@ -317,7 +317,7 @@ void main() {
       expect((await library.historyEntry('book-1'))?['episode'], 3);
       // Exports move forward: a v1 file is re-encoded as the current version.
       final encoded = jsonDecode(utf8.decode(backup.encode())) as Map;
-      expect(encoded['version'], 4);
+      expect(encoded['version'], 5);
       expect(encoded['shelfRemoved'], isEmpty);
       expect(encoded['books'], isEmpty);
       expect(encoded['daily'], isEmpty);

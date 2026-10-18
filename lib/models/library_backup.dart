@@ -21,10 +21,14 @@ class LibraryBackup {
   /// 2 adds `readTime` and `searchHistory`; 3 adds `shelfRemoved`;
   /// 4 replaces the (book × day) `readTime` cross-tab with `daily` + `books`,
   /// both counted per device.
+  /// 5 makes `history` optional. The WebDAV snapshot leaves it out because the
+  /// same records already travel in `progress.json` ([ProgressShard]); writing
+  /// them twice made the cloud copy ~40 KB bigger for no benefit. A manual
+  /// export still writes them, so a backup file stays self-contained.
   /// Older files stay importable: a v1–v3 `readTime` list is folded into the
   /// two new tables on read, so no export ever loses the totals.
-  static const _version = 4;
-  static const _supportedVersions = {1, 2, 3, 4};
+  static const _version = 5;
+  static const _supportedVersions = {1, 2, 3, 4, 5};
   static const _kinds = {'book', 'audio', 'manga', 'video', 'manju'};
   static final _idPattern = RegExp(r'^[a-zA-Z0-9_-]{1,128}$');
   static final _devicePattern = RegExp(r'^[a-zA-Z0-9_~-]{1,32}$');
@@ -246,7 +250,10 @@ class LibraryBackup {
       }
       // 其余情况：删除更晚，这条收藏不该存在。
     }
-    final history = sanitizeHistory(_list(raw['history']));
+    // v5 起整包可以不带 `history`（那些记录由 `progress.json` 单独承载）。
+    // 缺失按空表处理：合并空表不会改动本机进度，所以「整包瘦身后的云端
+    // 文件」对合并是透明的。
+    final history = sanitizeHistory(_list(raw['history'] ?? const <dynamic>[]));
     final watched = <String, Map<String, int>>{};
     var count = 0;
     for (final value in _list(raw['watched'])) {
@@ -429,21 +436,28 @@ class LibraryBackup {
   /// 不再有「超 8 MB 就悄悄把阅读时长裁到一年」的降级：两张表分别由
   /// 天数（365）和书数（5000）封顶，最坏也就几百 KB，够不到上限。
   /// 这一条很关键 —— 旧逻辑裁掉明细后，新设备恢复出来的累计总时长会静默变少。
-  Uint8List encode() {
-    final bytes = Uint8List.fromList(utf8.encode(jsonEncode(_toJson())));
+  ///
+  /// [includeHistory] 默认 `true`：手动导出的备份文件必须自包含（进度也在里
+  /// 面），否则拿它去换机就会丢掉全部阅读/播放进度。只有 WebDAV 整包传
+  /// `false` —— 那些记录已经由 `progress.json` 单独承载，再写一遍等于云端
+  /// 存两份（实测 80 KB 的整包里有约 40 KB 是这份重复）。
+  Uint8List encode({bool includeHistory = true}) {
+    final bytes = Uint8List.fromList(
+      utf8.encode(jsonEncode(_toJson(includeHistory: includeHistory))),
+    );
     if (bytes.length > maxBytes) {
       throw const FormatException('备份数据超过 16 MB');
     }
     return bytes;
   }
 
-  Map<String, dynamic> _toJson() => {
+  Map<String, dynamic> _toJson({required bool includeHistory}) => {
     'format': _format,
     'version': _version,
     'createdAt': createdAt.millisecondsSinceEpoch,
     'shelf': shelf.map(_shelfJson).toList(),
     'shelfRemoved': _shelfRemovedJson(),
-    'history': history,
+    if (includeHistory) 'history': history,
     'watched': [
       for (final entry in watched.entries)
         {'id': entry.key, 'episodes': entry.value},
