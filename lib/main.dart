@@ -315,10 +315,11 @@ class _RootShellState extends State<RootShell> with WidgetsBindingObserver {
     }
   }
 
-  /// 云端比本机上次同步更新时，问一句「同步 / 忽略」。
+  /// 云端出现本机没见过的版本时，问一句「同步 / 忽略」。
   ///
-  /// 判据是云端 `Last-Modified` 与本机 `lastSyncedAt` 的比较（legado 的闸门一），
-  /// 不是「本地旧」—— 谁更新必须下载后逐条合并才知道，那就是同步本身。
+  /// 判据是云端那一版的标识（ETag）与本机上次同步时记下的标识是否相同，
+  /// 不是「谁的时间更晚」—— 时间比较会被设备时钟偏移搞乱，版本比较不会。
+  /// 也不是「本地旧」：谁更新必须下载后逐条合并才知道，那就是同步本身。
   Future<void> _checkRemoteUpdate() async {
     if (_checkingRemote || !mounted) return;
     _checkingRemote = true;
@@ -331,8 +332,9 @@ class _RootShellState extends State<RootShell> with WidgetsBindingObserver {
         builder: (dialogContext) => AlertDialog(
           title: const Text('云端有更新'),
           content: Text(
-            '云端备份在 ${_stamp(update.remoteModified)} 改过，比本机上次同步'
-            '${lastSyncedAt == null ? '（本机还没有同步过）' : '（${_stamp(lastSyncedAt)}）'}更晚。\n\n'
+            '云端备份${update.remoteModified == null ? '' : '在 ${_stamp(update.remoteModified!)} '}'
+            '有更新，与本机上次同步时看到的不是同一版'
+            '${lastSyncedAt == null ? '（本机还没有同步过）' : '（上次同步：${_stamp(lastSyncedAt)}）'}。\n\n'
             '现在同步吗？',
           ),
           actions: [

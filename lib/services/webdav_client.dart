@@ -32,27 +32,81 @@ abstract interface class WebdavTransport {
   /// Null when the remote file does not exist yet.
   ///
   /// [name] 指向同一目录下的另一个分片；null 表示配置里那个整包文件。
-  Future<({Uint8List bytes, DateTime? modified})?> download({String? name});
+  ///
+  /// `versionKey` 是下载到的这一版的标识（响应头带的 ETag，没有就是 null），
+  /// 写回时拿它做 `If-Match`。
+  Future<({Uint8List bytes, DateTime? modified, String? versionKey})?> download({
+    String? name,
+  });
 
-  /// 只问「云端那份快照什么时候改过」，不取正文 —— 打开应用时的检查用它，
-  /// 不必为了看一眼时间戳就把整份备份下载下来。
+  /// 只问「云端那份文件是哪一版、多大、什么时候改的」，不取正文 —— 打开
+  /// 应用时的检查和热路径闸门都靠它，不必为了看一眼时间戳就把整份备份
+  /// 下载下来。
   ///
   /// Null 表示云端还没有这个文件（首次同步前）。
-  Future<DateTime?> remoteModified({String? name});
+  Future<RemoteFile?> remoteFile({String? name});
 
-  Future<void> upload(Uint8List bytes, {String? name});
+  /// 写入成功时返回新版本标识 —— 有 `ETag` 响应头就取它，没有则 null，
+  /// 调用方自己决定要不要回读。
+  ///
+  /// [ifMatch] 非 null 时带上 `If-Match`，让服务器在「我读到的版本已经
+  /// 不是最新」时拒绝这次写。值**原样透传** [RemoteFile.versionKey]，
+  /// 不补引号：坚果云只认裸 token，按 RFC 加引号会一律 412。
+  Future<String?> upload(Uint8List bytes, {String? name, String? ifMatch});
 
   void close();
+}
+
+/// 云端一个文件的状态。
+///
+/// [versionKey] 是这里唯一用来判断「是不是同一版」的东西，而且**只做字符串
+/// 相等比较，绝不解析成时间**。把本机时钟和服务器时间相减来判断新旧，会在
+/// 任何一方时间不准时静默失效 —— 手机快 5 分钟就永远认为云端更旧，于是盲写
+/// 覆盖；服务器快 5 分钟就每次回前台都弹窗。字符串比较没有这个失效方式。
+class RemoteFile {
+  const RemoteFile({
+    this.etag,
+    this.lastModifiedRaw,
+    this.size,
+    this.modified,
+  });
+
+  /// 服务器给的 ETag，**原样保留**（可能带引号，可能带 `W/`）。
+  final String? etag;
+
+  /// `getlastmodified` 或 `Last-Modified` 的原始字符串。
+  final String? lastModifiedRaw;
+
+  final int? size;
+
+  /// 解析出来的时间，只用于页面显示（「云端更新于 …」），不参与任何判断。
+  final DateTime? modified;
+
+  /// 判断「是不是同一版」的键。
+  ///
+  /// 优先 ETag：它是内容指纹，同一内容必然同值，重复上传不会制造假冲突。
+  /// 服务器不给 ETag 时退回 `getlastmodified` 原始字符串 —— 精度只到秒，
+  /// 但至少是「服务器自己的时间」，不受本机时钟影响。
+  ///
+  /// 两者都没有时为 null，调用方应视为「无法判断版本」，走保守路径。
+  String? get versionKey {
+    final tag = etag;
+    if (tag != null && tag.isNotEmpty) return tag;
+    final stamp = lastModifiedRaw;
+    if (stamp != null && stamp.isNotEmpty) return stamp;
+    return null;
+  }
 }
 
 /// Small WebDAV client over the `http` package.
 ///
 /// It speaks only what a snapshot sync needs: PROPFIND to prove the collection
-/// exists and to read the snapshot's timestamp, GET to read the file, PUT to
-/// replace it and MKCOL to create a missing folder. Responses are parsed with
-/// the status code, the `Last-Modified` header and — for PROPFIND, which is the
-/// only reliable way to ask some servers for a timestamp — the single
-/// `getlastmodified` element, so no general XML parsing is involved.
+/// exists and to read the file's version, GET to read the file, PUT to replace
+/// it (conditionally, with `If-Match`) and MKCOL to create a missing folder.
+/// Responses are parsed with the status code, the `Last-Modified` header and —
+/// for PROPFIND, which is the only reliable way to ask some servers for a
+/// version — the `getetag`/`getlastmodified`/`getcontentlength` elements, so no
+/// general XML parsing is involved.
 ///
 /// Redirects are not followed. A 3xx on PUT would otherwise be replayed as a
 /// different method by the underlying HTTP stack, which turns a failed upload
@@ -77,10 +131,21 @@ class WebdavClient implements WebdavTransport {
   /// or misconfigured server from being buffered without limit.
   static const _controlLimit = 256 * 1024;
 
+  /// 四个属性一个都不能少。
+  ///
+  /// `getetag` 是版本判断的全部依据；`getlastmodified` 是它的备用键，也用于
+  /// 页面显示；`getcontentlength` 用来校验上传是否被截断。
+  ///
+  /// **`resourcetype` 看着没用，但坚果云少了它就完全不返回 `getetag`** ——
+  /// 不是报错，是在 207 正文里把 `getetag` 整个省掉，于是客户端只会看到
+  /// 「这个文件没有版本」并安静地退化成无保护写入。实测确认：只请求
+  /// `getetag` 时它回 `<prop/>` 加 propstat 404，三属性（缺 resourcetype）
+  /// 时静默省略，四属性齐全才正常返回。
   static const _propfindBody =
       '<?xml version="1.0" encoding="utf-8"?>'
-      '<d:propfind xmlns:d="DAV:"><d:prop><d:getlastmodified/>'
-      '<d:getcontentlength/></d:prop></d:propfind>';
+      '<d:propfind xmlns:d="DAV:"><d:prop><d:getetag/>'
+      '<d:getlastmodified/><d:getcontentlength/><d:resourcetype/>'
+      '</d:prop></d:propfind>';
 
   /// Appended to a 404 or 409 on the snapshot file itself.
   ///
@@ -139,7 +204,7 @@ class WebdavClient implements WebdavTransport {
   }
 
   @override
-  Future<({Uint8List bytes, DateTime? modified})?> download({
+  Future<({Uint8List bytes, DateTime? modified, String? versionKey})?> download({
     String? name,
   }) async {
     final response = await _read(
@@ -148,11 +213,16 @@ class WebdavClient implements WebdavTransport {
     );
     if (response.statusCode == 404) return null;
     _requireSuccess(response, '无法读取云端备份');
-    return (bytes: response.bodyBytes, modified: _lastModified(response));
+    final tag = response.headers['etag'];
+    return (
+      bytes: response.bodyBytes,
+      modified: _lastModified(response),
+      versionKey: tag == null || tag.isEmpty ? null : tag,
+    );
   }
 
   @override
-  Future<DateTime?> remoteModified({String? name}) async {
+  Future<RemoteFile?> remoteFile({String? name}) async {
     final response = await _read(
       await _open(
         'PROPFIND',
@@ -166,20 +236,40 @@ class WebdavClient implements WebdavTransport {
     // 文件还不存在：首次同步前是正常状态，不算错误。
     if (response.statusCode == 404) return null;
     if (response.statusCode == 207 || response.statusCode == 200) {
-      return _lastModified(response) ?? _propfindModified(response.bodyBytes);
+      final parsed = _propfindFile(response.bodyBytes);
+      // 207 的正文里没有时间戳时，`Last-Modified` 头是最后的来源；两处都
+      // 没有就返回一个 versionKey 为 null 的 RemoteFile —— 调用方据此走
+      // 保守路径，而不是把「有文件但无法判断版本」当成「没有文件」。
+      final stamp = parsed.lastModifiedRaw ?? _lastModifiedRaw(response);
+      return RemoteFile(
+        etag: parsed.etag,
+        lastModifiedRaw: stamp,
+        size: parsed.size,
+        // 时间只用于显示，解析不出来不影响同步。
+        modified: _parseHttpDate(stamp) ?? _lastModified(response),
+      );
     }
     _requireSuccess(response, '无法读取云端备份信息');
-    return _lastModified(response);
+    return RemoteFile(
+      etag: response.headers['etag'],
+      lastModifiedRaw: _lastModifiedRaw(response),
+      modified: _lastModified(response),
+    );
   }
 
   @override
-  Future<void> upload(Uint8List bytes, {String? name}) async {
+  Future<String?> upload(
+    Uint8List bytes, {
+    String? name,
+    String? ifMatch,
+  }) async {
     final response = await _read(
       await _open(
         'PUT',
         _uriFor(name),
         body: bytes,
         contentType: 'application/json; charset=utf-8',
+        ifMatch: ifMatch,
       ),
       limit: _controlLimit,
     );
@@ -187,7 +277,15 @@ class WebdavClient implements WebdavTransport {
       case 200:
       case 201:
       case 204:
-        return;
+        final tag = response.headers['etag'];
+        return tag == null || tag.isEmpty ? null : tag;
+      case 412:
+        // 唯一的「合法失败」：不是网络问题，是别人先写了。
+        // 单独成一类，重试循环只对这一个状态码重来。
+        throw const WebdavException(
+          '云端文件已被其它设备更新，本次写入已取消，稍后会自动重试',
+          statusCode: 412,
+        );
       case 404:
       case 409:
       case 507:
@@ -200,6 +298,7 @@ class WebdavClient implements WebdavTransport {
         );
       default:
         _requireSuccess(response, '上传云端备份失败');
+        return null;
     }
   }
 
@@ -233,6 +332,7 @@ class WebdavClient implements WebdavTransport {
     String? depth,
     List<int>? body,
     String? contentType,
+    String? ifMatch,
   }) async {
     final request = http.Request(method, uri)
       // See the class comment: a replayed PUT is worse than a clear error.
@@ -240,6 +340,8 @@ class WebdavClient implements WebdavTransport {
       ..headers.addAll(_authHeaders);
     if (depth != null) request.headers['Depth'] = depth;
     if (contentType != null) request.headers['Content-Type'] = contentType;
+    // 原样透传，不补引号 —— 见 WebdavTransport.upload 的说明。
+    if (ifMatch != null) request.headers['If-Match'] = ifMatch;
     if (body != null) request.bodyBytes = body;
     try {
       return await _client.send(request).timeout(timeout);
@@ -301,9 +403,16 @@ class WebdavClient implements WebdavTransport {
     );
   }
 
-  static DateTime? _lastModified(http.Response response) {
+  static String? _lastModifiedRaw(http.Response response) {
     final value = response.headers['last-modified'];
-    if (value == null) return null;
+    return value == null || value.isEmpty ? null : value;
+  }
+
+  static DateTime? _lastModified(http.Response response) =>
+      _parseHttpDate(_lastModifiedRaw(response));
+
+  static DateTime? _parseHttpDate(String? value) {
+    if (value == null || value.isEmpty) return null;
     try {
       return HttpDate.parse(value);
     } on Exception {
@@ -313,23 +422,34 @@ class WebdavClient implements WebdavTransport {
     }
   }
 
-  /// PROPFIND 的 207 正文里的 `<d:getlastmodified>`。
+  /// PROPFIND 的 207 正文里那三个属性。
   ///
-  /// 只认这一个元素：WebDAV 服务器一定会回它，而 `Last-Modified` 头在 207 上
-  /// 不是必须的（坚果云就不保证）。解析失败按「没有时间戳」处理 —— 那只会让
-  /// 应用少提示一次，不该让同步失败。
-  static DateTime? _propfindModified(Uint8List body) {
+  /// 只认这三个元素：WebDAV 服务器一定会回它们，而 `Last-Modified` 头在 207
+  /// 上不是必须的（坚果云就不保证）。解析失败按「没有这个属性」处理 ——
+  /// 那只会让闸门走保守路径，不该让同步失败。
+  ///
+  /// 用正则而不是完整 XML 解析是既有取舍：只取三个叶子元素，正文由服务端
+  /// 生成、结构固定。`([^<]+)` 保证自闭合标签（`<d:getetag/>`）不会被误读成
+  /// 有值 —— 那正是坚果云在属性不被响应时的写法。
+  static ({String? etag, String? lastModifiedRaw, int? size}) _propfindFile(
+    Uint8List body,
+  ) {
     final text = utf8.decode(body, allowMalformed: true);
-    final match = RegExp(
-      r'<[^>]*getlastmodified[^>]*>([^<]+)<',
-      caseSensitive: false,
-    ).firstMatch(text);
-    if (match == null) return null;
-    try {
-      return HttpDate.parse(match.group(1)!.trim());
-    } on Exception {
-      return null;
+    String? pick(String element) {
+      final match = RegExp(
+        '<[^>]*$element[^>]*>([^<]+)<',
+        caseSensitive: false,
+      ).firstMatch(text);
+      final value = match?.group(1)?.trim();
+      return value == null || value.isEmpty ? null : value;
     }
+
+    final lengthRaw = pick('getcontentlength');
+    return (
+      etag: pick('getetag'),
+      lastModifiedRaw: pick('getlastmodified'),
+      size: int.tryParse(lengthRaw ?? ''),
+    );
   }
 
   @override

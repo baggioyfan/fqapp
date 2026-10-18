@@ -14,8 +14,12 @@ import 'package:fqapp/services/webdav_client.dart';
 import 'package:fqapp/services/webdav_config.dart';
 import 'package:fqapp/services/webdav_sync_service.dart';
 
-/// The sync service only needs four calls, so the transport is faked here and
-/// the assertions can be about what was uploaded rather than about HTTP.
+/// The sync service only needs a handful of calls, so the transport is faked
+/// here and the assertions can be about what was uploaded rather than about
+/// HTTP.
+///
+/// 版本标识用递增的假 ETag：写入换新值、读时给出当前值、`If-Match` 对不上
+/// 就抛 412 —— 真实条件写的行为，重试循环才测得到。
 class _FakeTransport implements WebdavTransport {
   Uint8List? remote;
   DateTime? modified;
@@ -29,38 +33,95 @@ class _FakeTransport implements WebdavTransport {
   final Map<String, Uint8List> shards = {};
   final Map<String, DateTime> shardStamps = {};
 
+  /// 每个文件当前的 ETag（null 记为 ''）。
+  final Map<String, String> etags = {};
+
   /// 每次 PUT 的目标文件名，null 记成空串 —— 用来断言「只推了分片」。
   final List<String> puts = [];
+
+  /// 让下一次写入假装「已被别的设备抢先」：服务端回 412，客户端应当重新
+  /// 读、重新合并、再写一次。
+  int conflictsToInject = 0;
+
+  /// 注入的冲突让云端内容也前进一版（模拟另一台设备真的写了东西）。
+  Uint8List? conflictReplacement;
+
+  var _counter = 0;
+
+  String _key(String? name) => name ?? '';
+
+  bool _exists(String? name) =>
+      name == null ? remote != null : shards.containsKey(name);
+
+  String tagOf(String? name) {
+    final key = _key(name);
+    return etags[key] ??= 'etag-${++_counter}';
+  }
 
   @override
   Future<void> ensureCollection() async => ensured = true;
 
   @override
-  Future<({Uint8List bytes, DateTime? modified})?> download({
-    String? name,
-  }) async {
+  Future<({Uint8List bytes, DateTime? modified, String? versionKey})?>
+  download({String? name}) async {
     if (name != null) {
       final bytes = shards[name];
-      return bytes == null ? null : (bytes: bytes, modified: shardStamps[name]);
+      if (bytes == null) return null;
+      return (
+        bytes: bytes,
+        modified: shardStamps[name],
+        versionKey: tagOf(name),
+      );
     }
-    return remote == null ? null : (bytes: remote!, modified: modified);
+    if (remote == null) return null;
+    return (bytes: remote!, modified: modified, versionKey: tagOf(null));
   }
 
   @override
-  Future<DateTime?> remoteModified({String? name}) async {
-    if (name != null) return shards[name] == null ? null : shardStamps[name];
-    return remote == null ? null : modified;
+  Future<RemoteFile?> remoteFile({String? name}) async {
+    if (!_exists(name)) return null;
+    return RemoteFile(
+      etag: tagOf(name),
+      size: (name == null ? remote! : shards[name]!).length,
+      modified: name == null ? modified : shardStamps[name],
+    );
   }
 
   @override
-  Future<void> upload(Uint8List bytes, {String? name}) async {
-    puts.add(name ?? '');
+  Future<String?> upload(
+    Uint8List bytes, {
+    String? name,
+    String? ifMatch,
+  }) async {
+    if (conflictsToInject > 0) {
+      conflictsToInject--;
+      // 抢先写入：内容前进一版，版本也跟着变。
+      if (conflictReplacement case final replacement?) {
+        if (name == null) {
+          remote = replacement;
+        } else {
+          shards[name] = replacement;
+          shardStamps[name] = DateTime.now();
+        }
+        etags[_key(name)] = 'etag-${++_counter}';
+      }
+      throw const WebdavException('云端已被其它设备更新', statusCode: 412);
+    }
+    if (ifMatch != null && _exists(name) && ifMatch != tagOf(name)) {
+      throw const WebdavException('云端已被其它设备更新', statusCode: 412);
+    }
+    puts.add(_key(name));
     if (name == null) {
+      // 只有整包才更新 `uploaded`：分片 PUT 不该覆盖掉用例要断言的那份内容。
       uploaded = bytes;
+      remote = bytes;
     } else {
       shards[name] = bytes;
       shardStamps[name] = DateTime.now();
     }
+    final next = 'etag-${++_counter}';
+    etags[_key(name)] = next;
+    return next;
   }
 
   @override
@@ -294,6 +355,51 @@ void main() {
     expect(transport.uploaded, isNull);
   });
 
+  test('a 412 from a concurrent write re-reads and merges before retrying', () async {
+    // 这是条件写的意义所在：另一台设备在本机「读」与「写」之间提交了改动，
+    // 服务器拒绝本次写。正确反应不是覆盖，而是重新读回来合并再写。
+    await ShelfStore.instance.add(_item('local-1'));
+    transport.remote = snapshot(
+      shelf: [
+        ShelfRecord(
+          item: _item('remote-1'),
+          addedAt: DateTime.fromMillisecondsSinceEpoch(1000),
+        ),
+      ],
+    ).encode();
+    transport.conflictsToInject = 1;
+
+    final report = await service.sync(config, password: 'hunter2');
+
+    // 重试后两边的条目都在云端，而不是「谁后写谁留」。
+    expect(report.shelf, 1);
+    expect(
+      LibraryBackup.decode(transport.uploaded!)
+          .shelf
+          .map((record) => record.item.id)
+          .toSet(),
+      {'local-1', 'remote-1'},
+    );
+    expect(transport.closed, isTrue);
+  });
+
+  test('gives up after repeated conflicts instead of looping', () async {
+    transport.remote = snapshot().encode();
+    transport.conflictsToInject = 10;
+
+    await expectLater(
+      service.sync(config, password: 'hunter2'),
+      throwsA(
+        isA<WebdavException>().having(
+          (error) => error.statusCode,
+          'statusCode',
+          412,
+        ),
+      ),
+    );
+    expect(transport.closed, isTrue);
+  });
+
   test('a failed upload surfaces and still closes the transport', () async {
     final failing = WebdavSyncService(
       transport: (config, password) => _FailingTransport(transport),
@@ -325,16 +431,19 @@ class _FailingTransport implements WebdavTransport {
   Future<void> ensureCollection() => inner.ensureCollection();
 
   @override
-  Future<({Uint8List bytes, DateTime? modified})?> download({
+  Future<({Uint8List bytes, DateTime? modified, String? versionKey})?>
+  download({String? name}) => inner.download(name: name);
+
+  @override
+  Future<RemoteFile?> remoteFile({String? name}) =>
+      inner.remoteFile(name: name);
+
+  @override
+  Future<String?> upload(
+    Uint8List bytes, {
     String? name,
-  }) => inner.download(name: name);
-
-  @override
-  Future<DateTime?> remoteModified({String? name}) =>
-      inner.remoteModified(name: name);
-
-  @override
-  Future<void> upload(Uint8List bytes, {String? name}) async {
+    String? ifMatch,
+  }) async {
     throw const WebdavException('上传云端备份失败：服务器返回 500');
   }
 

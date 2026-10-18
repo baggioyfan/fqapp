@@ -4,6 +4,7 @@ import 'dart:typed_data';
 
 import '../models/library_backup.dart';
 import '../models/progress_shard.dart';
+import 'app_log.dart';
 import 'library_backup_service.dart';
 import 'webdav_client.dart';
 import 'webdav_config.dart';
@@ -57,19 +58,27 @@ class WebdavSyncService {
   final WebdavTransportFactory _transport;
   final _config = WebdavConfigStore.instance;
 
-  /// HTTP 日期只精确到秒，两台设备的时钟也可能差几秒。
-  static const clockTolerance = Duration(seconds: 60);
-
-  /// 只同步进度分片（热路径），最多两个往返。
+  /// 条件写被拒（412）后最多重来几次。
   ///
-  /// 三级闸门：
-  /// 1. 云端比本机上次进度同步新 → GET + 合并 + PUT（3 个往返，但只在真的
-  ///    有另一台设备写过时发生）；
-  /// 2. 云端没变、本机也没改 → PROPFIND 之后直接返回（1 个往返）；
-  /// 3. 云端没变、本机改过 → 跳过 GET 直传（2 个往返，离开阅读页的常态）。
+  /// 412 不是故障：它的意思正是「你读到的版本已经不是最新」，也就是我们
+  /// 想要的那种保护起作用了。重来一次就会读到对方的版本、合并、再写；
+  /// 连续两次都撞上说明两台设备在密集交替写，那种情况下再重试也只是延长
+  /// 竞争，交给下一次触发更划算。
+  static const maxConditionalRetries = 2;
+
+  /// 只同步进度分片（热路径），理想情况两个往返。
+  ///
+  /// 三级闸门（判据是**版本字符串是否相同**，不是谁的时间更新）：
+  /// 1. 云端版本与本机记录的不一样 → GET + 合并 + PUT（3 个往返，只在真的
+  ///    有另一台设备写过、或本机还不知道云端是哪一版时发生）；
+  /// 2. 版本相同、本机也没改 → PROPFIND 之后直接返回（1 个往返）；
+  /// 3. 版本相同、本机改过 → 带 `If-Match` 直传（2 个往返，离开阅读页的常态）。
   ///
   /// 第 3 条是分片真正的收益：进度是「指针」，值可以被覆盖，只要确认云端
   /// 没被别人改过就不必先读回来。整包里的书架/已看是并集语义，做不到这一点。
+  ///
+  /// `If-Match` 是第 3 条的安全网：PROPFIND 与 PUT 之间仍有一个窗口期，
+  /// 服务器如果认这个头，就会在那一刻返回 412，于是我们退回第 1 条重来。
   Future<ProgressSyncReport> syncProgress(
     WebdavConfig config, {
     required String password,
@@ -78,38 +87,70 @@ class WebdavSyncService {
     final transport = _transport(config, password);
     try {
       await transport.ensureCollection();
-      final remoteModified = await transport.remoteModified(
-        name: ProgressShard.fileName,
-      );
-      var merged = 0;
-      if (remoteModified == null) {
-        // 迁移：云端还没有分片，但整包里可能已经有另一台设备的进度。
-        // 先合并进来再写分片，否则第一台升级的设备会把对方覆盖掉。
-        final legacy = await transport.download();
-        if (legacy != null) merged += await _restoreFullHistory(legacy.bytes);
-      } else {
-        final last = await _config.progressSyncedAt();
-        final cloudAhead =
-            last == null || remoteModified.isAfter(last.add(clockTolerance));
-        if (cloudAhead) {
-          final remote = await transport.download(
-            name: ProgressShard.fileName,
+      var attempt = 0;
+      while (true) {
+        try {
+          return await _progressPass(transport, localDirty: localDirty);
+        } on WebdavException catch (error) {
+          if (error.statusCode != 412 || attempt >= maxConditionalRetries) {
+            rethrow;
+          }
+          attempt++;
+          AppLog.i(
+            'webdav-sync',
+            '进度写回时云端已被改动，重新合并后重试（第 $attempt 次）',
           );
-          if (remote != null) merged += await _restoreProgress(remote.bytes);
-        } else if (!localDirty) {
-          return (history: 0, uploadedBytes: 0);
         }
       }
-      final history = await _backups.captureProgress();
-      final bytes = await Isolate.run(
-        () => ProgressShard.capture(history).encode(),
-      );
-      await transport.upload(bytes, name: ProgressShard.fileName);
-      await _config.markProgressSynced(DateTime.now());
-      return (history: merged, uploadedBytes: bytes.length);
     } finally {
       transport.close();
     }
+  }
+
+  Future<ProgressSyncReport> _progressPass(
+    WebdavTransport transport, {
+    required bool localDirty,
+  }) async {
+    final remote = await transport.remoteFile(name: ProgressShard.fileName);
+    var merged = 0;
+    String? ifMatch;
+    if (remote == null) {
+      // 迁移：云端还没有分片，但整包里可能已经有另一台设备的进度。
+      // 先合并进来再写分片，否则第一台升级的设备会把对方覆盖掉。
+      final legacy = await transport.download();
+      if (legacy != null) merged += await _restoreFullHistory(legacy.bytes);
+    } else {
+      final known = await _config.progressVersion();
+      final sameVersion = known != null && known == remote.versionKey;
+      if (!sameVersion) {
+        // 云端可能被别的设备改过，也可能只是本机不知道它是哪一版。两种
+        // 情况都读回来合并：合并是并集语义，多读一次不会丢东西。
+        final latest = await transport.download(name: ProgressShard.fileName);
+        if (latest != null) merged += await _restoreProgress(latest.bytes);
+        ifMatch = latest?.versionKey ?? remote.versionKey;
+      } else {
+        if (!localDirty) return (history: 0, uploadedBytes: 0);
+        ifMatch = remote.versionKey;
+      }
+    }
+    final history = await _backups.captureProgress();
+    final bytes = await Isolate.run(
+      () => ProgressShard.capture(history).encode(),
+    );
+    var version = await transport.upload(
+      bytes,
+      name: ProgressShard.fileName,
+      ifMatch: ifMatch,
+    );
+    // 服务器不回 ETag（坚果云就不回）时回读一次。多一个往返，换来下一次
+    // 同步能直接走第 3 条闸门；不回读的话本机永远不知道「刚写的是哪一版」，
+    // 于是每次都会退化成第 1 条的完整读回。
+    version ??= (await transport.remoteFile(
+      name: ProgressShard.fileName,
+    ))?.versionKey;
+    await _config.markProgressVersion(version);
+    await _config.markProgressSynced(DateTime.now());
+    return (history: merged, uploadedBytes: bytes.length);
   }
 
   Future<int> _restoreProgress(Uint8List bytes) async {
@@ -171,41 +212,78 @@ class WebdavSyncService {
     final transport = _transport(config, password);
     try {
       await transport.ensureCollection();
-      final remote = await transport.download();
-      var merged = (
-        shelf: 0,
-        history: 0,
-        episodes: 0,
-        readTime: 0,
-        searchHistory: 0,
-      );
-      if (remote != null) {
-        merged = await _backups.restore(await _decode(remote.bytes));
+      var attempt = 0;
+      while (true) {
+        try {
+          return await _fullPass(transport);
+        } on WebdavException catch (error) {
+          if (error.statusCode != 412 || attempt >= maxConditionalRetries) {
+            rethrow;
+          }
+          attempt++;
+          AppLog.i(
+            'webdav-sync',
+            '整包写回时云端已被改动，重新合并后重试（第 $attempt 次）',
+          );
+        }
       }
-      final snapshot = await _backups.capture();
-      final bytes = await Isolate.run(snapshot.encode);
-      await transport.upload(bytes);
-      // 整包里也带着进度，顺手把热路径分片写成同一份内容。
-      // 不这么做的话，刚同步完整包、进度分片还停在旧值，下一次「离开阅读页」
-      // 会推一份过期数据上去。
-      final progressBytes = await Isolate.run(
-        () => ProgressShard.capture(snapshot.history).encode(),
-      );
-      await transport.upload(progressBytes, name: ProgressShard.fileName);
-      await _config.markProgressSynced(DateTime.now());
-      return (
-        remoteExisted: remote != null,
-        remoteModified: remote?.modified,
-        uploadedBytes: bytes.length,
-        shelf: merged.shelf,
-        history: merged.history,
-        episodes: merged.episodes,
-        readTime: merged.readTime,
-        searchHistory: merged.searchHistory,
-      );
     } finally {
       transport.close();
     }
+  }
+
+  /// 一次「读云端 → 合并 → 带版本写回」。
+  ///
+  /// `If-Match` 用刚读到的那一版：如果另一台设备在这期间写了，服务器回
+  /// 412，[_syncOnce] 会重新进来读一遍再合并。这不是重试网络错误，而是
+  /// 把「谁后写谁赢」换成「后写的人先看到对方的改动」。
+  Future<WebdavSyncReport> _fullPass(WebdavTransport transport) async {
+    final remote = await transport.download();
+    var merged = (
+      shelf: 0,
+      history: 0,
+      episodes: 0,
+      readTime: 0,
+      searchHistory: 0,
+    );
+    if (remote != null) {
+      merged = await _backups.restore(await _decode(remote.bytes));
+    }
+    final snapshot = await _backups.capture();
+    final bytes = await Isolate.run(snapshot.encode);
+    var version = await transport.upload(bytes, ifMatch: remote?.versionKey);
+    version ??= (await transport.remoteFile())?.versionKey;
+    await _config.markFullVersion(version);
+    // 整包里也带着进度，顺手把热路径分片写成同一份内容。
+    // 不这么做的话，刚同步完整包、进度分片还停在旧值，下一次「离开阅读页」
+    // 会推一份过期数据上去。
+    final progressBytes = await Isolate.run(
+      () => ProgressShard.capture(snapshot.history).encode(),
+    );
+    final progressRemote = await transport.remoteFile(
+      name: ProgressShard.fileName,
+    );
+    var progressVersion = await transport.upload(
+      progressBytes,
+      name: ProgressShard.fileName,
+      ifMatch: progressRemote?.versionKey,
+    );
+    progressVersion ??= (await transport.remoteFile(
+      name: ProgressShard.fileName,
+    ))?.versionKey;
+    await _config.markProgressVersion(progressVersion);
+    await _config.markSynced(DateTime.now());
+    await _config.markProgressSynced(DateTime.now());
+    return (
+      remoteExisted: remote != null,
+      remoteModified: remote?.modified,
+      uploadedBytes: bytes.length,
+      shelf: merged.shelf,
+      history: merged.history,
+      episodes: merged.episodes,
+      readTime: merged.readTime,
+      searchHistory: merged.searchHistory,
+    );
   }
 
   /// Decoding runs off the main isolate because a large snapshot is a lot of

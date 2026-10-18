@@ -21,6 +21,9 @@ import 'package:fqapp/services/webdav_sync_service.dart';
 /// 1. 分片自己的编解码（它和整包**不共享**版本号，读不懂就必须停手）；
 /// 2. 三级闸门到底发了几个请求：云端没变且本机没改就一个都不发，本机改过
 ///    就跳过 GET 直传。后者是分片存在的理由，断言的是「GET 次数为 0」。
+///
+/// 版本标识用递增的假 ETag 模拟：每次写入换一个值，读写时按 `If-Match`
+/// 校验 —— 也就是真实服务端条件写的行为。
 class _ShardTransport implements WebdavTransport {
   /// 整包（`name == null`）。
   Uint8List? full;
@@ -30,46 +33,84 @@ class _ShardTransport implements WebdavTransport {
   final Map<String, Uint8List> files = {};
   final Map<String, DateTime> stamps = {};
 
+  /// 每个文件当前的 ETag（键：null 记成空串）。
+  final Map<String, String> etags = {};
+
   /// 每次 PUT 的目标；null 记成空串，用来断言「只推了分片」。
   final List<String> puts = [];
 
   /// 每次 GET 的目标（只记正文下载，PROPFIND 不算）。
   final List<String> gets = [];
 
+  /// 每次 PUT 带上的 `If-Match`，与 [puts] 一一对应。
+  final List<String?> ifMatches = [];
+
   String? receivedPassword;
   bool ensured = false;
   bool closed = false;
+
+  var _counter = 0;
+
+  String _key(String? name) => name ?? '';
+
+  bool _exists(String? name) =>
+      name == null ? full != null : files.containsKey(name);
+
+  /// 当前 ETag；文件不存在时抛错，调用方应先判断存在性。
+  String tagOf(String? name) {
+    final key = _key(name);
+    return etags[key] ??= 'etag-${++_counter}';
+  }
 
   @override
   Future<void> ensureCollection() async => ensured = true;
 
   @override
-  Future<({Uint8List bytes, DateTime? modified})?> download({
+  Future<({Uint8List bytes, DateTime? modified, String? versionKey})?>
+  download({String? name}) async {
+    gets.add(_key(name));
+    final bytes = name == null ? full : files[name];
+    if (bytes == null) return null;
+    return (
+      bytes: bytes,
+      modified: name == null ? fullModified : stamps[name],
+      versionKey: tagOf(name),
+    );
+  }
+
+  @override
+  Future<RemoteFile?> remoteFile({String? name}) async {
+    if (!_exists(name)) return null;
+    final bytes = name == null ? full! : files[name]!;
+    return RemoteFile(
+      etag: tagOf(name),
+      size: bytes.length,
+      modified: name == null ? fullModified : stamps[name],
+    );
+  }
+
+  @override
+  Future<String?> upload(
+    Uint8List bytes, {
     String? name,
+    String? ifMatch,
   }) async {
-    gets.add(name ?? '');
-    if (name == null) {
-      return full == null ? null : (bytes: full!, modified: fullModified);
+    // 条件写：给的值和当前版本不一致就拒绝，与真实服务端一致。
+    if (ifMatch != null && _exists(name) && ifMatch != tagOf(name)) {
+      throw const WebdavException('云端已被其它设备更新', statusCode: 412);
     }
-    final bytes = files[name];
-    return bytes == null ? null : (bytes: bytes, modified: stamps[name]);
-  }
-
-  @override
-  Future<DateTime?> remoteModified({String? name}) async {
-    if (name == null) return full == null ? null : fullModified;
-    return files[name] == null ? null : stamps[name];
-  }
-
-  @override
-  Future<void> upload(Uint8List bytes, {String? name}) async {
-    puts.add(name ?? '');
+    puts.add(_key(name));
+    ifMatches.add(ifMatch);
     if (name == null) {
       full = bytes;
+      fullModified = DateTime.now().toUtc();
     } else {
       files[name] = bytes;
-      stamps[name] = DateTime.now();
+      stamps[name] = DateTime.now().toUtc();
     }
+    final next = 'etag-${++_counter}';
+    etags[_key(name)] = next;
+    return next;
   }
 
   @override
@@ -272,10 +313,10 @@ void main() {
       transport.files[ProgressShard.fileName] = ProgressShard.capture(
         const [],
       ).encode();
-      final stamp = DateTime.now().toUtc();
-      transport.stamps[ProgressShard.fileName] = stamp;
-      await WebdavConfigStore.instance.markProgressSynced(
-        stamp.add(const Duration(minutes: 5)),
+      transport.stamps[ProgressShard.fileName] = DateTime.now().toUtc();
+      // 闸门比的是版本，不是时间：记下云端当前那一版。
+      await WebdavConfigStore.instance.markProgressVersion(
+        transport.tagOf(ProgressShard.fileName),
       );
 
       final report = await service.syncProgress(
@@ -294,10 +335,10 @@ void main() {
       transport.files[ProgressShard.fileName] = ProgressShard.capture(
         const [],
       ).encode();
-      final stamp = DateTime.now().toUtc();
-      transport.stamps[ProgressShard.fileName] = stamp;
-      await WebdavConfigStore.instance.markProgressSynced(
-        stamp.add(const Duration(minutes: 5)),
+      transport.stamps[ProgressShard.fileName] = DateTime.now().toUtc();
+      // 闸门比的是版本，不是时间：记下云端当前那一版。
+      await WebdavConfigStore.instance.markProgressVersion(
+        transport.tagOf(ProgressShard.fileName),
       );
 
       final report = await service.syncProgress(
@@ -380,10 +421,10 @@ void main() {
       transport.files[ProgressShard.fileName] = ProgressShard.capture(
         const [],
       ).encode();
-      final stamp = DateTime.now().toUtc();
-      transport.stamps[ProgressShard.fileName] = stamp;
-      await WebdavConfigStore.instance.markProgressSynced(
-        stamp.add(const Duration(minutes: 5)),
+      transport.stamps[ProgressShard.fileName] = DateTime.now().toUtc();
+      // 闸门比的是版本，不是时间：记下云端当前那一版。
+      await WebdavConfigStore.instance.markProgressVersion(
+        transport.tagOf(ProgressShard.fileName),
       );
       await WebdavConfigStore.instance.save(config);
       await library.addHistory({

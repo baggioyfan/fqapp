@@ -101,6 +101,19 @@ class WebdavConfigStore {
   /// 不影响 [lastSyncedAt]（那是真的同步过才算）。
   static const dismissedKey = 'webdav_dismissed_remote_v1';
 
+  /// 上次见到/写下的云端版本标识（ETag，服务器不给时是 `getlastmodified`
+  /// 原始字符串）。
+  ///
+  /// 闸门判断从「时间先后」改成「版本是否相同」，是为了躲开时钟偏移：
+  /// 本机快 5 分钟就永远认为云端更旧，于是盲写覆盖另一台设备的进度，而且
+  /// 日志里一切正常；服务器快 5 分钟则每次回前台都弹「云端有更新」。
+  /// 字符串相等没有这两种失效方式。
+  static const fullVersionKey = 'webdav_version_full_v1';
+  static const progressVersionKey = 'webdav_version_progress_v1';
+
+  /// 用户忽略过的那一版（版本标识，不是时间）。
+  static const dismissedVersionKey = 'webdav_dismissed_version_v1';
+
   /// Null until the user saves a usable address; the page then shows the form
   /// instead of the sync state.
   Future<WebdavConfig?> load() async {
@@ -132,6 +145,9 @@ class WebdavConfigStore {
     await preferences.remove(lastSyncKey);
     await preferences.remove(lastProgressSyncKey);
     await preferences.remove(dismissedKey);
+    await preferences.remove(fullVersionKey);
+    await preferences.remove(progressVersionKey);
+    await preferences.remove(dismissedVersionKey);
   }
 
   Future<DateTime?> lastSyncedAt() async {
@@ -159,14 +175,52 @@ class WebdavConfigStore {
     );
   }
 
-  Future<DateTime?> dismissedRemoteAt() async {
+  /// 上次见到（或写下）的整包版本标识。null 表示「不知道」，闸门会走保守
+  /// 路径：先读回来合并，而不是假设云端没变。
+  Future<String?> fullVersion() async {
     final preferences = await SharedPreferences.getInstance();
-    final value = preferences.getInt(dismissedKey);
-    return value == null ? null : DateTime.fromMillisecondsSinceEpoch(value);
+    final value = preferences.getString(fullVersionKey);
+    return value == null || value.isEmpty ? null : value;
   }
 
-  Future<void> markDismissed(DateTime at) async {
+  Future<void> markFullVersion(String? key) async {
     final preferences = await SharedPreferences.getInstance();
-    await preferences.setInt(dismissedKey, at.millisecondsSinceEpoch);
+    if (key == null || key.isEmpty) {
+      await preferences.remove(fullVersionKey);
+    } else {
+      await preferences.setString(fullVersionKey, key);
+    }
+  }
+
+  Future<String?> progressVersion() async {
+    final preferences = await SharedPreferences.getInstance();
+    final value = preferences.getString(progressVersionKey);
+    return value == null || value.isEmpty ? null : value;
+  }
+
+  Future<void> markProgressVersion(String? key) async {
+    final preferences = await SharedPreferences.getInstance();
+    if (key == null || key.isEmpty) {
+      await preferences.remove(progressVersionKey);
+    } else {
+      await preferences.setString(progressVersionKey, key);
+    }
+  }
+
+  /// 用户忽略过的那一版。存版本标识而不是时间：同一个版本可能被忽略多次，
+  /// 而「哪一版」比「什么时候」更不容易被时钟搞错。
+  Future<String?> dismissedVersion() async {
+    final preferences = await SharedPreferences.getInstance();
+    final value = preferences.getString(dismissedVersionKey);
+    return value == null || value.isEmpty ? null : value;
+  }
+
+  Future<void> markDismissedVersion(String? key) async {
+    final preferences = await SharedPreferences.getInstance();
+    if (key == null || key.isEmpty) {
+      await preferences.remove(dismissedVersionKey);
+    } else {
+      await preferences.setString(dismissedVersionKey, key);
+    }
   }
 }

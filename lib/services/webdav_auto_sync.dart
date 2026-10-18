@@ -7,20 +7,26 @@ import 'webdav_client.dart';
 import 'webdav_config.dart';
 import 'webdav_sync_service.dart';
 
-/// 一次「云端比本机新」的判断结果。只在真的需要提示时才存在。
+/// 一次「云端和本机不是同一版」的判断结果。只在真的需要提示时才存在。
 class WebdavRemoteUpdate {
   const WebdavRemoteUpdate({
     required this.config,
     required this.password,
     required this.remoteModified,
+    required this.versionKey,
     required this.lastSyncedAt,
   });
 
   final WebdavConfig config;
   final String password;
 
-  /// 云端快照的 `Last-Modified`。
-  final DateTime remoteModified;
+  /// 云端快照的 `Last-Modified`。只用来在弹窗里说「什么时候改的」，
+  /// 服务器没给时为 null。
+  final DateTime? remoteModified;
+
+  /// 这一版的标识（ETag 或 `getlastmodified` 原始串）。判断「忽略过的是不是
+  /// 同一版」用它 —— 时间会被时钟偏移坑，版本字符串不会。
+  final String? versionKey;
 
   /// 本机上次成功同步的时刻；从未同步过时为 null。
   final DateTime? lastSyncedAt;
@@ -28,8 +34,10 @@ class WebdavRemoteUpdate {
 
 /// 打开时检查云端有没有更新，以及退到后台时自动同步一次。
 ///
-/// 判据照 legado 的「闸门一」（`AppWebDav.downloadAllBookProgress`）：
-/// 云端 `Last-Modified` 比本机上次成功同步的时刻更新，才认为「云端有更新」。
+/// 判据是**版本标识是否相同**，不是「谁的时间更新」：本机上次同步时记下
+/// 云端那一版的 ETag，这次 PROPFIND 拿到同一个值就说明云端没动过。时间比较
+/// 会在任何一方时钟不准时静默失效（手机快 5 分钟 → 永远认为云端更旧 →
+/// 盲写覆盖另一台设备的进度，而且日志里一切正常）。
 ///
 /// 不叫「本地旧」是有原因的：谁更新这件事读不出来 —— 进度是双闸门、收藏与
 /// 已看是并集，真要判断就得把云端下载下来逐条合并，而那已经等于同步本身了。
@@ -236,8 +244,8 @@ class WebdavAutoSync {
     _cancelPendingTimers();
   }
 
-  /// 云端有更新时返回它，否则 null（没配置、没网、云端还没有文件、
-  /// 已经是同步过的版本、用户点过忽略 —— 都是 null）。
+  /// 云端有本机没见过的版本时返回它，否则 null（没配置、没网、云端还没有
+  /// 文件、已经是同步过的版本、用户点过忽略 —— 都是 null）。
   Future<WebdavRemoteUpdate?> check() async {
     try {
       final config = await _config.load();
@@ -245,19 +253,27 @@ class WebdavAutoSync {
       final password = await _password();
       final remote = await _probe(config, password);
       if (remote == null) return null;
-      final lastSyncedAt = await _config.lastSyncedAt();
-      if (lastSyncedAt != null &&
-          !remote.isAfter(lastSyncedAt.add(tolerance))) {
-        return null;
+      final version = remote.versionKey;
+      if (version != null) {
+        if (await _config.fullVersion() == version) return null;
+        if (await _config.dismissedVersion() == version) return null;
+      } else {
+        // 服务器连 `getlastmodified` 都不给：没有可比的东西，退回时间戳这一手。
+        // 这条路径极罕见，只在两处时间都有时才用来压制提示。
+        final lastSyncedAt = await _config.lastSyncedAt();
+        final modified = remote.modified;
+        if (lastSyncedAt != null &&
+            modified != null &&
+            !modified.isAfter(lastSyncedAt.add(tolerance))) {
+          return null;
+        }
       }
-      // 同一个云端版本被忽略过就不再追问；云端再被改过才会重新提示。
-      final dismissed = await _config.dismissedRemoteAt();
-      if (dismissed != null && !remote.isAfter(dismissed)) return null;
       return WebdavRemoteUpdate(
         config: config,
         password: password,
-        remoteModified: remote,
-        lastSyncedAt: lastSyncedAt,
+        remoteModified: remote.modified,
+        versionKey: version,
+        lastSyncedAt: await _config.lastSyncedAt(),
       );
     } catch (error, stack) {
       // 检查失败不该打扰用户：没网、地址写错、密码被改都在这里安静退场。
@@ -280,7 +296,7 @@ class WebdavAutoSync {
   }
 
   Future<void> dismiss(WebdavRemoteUpdate update) =>
-      _config.markDismissed(update.remoteModified);
+      _config.markDismissedVersion(update.versionKey);
 
   /// 退到后台 / 防抖到期时静默同步一次（用户点「回到桌面」、切走应用、
   /// 翻完一章离开阅读页都会走到这里）。
@@ -356,10 +372,10 @@ class WebdavAutoSync {
     }
   }
 
-  Future<DateTime?> _probe(WebdavConfig config, String password) async {
+  Future<RemoteFile?> _probe(WebdavConfig config, String password) async {
     final transport = _transport(config, password);
     try {
-      return await transport.remoteModified();
+      return await transport.remoteFile();
     } finally {
       transport.close();
     }

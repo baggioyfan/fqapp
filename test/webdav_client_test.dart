@@ -28,6 +28,19 @@ class _FakeServer {
   String? propfindBody;
   Uint8List lastPutBody = Uint8List(0);
 
+  /// 每个路径当前的 ETag。真实服务端（坚果云）把它当内容指纹：同一内容
+  /// 同一个值，内容变了值就变了。这里用递增计数模拟同样的事实。
+  final etags = <String, String>{};
+  var _etagCounter = 0;
+
+  String _nextEtag() => 'etag-${++_etagCounter}';
+
+  /// PUT 是否因为 `If-Match` 不匹配被拒 —— 用来断言「条件写真的发出去了」。
+  int rejectedByIfMatch = 0;
+
+  /// 真实坚果云在 PUT 响应里不给 ETag；打开这个开关才模拟「会回 ETag」的服务端。
+  bool sendEtagOnPut = false;
+
   static final credentials =
       'Basic ${base64Encode(utf8.encode('reader:secret'))}';
 
@@ -54,7 +67,12 @@ class _FakeServer {
     final response = request.response;
     methods.add(request.method);
     final recorded = <String, String>{};
-    for (final name in ['authorization', 'depth', 'content-type']) {
+    for (final name in [
+      'authorization',
+      'depth',
+      'content-type',
+      'if-match',
+    ]) {
       final value = request.headers.value(name);
       if (value != null) recorded[name] = value;
     }
@@ -79,10 +97,12 @@ class _FakeServer {
     if (request.method == 'PROPFIND') {
       propfindBody = await utf8.decoder.bind(request).join();
       if (request.uri.path == path) {
-        // 针对快照文件本身的 PROPFIND：只回时间戳，正文里带 getlastmodified。
-        if (files[request.uri.path] == null) {
+        // 针对快照文件本身的 PROPFIND：时间戳 + ETag + 大小，正文里给全。
+        final bytes = files[request.uri.path];
+        if (bytes == null) {
           response.statusCode = 404;
         } else {
+          final tag = etags[request.uri.path] ??= _nextEtag();
           response.statusCode = 207;
           response.headers.contentType = ContentType(
             'application',
@@ -92,9 +112,12 @@ class _FakeServer {
           response.write(
             '<?xml version="1.0" encoding="utf-8"?>'
             '<d:multistatus xmlns:d="DAV:"><d:response><d:propstat><d:prop>'
+            '<d:getetag>$tag</d:getetag>'
             '<d:getlastmodified>'
             '${HttpDate.format(DateTime.utc(2026, 1, 2, 3, 4, 5))}'
             '</d:getlastmodified>'
+            '<d:getcontentlength>${bytes.length}</d:getcontentlength>'
+            '<d:resourcetype/>'
             '</d:prop></d:propstat></d:response></d:multistatus>',
           );
         }
@@ -129,13 +152,25 @@ class _FakeServer {
         builder.add(chunk);
       }
       lastPutBody = builder.takeBytes();
+      final ifMatch = request.headers.value('if-match');
+      final current = etags[request.uri.path];
       if (!allowCreateFile) {
         // What Nutstore answers for a PUT that would create a file at its
         // WebDAV root: the collection exists, the file is still refused.
         response.statusCode = 404;
+      } else if (ifMatch != null && current != null && ifMatch != current) {
+        // 条件写被拒：客户端读到的版本已经不是最新。目标文件保持原样，
+        // 这正是「另一台设备的改动不会被盖掉」的全部机制。
+        rejectedByIfMatch++;
+        response.statusCode = 412;
       } else {
         files[request.uri.path] = lastPutBody;
+        final tag = _nextEtag();
+        etags[request.uri.path] = tag;
         response.statusCode = 201;
+        // 坚果云不回 ETag 头；默认也不回，只有显式打开时才给，用来覆盖
+        // 「服务端主动告知新版本」那条分支。
+        if (sendEtagOnPut) response.headers.set('etag', tag);
       }
     } else {
       response.statusCode = 405;
@@ -181,6 +216,10 @@ void main() {
       expect(server.headers['PROPFIND']!['depth'], '0');
       expect(server.propfindBody, contains('propfind'));
       expect(server.propfindBody, contains('DAV:'));
+      // 坚果云在 prop 里少了 resourcetype 就完全不返回 getetag，而且不报错 ——
+      // 客户端只会安静地退化成无保护写入。这条断言把它钉住。
+      expect(server.propfindBody, contains('getetag'));
+      expect(server.propfindBody, contains('resourcetype'));
       expect(server.headers['PROPFIND']!['authorization'], _FakeServer.credentials);
     });
 
@@ -263,19 +302,21 @@ void main() {
       expect(remote.modified, DateTime.utc(2026, 1, 2, 3, 4, 5));
     });
 
-    test('remoteModified reads the timestamp without downloading', () async {
-      // 打开应用时的检查只该问一句「什么时候改的」，不该把整份备份拉下来。
+    test('remoteFile reads the version without downloading the body', () async {
+      // 打开应用时的检查只该问一句「是哪一版」，不该把整份备份拉下来。
       server.files[server.path] = utf8.encode('{"version":3}');
-      expect(
-        await clientFor().remoteModified(),
-        DateTime.utc(2026, 1, 2, 3, 4, 5),
-      );
+      final remote = await clientFor().remoteFile();
+      expect(remote, isNotNull);
+      expect(remote!.etag, 'etag-1');
+      expect(remote.versionKey, 'etag-1');
+      expect(remote.size, '{"version":3}'.length);
+      expect(remote.modified, DateTime.utc(2026, 1, 2, 3, 4, 5));
       expect(server.methods, ['PROPFIND']);
       expect(server.methods, isNot(contains('GET')));
     });
 
-    test('remoteModified reports a missing file as absent', () async {
-      expect(await clientFor().remoteModified(), isNull);
+    test('remoteFile reports a missing file as absent', () async {
+      expect(await clientFor().remoteFile(), isNull);
       expect(server.methods, ['PROPFIND']);
     });
 
@@ -325,6 +366,71 @@ void main() {
           ),
         ),
       );
+    });
+  });
+
+  group('conditional write', () {
+    Uint8List body(String text) => Uint8List.fromList(utf8.encode(text));
+
+    test('sends the version it read as If-Match, verbatim', () async {
+      // 原样透传：坚果云只认裸 token，按 RFC 补引号会一律 412。
+      server.files[server.path] = body('{"v":1}');
+      final tag = (await clientFor().remoteFile())!.versionKey!;
+
+      await clientFor().upload(body('{"v":2}'), ifMatch: tag);
+
+      expect(server.headers['PUT']!['if-match'], tag);
+      expect(server.headers['PUT']!['if-match'], isNot(startsWith('"')));
+    });
+
+    test('an outdated version is refused with 412 and changes nothing', () async {
+      server.files[server.path] = body('{"v":1}');
+      final stale = (await clientFor().remoteFile())!.versionKey!;
+
+      // 另一台设备先写了一版：云端内容与版本都前进了。
+      await clientFor().upload(body('{"v":2}'));
+      final before = server.files[server.path]!;
+
+      await expectLater(
+        clientFor().upload(body('{"v":3}'), ifMatch: stale),
+        throwsA(
+          isA<WebdavException>()
+              .having((error) => error.statusCode, 'statusCode', 412)
+              .having((error) => error.message, 'message', contains('已被其它设备更新')),
+        ),
+      );
+
+      expect(server.rejectedByIfMatch, 1);
+      expect(server.files[server.path], before, reason: '被拒的写不能落盘');
+    });
+
+    test('the current version is accepted', () async {
+      server.files[server.path] = body('{"v":1}');
+      final tag = (await clientFor().remoteFile())!.versionKey!;
+
+      await clientFor().upload(body('{"v":2}'), ifMatch: tag);
+
+      expect(server.rejectedByIfMatch, 0);
+      expect(server.files[server.path], body('{"v":2}'));
+    });
+
+    test('returns the new version when the server sends one', () async {
+      server.sendEtagOnPut = true;
+
+      final returned = await clientFor().upload(body('{"v":1}'));
+
+      expect(returned, isNotNull);
+      expect(returned, server.etags[server.path]);
+    });
+
+    test('returns null when the server sends no ETag on PUT', () async {
+      // 坚果云就是这样：写完必须回读一次才知道新版本，调用方据此决定。
+      expect(await clientFor().upload(body('{"v":1}')), isNull);
+    });
+
+    test('uploads without If-Match when the caller has no version', () async {
+      await clientFor().upload(body('{"v":1}'));
+      expect(server.headers['PUT']!.containsKey('if-match'), isFalse);
     });
   });
 
