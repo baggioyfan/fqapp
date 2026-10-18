@@ -63,6 +63,11 @@ class _SpySync implements WebdavSyncService {
   }
 
   int overwriteCalls = 0;
+
+  /// 页面不关心预算；实现接口时把它交回去即可（同步逻辑由
+  /// `webdav_sync_service_test.dart` 覆盖）。
+  @override
+  Duration get budget => WebdavSyncService.defaultBudget;
 }
 
 /// An empty merge, for the cases that only care about the failure path.
