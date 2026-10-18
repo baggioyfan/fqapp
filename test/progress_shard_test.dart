@@ -51,10 +51,27 @@ class _ShardTransport implements WebdavTransport {
 
   var _counter = 0;
 
-  String _key(String? name) => name ?? '';
+  /// 主文件在假服务端里是 [full]，也就是 `name == null` 那一路。
+  ///
+  /// 三步替换是按**文件名**称呼它的（`.tmp`/`.bak` 都是它的兄弟），所以配置
+  /// 里的那个名字也要归一成主文件 —— 否则 `move` 会去找一个叫
+  /// `fqapp-sync.json` 的分片，而那从来不存在。
+  String _key(String? name) =>
+      (name == null || name == WebdavConfig.defaultFileName) ? '' : name;
 
-  bool _exists(String? name) =>
-      name == null ? full != null : files.containsKey(name);
+  Uint8List? _bytes(String key) => key.isEmpty ? full : files[key];
+
+  void _set(String key, Uint8List? bytes) {
+    if (key.isEmpty) {
+      full = bytes;
+    } else if (bytes == null) {
+      files.remove(key);
+    } else {
+      files[key] = bytes;
+    }
+  }
+
+  bool _exists(String? name) => _bytes(_key(name)) != null;
 
   /// 当前 ETag；文件不存在时抛错，调用方应先判断存在性。
   String tagOf(String? name) {
@@ -68,24 +85,26 @@ class _ShardTransport implements WebdavTransport {
   @override
   Future<({Uint8List bytes, DateTime? modified, String? versionKey})?>
   download({String? name}) async {
-    gets.add(_key(name));
-    final bytes = name == null ? full : files[name];
+    final key = _key(name);
+    gets.add(key);
+    final bytes = _bytes(key);
     if (bytes == null) return null;
     return (
       bytes: bytes,
-      modified: name == null ? fullModified : stamps[name],
+      modified: key.isEmpty ? fullModified : stamps[key],
       versionKey: tagOf(name),
     );
   }
 
   @override
   Future<RemoteFile?> remoteFile({String? name}) async {
-    if (!_exists(name)) return null;
-    final bytes = name == null ? full! : files[name]!;
+    final key = _key(name);
+    final bytes = _bytes(key);
+    if (bytes == null) return null;
     return RemoteFile(
       etag: tagOf(name),
       size: bytes.length,
-      modified: name == null ? fullModified : stamps[name],
+      modified: key.isEmpty ? fullModified : stamps[key],
     );
   }
 
@@ -95,53 +114,45 @@ class _ShardTransport implements WebdavTransport {
     String? name,
     String? ifMatch,
   }) async {
+    final key = _key(name);
     // 条件写：给的值和当前版本不一致就拒绝，与真实服务端一致。
-    if (ifMatch != null && _exists(name) && ifMatch != tagOf(name)) {
+    if (ifMatch != null && _exists(key) && ifMatch != tagOf(key)) {
       throw const WebdavException('云端已被其它设备更新', statusCode: 412);
     }
-    puts.add(_key(name));
+    puts.add(key);
     ifMatches.add(ifMatch);
-    if (name == null) {
-      full = bytes;
+    _set(key, bytes);
+    if (key.isEmpty) {
       fullModified = DateTime.now().toUtc();
     } else {
-      files[name] = bytes;
-      stamps[name] = DateTime.now().toUtc();
+      stamps[key] = DateTime.now().toUtc();
     }
     final next = 'etag-${++_counter}';
-    etags[_key(name)] = next;
+    etags[key] = next;
     return next;
   }
 
   @override
   Future<void> move({String? from, required String? to}) async {
-    final source = from == null ? full : files[from];
+    final sourceKey = _key(from);
+    final targetKey = _key(to);
+    final source = _bytes(sourceKey);
     if (source == null) {
       throw const WebdavException('无法重命名云端文件', statusCode: 404);
     }
-    if (to == null) {
-      full = source;
-    } else {
-      files[to] = source;
-    }
-    etags[_key(to)] = 'etag-${++_counter}';
-    if (from == null) {
-      full = null;
-      etags.remove('');
-    } else {
-      files.remove(from);
-      etags.remove(from);
-    }
+    _set(targetKey, source);
+    if (targetKey.isEmpty) fullModified = DateTime.now().toUtc();
+    etags[targetKey] = 'etag-${++_counter}';
+    // 真实的 MOVE 是「挪走」，源不再存在 —— 三步替换依赖这一点。
+    _set(sourceKey, null);
+    etags.remove(sourceKey);
   }
 
   @override
   Future<void> delete({String? name}) async {
-    if (name == null) {
-      full = null;
-    } else {
-      files.remove(name);
-    }
-    etags.remove(_key(name));
+    final key = _key(name);
+    _set(key, null);
+    etags.remove(key);
   }
 
   @override
@@ -518,7 +529,10 @@ void main() {
 
       await auto.flush();
 
-      expect(transport.puts, contains(''));
+      // 整包现在走三步替换：先 PUT 到 `.tmp`，再 MOVE 到主文件。
+      // 「主文件被 PUT 过」这条断言已经不成立了，要断言的是它确实被重写了。
+      expect(transport.puts, contains('fqapp-sync.json.tmp'));
+      expect(transport.full, isNotNull);
     });
   });
 }

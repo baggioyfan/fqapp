@@ -52,10 +52,29 @@ class _FakeTransport implements WebdavTransport {
 
   var _counter = 0;
 
-  String _key(String? name) => name ?? '';
+  /// 主文件在假服务端里是 [remote]，也就是 `name == null` 那一路。
+  ///
+  /// 三步替换是按**文件名**称呼它的（`.tmp`/`.bak` 是它的兄弟），所以配置里
+  /// 那个名字也要归一成主文件 —— 否则 `move` 会去找一个叫
+  /// `fqapp-sync.json` 的分片，而那从来不存在，于是替换永远只走到一半。
+  String _key(String? name) =>
+      (name == null || name == WebdavConfig.defaultFileName) ? '' : name;
 
-  bool _exists(String? name) =>
-      name == null ? remote != null : shards.containsKey(name);
+  Uint8List? _bytes(String key) => key.isEmpty ? remote : shards[key];
+
+  DateTime? _stampOf(String key) => key.isEmpty ? modified : shardStamps[key];
+
+  void _set(String key, Uint8List? bytes) {
+    if (key.isEmpty) {
+      remote = bytes;
+    } else if (bytes == null) {
+      shards.remove(key);
+    } else {
+      shards[key] = bytes;
+    }
+  }
+
+  bool _exists(String? name) => _bytes(_key(name)) != null;
 
   String tagOf(String? name) {
     final key = _key(name);
@@ -68,26 +87,21 @@ class _FakeTransport implements WebdavTransport {
   @override
   Future<({Uint8List bytes, DateTime? modified, String? versionKey})?>
   download({String? name}) async {
-    if (name != null) {
-      final bytes = shards[name];
-      if (bytes == null) return null;
-      return (
-        bytes: bytes,
-        modified: shardStamps[name],
-        versionKey: tagOf(name),
-      );
-    }
-    if (remote == null) return null;
-    return (bytes: remote!, modified: modified, versionKey: tagOf(null));
+    final key = _key(name);
+    final bytes = _bytes(key);
+    if (bytes == null) return null;
+    return (bytes: bytes, modified: _stampOf(key), versionKey: tagOf(key));
   }
 
   @override
   Future<RemoteFile?> remoteFile({String? name}) async {
-    if (!_exists(name)) return null;
+    final key = _key(name);
+    final bytes = _bytes(key);
+    if (bytes == null) return null;
     return RemoteFile(
-      etag: tagOf(name),
-      size: (name == null ? remote! : shards[name]!).length,
-      modified: name == null ? modified : shardStamps[name],
+      etag: tagOf(key),
+      size: bytes.length,
+      modified: _stampOf(key),
     );
   }
 
@@ -97,71 +111,60 @@ class _FakeTransport implements WebdavTransport {
     String? name,
     String? ifMatch,
   }) async {
+    final key = _key(name);
     if (conflictsToInject > 0) {
       conflictsToInject--;
       // 抢先写入：内容前进一版，版本也跟着变。
       if (conflictReplacement case final replacement?) {
-        if (name == null) {
-          remote = replacement;
-        } else {
-          shards[name] = replacement;
-          shardStamps[name] = DateTime.now();
-        }
-        etags[_key(name)] = 'etag-${++_counter}';
+        _set(key, replacement);
+        if (key.isNotEmpty) shardStamps[key] = DateTime.now();
+        etags[key] = 'etag-${++_counter}';
       }
       throw const WebdavException('云端已被其它设备更新', statusCode: 412);
     }
-    if (ifMatch != null && _exists(name) && ifMatch != tagOf(name)) {
+    if (ifMatch != null && _exists(key) && ifMatch != tagOf(key)) {
       throw const WebdavException('云端已被其它设备更新', statusCode: 412);
     }
-    puts.add(_key(name));
+    puts.add(key);
     final stored = truncateUploads
         ? Uint8List.sublistView(bytes, 0, bytes.length ~/ 2)
         : bytes;
-    if (name == null) {
+    _set(key, stored);
+    if (key.isEmpty) {
       // 只有整包才更新 `uploaded`：分片 PUT 不该覆盖掉用例要断言的那份内容。
       uploaded = bytes;
-      remote = stored;
     } else {
-      shards[name] = stored;
-      shardStamps[name] = DateTime.now();
+      shardStamps[key] = DateTime.now();
     }
     final next = 'etag-${++_counter}';
-    etags[_key(name)] = next;
+    etags[key] = next;
     return next;
   }
 
   @override
   Future<void> move({String? from, required String? to}) async {
-    final source = from == null ? remote : shards[from];
+    final sourceKey = _key(from);
+    final targetKey = _key(to);
+    final source = _bytes(sourceKey);
     if (source == null) {
       throw const WebdavException('无法重命名云端文件', statusCode: 404);
     }
-    if (to == null) {
-      remote = source;
-    } else {
-      shards[to] = source;
-    }
-    etags[_key(to)] = 'etag-${++_counter}';
+    _set(targetKey, source);
+    if (targetKey.isNotEmpty) shardStamps[targetKey] = DateTime.now();
+    // 落到主文件位置的就是「云端现在这份快照」。三步替换之后它从来没被直接
+    // PUT 过，`uploaded` 只能在这里补上，否则用例看到的永远是一份旧内容。
+    if (targetKey.isEmpty) uploaded = source;
+    etags[targetKey] = 'etag-${++_counter}';
     // 真实的 MOVE 是「挪走」，源不再存在 —— 三步替换依赖这一点。
-    if (from == null) {
-      remote = null;
-      etags.remove('');
-    } else {
-      shards.remove(from);
-      etags.remove(from);
-    }
+    _set(sourceKey, null);
+    etags.remove(sourceKey);
   }
 
   @override
   Future<void> delete({String? name}) async {
-    if (name == null) {
-      remote = null;
-      etags.remove('');
-    } else {
-      shards.remove(name);
-      etags.remove(name);
-    }
+    final key = _key(name);
+    _set(key, null);
+    etags.remove(key);
   }
 
   @override
