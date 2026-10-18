@@ -133,7 +133,8 @@ class WebdavAutoSync {
   }
 
   /// 播放 → 暂停的跃迁：写入流断了，这是天然的结账点，比「每 5 分钟推一次」
-  /// 更及时也更省流量。短防抖吸收抖动；若 20 秒内又播起来了，这次推送就取消。
+  /// 更及时也更省流量。短防抖吸收抖动；若 20 秒内又播起来了，这次推送就取消
+  /// （见 [cancelPlaybackPause]）。
   ///
   /// 暂停同时重置 [playbackThrottle] 的计时，所以连播（每集之间必有暂停/播完）
   /// 时兜底不会和暂停重复触发 —— 一集只推一次，而不是每 15 分钟再补一次。
@@ -145,6 +146,15 @@ class WebdavAutoSync {
       _pauseDebounce = null;
       unawaited(syncProgressNow(reason: 'pause'));
     });
+  }
+
+  /// 取消待发的「暂停推送」。两个时机：
+  ///
+  /// - 播放恢复：进度马上又会开始变化，20 秒前那次暂停不再是结账点；
+  /// - 播放页关闭：`syncOnLeave` 已经立刻推过了，定时器成了纯冗余。
+  void cancelPlaybackPause() {
+    _pauseDebounce?.cancel();
+    _pauseDebounce = null;
   }
 
   /// 离开阅读/播放页面时调用：取消防抖，立刻同步进度分片。

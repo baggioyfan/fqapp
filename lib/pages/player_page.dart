@@ -721,6 +721,8 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     unawaited(_persistProgress());
     // 离开播放页也推一次进度。和阅读页对齐：应用还在前台，请求跑得完。
     // 没有这一句，「播几分钟按返回键回书架」要等到回桌面那次 flush 才上云。
+    // 定时中的「暂停推送」就此作废——立刻推比 20 秒后再推更对。
+    WebdavAutoSync.instance.cancelPlaybackPause();
     unawaited(WebdavAutoSync.instance.syncOnLeave());
     unawaited(_teardownPlayer());
     super.dispose();
@@ -1242,6 +1244,9 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
           if (!playing) {
             unawaited(_persistProgress());
             WebdavAutoSync.instance.markPlaybackPaused();
+          } else {
+            // 恢复播放：20 秒内那次暂停推送取消，进度马上又会开始变化。
+            WebdavAutoSync.instance.cancelPlaybackPause();
           }
         }
         _syncWatchClock();
