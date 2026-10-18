@@ -1234,7 +1234,16 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       }),
       player.playingStream.listen((playing) {
         if (!_current(generation, player)) return;
-        if (_playing != playing) setState(() => _playing = playing);
+        if (_playing != playing) {
+          setState(() => _playing = playing);
+          // 播放 → 暂停的跃迁：写入流断了，趁应用还在前台把进度推上去。
+          // 短防抖吸收「播完 → 下一集」的抖动与缓冲假暂停。先补一次写入，
+          // 推上去的是当前精确位置而不是 ≤2 秒前的旧值。
+          if (!playing) {
+            unawaited(_persistProgress());
+            WebdavAutoSync.instance.markPlaybackPaused();
+          }
+        }
         _syncWatchClock();
         _updatePrefetch();
       }),

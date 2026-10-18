@@ -58,10 +58,16 @@ class WebdavAutoSync {
   /// 最后一次写入之后静默这么久才真正同步，中间的写入全部合并成一次。
   static const debounceWindow = Duration(minutes: 3);
 
-  /// 写入不会停的场景用节流：后台播放每 2~5 秒就写一次进度，防抖永远等不到
-  /// 静默。这里按固定间隔放行，和 [debounceWindow] 是两个不同的东西 ——
-  /// 「写入会停 → 防抖；写入不会停 → 节流」。
-  static const playbackThrottle = Duration(minutes: 5);
+  /// 暂停即同步：播放期间写入不会停，但「暂停」会让写入流断掉，这正是防抖
+  /// 适用的场景（见 [markPlaybackPaused]）。暂停后短防抖再发，用来吸收
+  /// 「播完 → 下一集」的 `false→true` 抖动，以及缓冲造成的假暂停。
+  static const pauseDebounce = Duration(seconds: 20);
+
+  /// 持续播放的安全兜底：播放从不暂停（后台听书、连播、投屏）时，进度只靠
+  /// 这个间隔兜底上传。它是崩溃/被杀时的最大丢失窗口，所以不必太短 —— 本地
+  /// 每 2 秒就落盘，换设备看也只是「下一次同步」的事，不必为它付出每 5 分钟
+  /// 一次的上云流量。暂停推送会重置这个计时，连播时它不会和暂停抢着触发。
+  static const playbackThrottle = Duration(minutes: 15);
 
   /// 整包（`fqapp-sync.json`）的最小间隔。
   ///
@@ -86,6 +92,7 @@ class WebdavAutoSync {
   DateTime? _lastAutoAt;
   DateTime? _lastPlaybackAt;
   Timer? _debounce;
+  Timer? _pauseDebounce;
   bool _dirty = false;
 
   /// 冷数据（书架、墓碑、已看、阅读时长、搜索历史）改过，整包需要重写一次。
@@ -112,7 +119,8 @@ class WebdavAutoSync {
     });
   }
 
-  /// 后台播放专用的节流入口：写入不会停，所以按固定间隔放行。
+  /// 后台播放专用的节流入口：写入不会停，所以按固定间隔放行。这是「从不暂停」
+  /// 场景（后台听书、连播、投屏）的安全兜底，详见 [playbackThrottle]。
   void markPlaybackWrite() {
     _dirty = true;
     final now = DateTime.now();
@@ -122,6 +130,21 @@ class WebdavAutoSync {
     _debounce?.cancel();
     _debounce = null;
     unawaited(syncProgressNow(reason: 'playback'));
+  }
+
+  /// 播放 → 暂停的跃迁：写入流断了，这是天然的结账点，比「每 5 分钟推一次」
+  /// 更及时也更省流量。短防抖吸收抖动；若 20 秒内又播起来了，这次推送就取消。
+  ///
+  /// 暂停同时重置 [playbackThrottle] 的计时，所以连播（每集之间必有暂停/播完）
+  /// 时兜底不会和暂停重复触发 —— 一集只推一次，而不是每 15 分钟再补一次。
+  void markPlaybackPaused() {
+    _dirty = true;
+    _lastPlaybackAt = DateTime.now();
+    _pauseDebounce?.cancel();
+    _pauseDebounce = Timer(pauseDebounce, () {
+      _pauseDebounce = null;
+      unawaited(syncProgressNow(reason: 'pause'));
+    });
   }
 
   /// 离开阅读/播放页面时调用：取消防抖，立刻同步进度分片。
@@ -186,9 +209,21 @@ class WebdavAutoSync {
     }
   }
 
-  void dispose() {
+  /// 取消所有挂起的定时任务（书架防抖、漏推补偿、暂停推送）。
+  ///
+  /// 两个调用方：[dispose]（测试与实例销毁）和 `syncOnBackground` 成功之后
+  /// ——该推的已经推完，留着的定时器只会晚几分钟发一次空转的 PROPFIND；
+  /// 而且现代 Android 会冻结后台进程，这些定时器大概率根本没机会触发。
+  /// 同步**失败**时绝不调用：它们正是失败后的重试机会。
+  void _cancelPendingTimers() {
     _debounce?.cancel();
     _debounce = null;
+    _pauseDebounce?.cancel();
+    _pauseDebounce = null;
+  }
+
+  void dispose() {
+    _cancelPendingTimers();
   }
 
   /// 云端有更新时返回它，否则 null（没配置、没网、云端还没有文件、
@@ -258,7 +293,11 @@ class WebdavAutoSync {
       if (config == null) return false;
       if (!await _fullSyncDue(now)) {
         // 冷数据没动、也没到每日那一次：整包里没有任何比进度更新的东西。
-        return syncProgressNow(reason: reason);
+        // 走到这里说明没有待发的书架整包任务（那会置 `_coldDirty`），挂着的
+        // 防抖只可能是「漏推补偿」——刚推成功，它就失去了存在意义。
+        final pushed = await syncProgressNow(reason: reason);
+        if (pushed) _cancelPendingTimers();
+        return pushed;
       }
       // 先等本机排队中的写入落盘：页面在 dispose/paused 里提交的进度是异步
       // 排队的，不等就会把上一秒的进度推上去。
@@ -267,6 +306,10 @@ class WebdavAutoSync {
       await _config.markSynced(DateTime.now());
       _dirty = false;
       _coldDirty = false;
+      // 整包把一切都推完了：挂着的防抖/暂停定时器全部成了空转——尤其别让
+      // 它们在几分钟后把后台进程唤醒，只为发一次 PROPFIND。同步失败时不
+      // 取消，那些定时器正是失败后的重试机会。
+      _cancelPendingTimers();
       AppLog.i(
         'webdav-auto',
         '自动同步完成（$reason）：收藏 ${report.shelf} 条、进度 ${report.history} 条',
