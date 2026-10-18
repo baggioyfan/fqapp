@@ -111,6 +111,13 @@ class WebdavConfigStore {
   static const fullVersionKey = 'webdav_version_full_v1';
   static const progressVersionKey = 'webdav_version_progress_v1';
 
+  /// 上一次写到云端的进度分片的**内容指纹**（不是服务端 etag）。
+  ///
+  /// etag 只有服务端算得出来，而写操作不回传它，所以「刚写出去的是哪一版」
+  /// 以前只能再问一次服务端。内容指纹本机算得出来：下次 GET 回来算一遍，
+  /// 一样就说明云端还是自己写的那份，不必为了确认版本多跑一个往返。
+  static const progressDigestKey = 'webdav_digest_progress_v1';
+
   /// 用户忽略过的那一版（版本标识，不是时间）。
   static const dismissedVersionKey = 'webdav_dismissed_version_v1';
 
@@ -147,6 +154,7 @@ class WebdavConfigStore {
     await preferences.remove(dismissedKey);
     await preferences.remove(fullVersionKey);
     await preferences.remove(progressVersionKey);
+    await preferences.remove(progressDigestKey);
     await preferences.remove(dismissedVersionKey);
   }
 
@@ -192,18 +200,19 @@ class WebdavConfigStore {
     }
   }
 
-  Future<String?> progressVersion() async {
+  /// 上次写到云端的进度分片内容指纹。null 表示「不知道」——闸门会走保守
+  /// 路径：把云端内容读回来合并。
+  Future<String?> progressDigest() async {
     final preferences = await SharedPreferences.getInstance();
-    final value = preferences.getString(progressVersionKey);
+    final value = preferences.getString(progressDigestKey);
     return value == null || value.isEmpty ? null : value;
   }
-
-  Future<void> markProgressVersion(String? key) async {
+  Future<void> markProgressDigest(String? digest) async {
     final preferences = await SharedPreferences.getInstance();
-    if (key == null || key.isEmpty) {
-      await preferences.remove(progressVersionKey);
+    if (digest == null || digest.isEmpty) {
+      await preferences.remove(progressDigestKey);
     } else {
-      await preferences.setString(progressVersionKey, key);
+      await preferences.setString(progressDigestKey, digest);
     }
   }
 

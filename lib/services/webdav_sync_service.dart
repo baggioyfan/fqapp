@@ -26,6 +26,26 @@ typedef WebdavSyncReport = ({
 /// 进度分片的一次同步：合并了几条、写上去多少字节。
 typedef ProgressSyncReport = ({int history, int uploadedBytes});
 
+/// 内容指纹，用来回答「云端那份还是我上次写上去的那份吗」。
+///
+/// 不用服务端 etag：它只有服务端算得出来，而写操作（PUT/MOVE）实测都不
+/// 回传 ETag —— 想知道「刚写的是哪一版」就得再问一次服务端。写出去的
+/// 字节在本机手里，自己算一个就够：下次 GET 回来算一遍，相同即同一份。
+///
+/// 这里是两条独立的 32 位 FNV-1a（不同初值）拼起来，共 64 位。全程在
+/// 32 位内运算：不依赖 64 位溢出的回绕语义，也不受 Dart web 上 int 只有
+/// 53 位精度的影响。用途只是「相同 / 不同」，不是抗碰撞 —— 没人有动机
+/// 构造一份指纹相同但内容不同的备份。
+String digestOf(Uint8List bytes) {
+  var a = 0x811c9dc5;
+  var b = 0x9e3779b9;
+  for (final byte in bytes) {
+    a = ((a ^ byte) * 0x01000193) & 0xffffffff;
+    b = ((b ^ byte) * 0x01000193) & 0xffffffff;
+  }
+  return '${bytes.length}-${a.toRadixString(16)}-${b.toRadixString(16)}';
+}
+
 /// 同步队列的状态。
 ///
 /// 以前只有一个 `isSyncing` 布尔量，页面上能表达的只有「在跑 / 没跑」。
@@ -139,6 +159,26 @@ class WebdavSyncService {
 
   final _config = WebdavConfigStore.instance;
 
+  /// 已经确认过（必要时创建过）的目录，形如 `url|文件名`。
+  ///
+  /// 「目录不在就建一个」是第一次连上时要干的事；之后每次同步再问一遍
+  /// 纯属浪费一个往返，而这里连的从头到尾是同一个地址。目录真被删掉时，
+  /// 后续请求会以 404/409 暴露出来 —— 失败路径会清掉这个标记，下一趟
+  /// 重新确认。
+  String? _readyCollection;
+
+  Future<void> _ensureCollection(
+    WebdavTransport transport,
+    WebdavConfig config,
+  ) async {
+    final key = '${config.collectionUrl}|${config.fileName}';
+    if (_readyCollection == key) return;
+    await transport.ensureCollection();
+    _readyCollection = key;
+  }
+
+  void _forgetCollection() => _readyCollection = null;
+
   /// 条件写被拒（412）后最多重来几次。
   ///
   /// 412 不是故障：它的意思正是「你读到的版本已经不是最新」，也就是我们
@@ -194,19 +234,24 @@ class WebdavSyncService {
     final transport = _transport(config, password);
     try {
       return await _withBudget(
-        () => _progressPasses(transport, localDirty: localDirty),
+        () => _progressPasses(transport, config, localDirty: localDirty),
         onExpire: _expireWith(transport),
       );
+    } on WebdavException {
+      // 任何一次失败都可能是「目录真的没了」，让下一趟重新确认一遍。
+      _forgetCollection();
+      rethrow;
     } finally {
       transport.close();
     }
   }
 
   Future<ProgressSyncReport> _progressPasses(
-    WebdavTransport transport, {
+    WebdavTransport transport,
+    WebdavConfig config, {
     required bool localDirty,
   }) async {
-    await transport.ensureCollection();
+    await _ensureCollection(transport, config);
     // 同 _syncOnce：412 会重新读合并，上一轮合并进本机的条目不会在下一轮
     // 再出现，计数必须跨轮累加。
     var carried = 0;
@@ -244,30 +289,36 @@ class WebdavSyncService {
 
   /// 读云端分片并合并；`bytes` 为 null 表示「云端没变、本机也没改」，
   /// 这一趟什么都不用写。
+  ///
+  /// 只发一次 GET：内容、大小和版本标识一起回来（RFC 要求 GET 带 ETag，
+  /// 坚果云实测有）。以前是「先 PROPFIND 判版本、需要时再 GET」，同一份
+  /// 信息要两个往返才拿到 —— 而热路径本来就要读内容做并集合并。
   Future<({int merged, Uint8List? bytes, String? ifMatch})> _progressPrepare(
     WebdavTransport transport, {
     required bool localDirty,
   }) async {
-    final remote = await transport.remoteFile(name: ProgressShard.fileName);
+    final latest = await transport.download(name: ProgressShard.fileName);
     var merged = 0;
     String? ifMatch;
-    if (remote == null) {
+    if (latest == null) {
       // 迁移：云端还没有分片，但整包里可能已经有另一台设备的进度。
       // 先合并进来再写分片，否则第一台升级的设备会把对方覆盖掉。
       final legacy = await transport.download();
       if (legacy != null) merged += await _restoreFullHistory(legacy.bytes);
     } else {
-      final known = await _config.progressVersion();
-      final sameVersion = known != null && known == remote.versionKey;
-      if (!sameVersion) {
-        // 云端可能被别的设备改过，也可能只是本机不知道它是哪一版。两种
-        // 情况都读回来合并：合并是并集语义，多读一次不会丢东西。
-        final latest = await transport.download(name: ProgressShard.fileName);
-        if (latest != null) merged += await _restoreProgress(latest.bytes);
-        ifMatch = latest?.versionKey ?? remote.versionKey;
-      } else {
-        if (!localDirty) return (merged: merged, bytes: null, ifMatch: null);
-        ifMatch = remote.versionKey;
+      // 个别服务器只在 PROPFIND 上给 ETag。那种情况下补问一次，不能拿
+      // 一个空的条件去覆盖别人的写入。
+      ifMatch =
+          latest.versionKey ??
+          (await transport.remoteFile(name: ProgressShard.fileName))?.versionKey;
+      final known = await _config.progressDigest();
+      if (known == null || known != digestOf(latest.bytes)) {
+        // 云端不是本机上次写上去的那一份：可能别的设备改过，也可能本机
+        // 不知道它是哪一版。两种都读回来合并 —— 合并是并集语义，多读一次
+        // 不会丢东西。
+        merged += await _restoreProgress(latest.bytes);
+      } else if (!localDirty) {
+        return (merged: merged, bytes: null, ifMatch: null);
       }
     }
     final history = await _backups.captureProgress();
@@ -277,25 +328,23 @@ class WebdavSyncService {
     return (merged: merged, bytes: bytes, ifMatch: ifMatch);
   }
 
-  /// 写分片并记下新版本。
+  /// 写分片并记下「写出去的是哪一份」。
   ///
-  /// 服务器不回 ETag（坚果云就不回）时回读一次。多一个往返，换来下一次
-  /// 同步能直接走「版本相同直传」那条闸门；不回读的话本机永远不知道
-  /// 「刚写的是哪一版」，于是每次都会退化成完整读回。
+  /// 服务器不回 ETag（坚果云就不回），所以以前要再 PROPFIND 一次才能知道
+  /// 新版本号。现在不问了：记下这串字节的内容指纹，下次 GET 回来算一遍，
+  /// 一样就说明云端还是自己写的那份。少一个往返，也不必去猜服务端的
+  /// etag 算法 —— 坚果云的 etag 虽然由内容决定，但不是 md5，本地算不出来。
   Future<void> _progressWrite(
     WebdavTransport transport,
     Uint8List bytes, {
     String? ifMatch,
   }) async {
-    var version = await transport.upload(
+    await transport.upload(
       bytes,
       name: ProgressShard.fileName,
       ifMatch: ifMatch,
     );
-    version ??= (await transport.remoteFile(
-      name: ProgressShard.fileName,
-    ))?.versionKey;
-    await _config.markProgressVersion(version);
+    await _config.markProgressDigest(digestOf(bytes));
   }
 
   Future<int> _restoreProgress(Uint8List bytes) async {
@@ -421,6 +470,9 @@ class WebdavSyncService {
         () => _mergedPasses(transport, config),
         onExpire: _expireWith(transport),
       );
+    } on WebdavException {
+      _forgetCollection();
+      rethrow;
     } finally {
       transport.close();
     }
@@ -433,7 +485,7 @@ class WebdavSyncService {
     WebdavTransport transport,
     WebdavConfig config,
   ) async {
-    await transport.ensureCollection();
+    await _ensureCollection(transport, config);
     // 412 之后会「重新读、重新合并、再写」，而上一轮合并进本机的条目
     // 不会在下一轮的 merge 里再出现一次 —— 所以计数必须跨轮累加，
     // 否则重试过的同步会少报（极端情况下报成 0，看起来像什么都没同步）。
@@ -528,7 +580,7 @@ class WebdavSyncService {
     WebdavTransport transport,
     WebdavConfig config,
   ) async {
-    await transport.ensureCollection();
+    await _ensureCollection(transport, config);
     final snapshot = await _backups.capture();
     final bytes = await Isolate.run(snapshot.encode);
     final version = await _writeAtomically(transport, config, bytes);
@@ -536,16 +588,11 @@ class WebdavSyncService {
     final progressBytes = await Isolate.run(
       () => ProgressShard.capture(snapshot.history).encode(),
     );
-    final writtenProgress = await transport.upload(
+    await transport.upload(
       progressBytes,
       name: ProgressShard.fileName,
     );
-    await _config.markProgressVersion(
-      writtenProgress ??
-          (await transport.remoteFile(
-            name: ProgressShard.fileName,
-          ))?.versionKey,
-    );
+    await _config.markProgressDigest(digestOf(progressBytes));
     final now = DateTime.now();
     await _config.markSynced(now);
     await _config.markProgressSynced(now);
@@ -632,15 +679,12 @@ class WebdavSyncService {
     final progressRemote = await transport.remoteFile(
       name: ProgressShard.fileName,
     );
-    var progressVersion = await transport.upload(
+    await transport.upload(
       progressBytes,
       name: ProgressShard.fileName,
       ifMatch: progressRemote?.versionKey,
     );
-    progressVersion ??= (await transport.remoteFile(
-      name: ProgressShard.fileName,
-    ))?.versionKey;
-    await _config.markProgressVersion(progressVersion);
+    await _config.markProgressDigest(digestOf(progressBytes));
     final now = DateTime.now();
     await _config.markSynced(now);
     await _config.markProgressSynced(now);

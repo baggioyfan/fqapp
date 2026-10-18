@@ -351,15 +351,12 @@ void main() {
       );
     });
 
-    test('nothing changed anywhere means one round trip and no upload', () async {
-      transport.files[ProgressShard.fileName] = ProgressShard.capture(
-        const [],
-      ).encode();
+    test('nothing changed anywhere means one GET and no upload', () async {
+      final shard = ProgressShard.capture(const []).encode();
+      transport.files[ProgressShard.fileName] = shard;
       transport.stamps[ProgressShard.fileName] = DateTime.now().toUtc();
-      // 闸门比的是版本，不是时间：记下云端当前那一版。
-      await WebdavConfigStore.instance.markProgressVersion(
-        transport.tagOf(ProgressShard.fileName),
-      );
+      // 闸门比的是内容指纹，不是时间也不是 etag：记下云端那份的指纹。
+      await WebdavConfigStore.instance.markProgressDigest(digestOf(shard));
 
       final report = await service.syncProgress(
         config,
@@ -368,20 +365,19 @@ void main() {
       );
 
       expect(report, (history: 0, uploadedBytes: 0));
-      expect(transport.gets, isEmpty);
+      // 一次 GET 同时拿到内容、长度和 ETag，所以是「一个往返」。
+      expect(transport.gets, [ProgressShard.fileName]);
       expect(transport.puts, isEmpty);
     });
 
-    test('a local change uploads without reading the cloud first', () async {
-      // 这是分片的核心收益：进度是「指针」，确认云端没被别人改过就直接覆盖。
-      transport.files[ProgressShard.fileName] = ProgressShard.capture(
-        const [],
-      ).encode();
+    test('a local change reads once then writes', () async {
+      // 进度是「指针」：确认云端没被别人改过就直接覆盖。以前靠一次
+      // PROPFIND 判版本、写完再 PROPFIND 回读（3 个往返）；现在一次 GET
+      // 同时拿到内容和 ETag，写完记下内容指纹，2 个往返收工。
+      final shard = ProgressShard.capture(const []).encode();
+      transport.files[ProgressShard.fileName] = shard;
       transport.stamps[ProgressShard.fileName] = DateTime.now().toUtc();
-      // 闸门比的是版本，不是时间：记下云端当前那一版。
-      await WebdavConfigStore.instance.markProgressVersion(
-        transport.tagOf(ProgressShard.fileName),
-      );
+      await WebdavConfigStore.instance.markProgressDigest(digestOf(shard));
 
       final report = await service.syncProgress(
         config,
@@ -390,8 +386,13 @@ void main() {
       );
 
       expect(report.uploadedBytes, greaterThan(0));
-      expect(transport.gets, isEmpty, reason: '本机改过就不该先 GET');
+      expect(transport.gets, [ProgressShard.fileName]);
       expect(transport.puts, [ProgressShard.fileName]);
+      // 写出去的那份，本机记下了指纹 —— 下次不必回读就知道是哪一版。
+      expect(
+        await WebdavConfigStore.instance.progressDigest(),
+        digestOf(transport.files[ProgressShard.fileName]!),
+      );
     });
 
     test('a cloud without the shard falls back to the full backup', () async {
@@ -464,9 +465,9 @@ void main() {
         const [],
       ).encode();
       transport.stamps[ProgressShard.fileName] = DateTime.now().toUtc();
-      // 闸门比的是版本，不是时间：记下云端当前那一版。
-      await WebdavConfigStore.instance.markProgressVersion(
-        transport.tagOf(ProgressShard.fileName),
+      // 闸门比的是内容指纹：记下云端那份，好让「云端没动」这条判定成立。
+      await WebdavConfigStore.instance.markProgressDigest(
+        digestOf(transport.files[ProgressShard.fileName]!),
       );
       await WebdavConfigStore.instance.save(config);
       await library.addHistory({
