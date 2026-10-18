@@ -248,6 +248,57 @@ class WebdavSyncService {
     }
   }
 
+  /// 不管云端是什么，直接用本机数据覆盖它。
+  ///
+  /// 坏文件的最后出口：主文件读不懂、`.bak` 也没有（或也坏了）时，自动回退
+  /// 救不回来，用户至少还能把本机这份好的推上去。没有这个按钮，唯一的办法
+  /// 是去网盘网页端手动删文件 —— 而多数用户既不知道该删哪个，也不知道删掉
+  /// 之后另一台设备会怎样。
+  ///
+  /// 不带 `If-Match`：这是用户明确要求的「以本机为准」，不是并发写，不该被
+  /// 一次版本不符挡回去。旧文件仍然会被挪进 `.bak`，所以还能取回。
+  Future<WebdavSyncReport> overwriteRemote(
+    WebdavConfig config, {
+    required String password,
+  }) async {
+    final transport = _transport(config, password);
+    try {
+      await transport.ensureCollection();
+      final snapshot = await _backups.capture();
+      final bytes = await Isolate.run(snapshot.encode);
+      final version = await _writeAtomically(transport, config, bytes);
+      await _config.markFullVersion(version);
+      final progressBytes = await Isolate.run(
+        () => ProgressShard.capture(snapshot.history).encode(),
+      );
+      final writtenProgress = await transport.upload(
+        progressBytes,
+        name: ProgressShard.fileName,
+      );
+      await _config.markProgressVersion(
+        writtenProgress ??
+            (await transport.remoteFile(
+              name: ProgressShard.fileName,
+            ))?.versionKey,
+      );
+      final now = DateTime.now();
+      await _config.markSynced(now);
+      await _config.markProgressSynced(now);
+      return (
+        remoteExisted: true,
+        remoteModified: (await transport.remoteFile())?.modified ?? now,
+        uploadedBytes: bytes.length,
+        shelf: snapshot.shelf.length,
+        history: snapshot.history.length,
+        episodes: snapshot.watched.length,
+        readTime: snapshot.daily.length,
+        searchHistory: snapshot.searchHistory.length,
+      );
+    } finally {
+      transport.close();
+    }
+  }
+
   /// 一次「读云端 → 合并 → 带版本写回」。
   ///
   /// 写回走三步替换（见 [_writeAtomically]），读回带两层兜底：撞上替换窗口

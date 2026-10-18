@@ -132,6 +132,51 @@ class _WebdavSyncPageState extends State<WebdavSyncPage> {
     });
   });
 
+  /// 云端文件坏掉时的最后出口：不问云端有什么，直接用本机数据替换。
+  ///
+  /// 自动回退（`.bak`）能救回「刚传坏一次」；救不回「主文件和 .bak 都读不懂」。
+  /// 那种情况以前只能去网盘网页端手动删文件，而这个按钮把出口留在应用里。
+  Future<void> _overwrite() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('用本机数据覆盖云端？'),
+        content: const Text(
+          '云端的备份文件会被本机当前的数据替换，原文件保留为 .bak 可随时取回。\n\n'
+          '另一台设备的进度如果还没合并到本机，会因此丢失。'
+          '只在云端文件损坏、同步一直失败时才这样做。',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('覆盖'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    await _run('正在用本机数据覆盖云端…', () async {
+      final config = await _persist();
+      if (config == null) return;
+      final report = await _service.overwriteRemote(
+        config,
+        password: _password.text,
+      );
+      final finishedAt = DateTime.now();
+      if (!mounted) return;
+      setState(() {
+        _lastSyncedAt = finishedAt;
+        _message =
+            '已用本机数据覆盖云端（${(report.uploadedBytes / 1024).toStringAsFixed(1)} KB），'
+            '原文件保留为 .bak。';
+      });
+    });
+  }
+
   Future<void> _clear() async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -345,6 +390,15 @@ class _WebdavSyncPageState extends State<WebdavSyncPage> {
                       onPressed: busy || _loading ? null : _sync,
                       icon: const Icon(Icons.cloud_sync),
                       label: const Text('立即同步'),
+                    ),
+                    const SizedBox(height: 8),
+                    TextButton.icon(
+                      onPressed: busy || _loading ? null : _overwrite,
+                      icon: Icon(Icons.upload_file, color: palette.muted),
+                      label: Text(
+                        '用本机覆盖云端',
+                        style: TextStyle(color: palette.muted),
+                      ),
                     ),
                     const SizedBox(height: 8),
                     TextButton.icon(
