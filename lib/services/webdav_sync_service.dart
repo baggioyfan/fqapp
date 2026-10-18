@@ -66,6 +66,22 @@ class WebdavSyncService {
   /// 竞争，交给下一次触发更划算。
   static const maxConditionalRetries = 2;
 
+  /// 整包替换用的临时文件与上一版，与主文件同目录。
+  ///
+  /// 后缀放在末尾（`fqapp-sync.json.tmp`）：目录里一眼能看出它属于哪个文件，
+  /// 而且不会和用户自己配的文件名撞上（配置项必须以 `.json` 结尾）。
+  static const tempSuffix = '.tmp';
+  static const backupSuffix = '.bak';
+
+  /// 另一台设备正在做三步替换时，主文件会短暂不存在。
+  ///
+  /// 读取方撞上 404 后等这么久再看一次，而不是立刻当成「首次同步」——后者
+  /// 会无条件把本机数据推上去，正好盖掉对方刚写的那一份。
+  static const replaceWindowRetry = Duration(milliseconds: 400);
+
+  static String siblingOf(WebdavConfig config, String suffix) =>
+      '${config.fileName}$suffix';
+
   /// 只同步进度分片（热路径），理想情况两个往返。
   ///
   /// 三级闸门（判据是**版本字符串是否相同**，不是谁的时间更新）：
@@ -215,7 +231,7 @@ class WebdavSyncService {
       var attempt = 0;
       while (true) {
         try {
-          return await _fullPass(transport);
+          return await _fullPass(transport, config);
         } on WebdavException catch (error) {
           if (error.statusCode != 412 || attempt >= maxConditionalRetries) {
             rethrow;
@@ -234,11 +250,14 @@ class WebdavSyncService {
 
   /// 一次「读云端 → 合并 → 带版本写回」。
   ///
-  /// `If-Match` 用刚读到的那一版：如果另一台设备在这期间写了，服务器回
-  /// 412，[_syncOnce] 会重新进来读一遍再合并。这不是重试网络错误，而是
-  /// 把「谁后写谁赢」换成「后写的人先看到对方的改动」。
-  Future<WebdavSyncReport> _fullPass(WebdavTransport transport) async {
-    final remote = await transport.download();
+  /// 写回走三步替换（见 [_writeAtomically]），读回带两层兜底：撞上替换窗口
+  /// 时等一下再看，主文件读不懂时退到上一版。这两条合起来，才让「一次失败
+  /// 的上传」不再等于「两台设备永远锁死」。
+  Future<WebdavSyncReport> _fullPass(
+    WebdavTransport transport,
+    WebdavConfig config,
+  ) async {
+    final primary = await _downloadPrimary(transport, config);
     var merged = (
       shelf: 0,
       history: 0,
@@ -246,17 +265,26 @@ class WebdavSyncService {
       readTime: 0,
       searchHistory: 0,
     );
-    if (remote != null) {
-      merged = await _backups.restore(await _decode(remote.bytes));
+    if (primary != null) {
+      merged = await _backups.restore(
+        await _decodeWithBackup(transport, config, primary),
+      );
     }
     final snapshot = await _backups.capture();
     final bytes = await Isolate.run(snapshot.encode);
-    var version = await transport.upload(bytes, ifMatch: remote?.versionKey);
-    version ??= (await transport.remoteFile())?.versionKey;
+    final version = await _writeAtomically(
+      transport,
+      config,
+      bytes,
+      ifMatch: primary?.versionKey,
+    );
     await _config.markFullVersion(version);
     // 整包里也带着进度，顺手把热路径分片写成同一份内容。
     // 不这么做的话，刚同步完整包、进度分片还停在旧值，下一次「离开阅读页」
     // 会推一份过期数据上去。
+    //
+    // 分片不走三步替换：它只有几十 KB、频率高，多三个往返不值得；而且它
+    // 的内容能从整包重建，坏掉不是灾难 —— 整包才是。
     final progressBytes = await Isolate.run(
       () => ProgressShard.capture(snapshot.history).encode(),
     );
@@ -275,8 +303,8 @@ class WebdavSyncService {
     await _config.markSynced(DateTime.now());
     await _config.markProgressSynced(DateTime.now());
     return (
-      remoteExisted: remote != null,
-      remoteModified: remote?.modified,
+      remoteExisted: primary != null,
+      remoteModified: primary?.modified,
       uploadedBytes: bytes.length,
       shelf: merged.shelf,
       history: merged.history,
@@ -284,6 +312,122 @@ class WebdavSyncService {
       readTime: merged.readTime,
       searchHistory: merged.searchHistory,
     );
+  }
+
+  /// 读整包；撞上「别人正在替换」的窗口时等一下重看一次。
+  ///
+  /// 三步替换中间有一个极短的时间窗，主文件被挪走、新文件还没挪回来。
+  /// 把那个 404 当成「云端没有备份」会触发无条件上传，正好盖掉对方刚写的
+  /// 数据 —— 所以这里用 `.bak` 是否存在来区分「第一次同步」和「正在替换」。
+  Future<({Uint8List bytes, DateTime? modified, String? versionKey})?>
+  _downloadPrimary(WebdavTransport transport, WebdavConfig config) async {
+    final first = await transport.download();
+    if (first != null) return first;
+    final backupName = siblingOf(config, backupSuffix);
+    if (await transport.remoteFile(name: backupName) == null) return null;
+    await Future<void>.delayed(replaceWindowRetry);
+    return transport.download();
+  }
+
+  /// 主文件读不懂时退到上一版。
+  ///
+  /// 这是「一次坏上传永久锁死」的出口：没有它，两台设备会各自在这里抛
+  /// `FormatException` 并拒绝同步，而设置页只有「立即同步」和「清除配置」，
+  /// 用户在应用里没有任何办法把云端那份坏文件换掉。
+  Future<LibraryBackup> _decodeWithBackup(
+    WebdavTransport transport,
+    WebdavConfig config,
+    ({Uint8List bytes, DateTime? modified, String? versionKey}) primary,
+  ) async {
+    try {
+      return await _decode(primary.bytes);
+    } on WebdavException {
+      final backup = await transport.download(
+        name: siblingOf(config, backupSuffix),
+      );
+      if (backup == null) rethrow;
+      final snapshot = await _decode(backup.bytes);
+      AppLog.w('webdav-sync', '云端主文件无法识别，已回退到上一版（.bak）继续合并');
+      return snapshot;
+    }
+  }
+
+  /// 三步替换：任何一步中断都不会留下被截断的主文件。
+  ///
+  /// 顺序是按坚果云的真实行为排的（实测：MOVE 不能覆盖已存在目标，回 409；
+  /// `Overwrite` 头也不认）：
+  ///
+  ///   ① `PUT ${name}.tmp`      主文件全程不受影响，其它设备读到的还是旧版
+  ///   ② `MOVE ${name}` → `.bak`  目标已删，能成功
+  ///   ③ `MOVE .tmp` → `${name}`  此刻目标不存在，能成功
+  ///
+  /// 直接 PUT 主文件的问题不是「可能失败」，而是失败时**留下被截断的目标
+  /// 文件**：连接在传输中途断掉，服务端保留半截内容，之后两台设备都读不懂
+  /// 它，同步就此永久停摆。三步替换把最坏情况换成「主文件短暂不存在」，
+  /// 而 `.bak` 与 `.tmp` 在任何时刻至少有一份是完整的。
+  Future<String?> _writeAtomically(
+    WebdavTransport transport,
+    WebdavConfig config,
+    Uint8List bytes, {
+    String? ifMatch,
+  }) async {
+    final primaryName = config.fileName;
+    final tempName = siblingOf(config, tempSuffix);
+    final backupName = siblingOf(config, backupSuffix);
+
+    await transport.upload(bytes, name: tempName);
+    final written = await transport.remoteFile(name: tempName);
+    final size = written?.size;
+    if (size != null && size != bytes.length) {
+      await _deleteQuietly(transport, tempName);
+      throw WebdavException(
+        '上传被截断：云端只收到 $size 字节，应为 ${bytes.length} 字节，'
+        '已放弃本次替换，云端文件保持原样',
+      );
+    }
+
+    // MOVE 不评估 If-Match（坚果云对任何 MOVE 都回 409，分不清是「目标存在」
+    // 还是「版本不符」），所以条件检查只能在这里显式做一次。
+    final current = await transport.remoteFile(name: primaryName);
+    if (ifMatch != null && current != null && current.versionKey != ifMatch) {
+      await _deleteQuietly(transport, tempName);
+      throw const WebdavException(
+        '云端文件已被其它设备更新，本次写入已取消，稍后会自动重试',
+        statusCode: 412,
+      );
+    }
+
+    // 上一轮的 .bak 还在的话，MOVE 会因为目标存在而 409。
+    await _deleteQuietly(transport, backupName);
+    var movedAside = false;
+    try {
+      if (current != null) {
+        await transport.move(from: primaryName, to: backupName);
+        movedAside = true;
+      }
+      await transport.move(from: tempName, to: primaryName);
+    } catch (error) {
+      // 主文件已经挪走、新文件没挪回来：把它挪回去，不留下空洞。
+      if (movedAside) {
+        try {
+          await transport.move(from: backupName, to: primaryName);
+        } on WebdavException {
+          // 连恢复都失败，至少 .bak 还在 —— 页面上「用本机覆盖云端」还救得回来。
+          AppLog.w('webdav-sync', '替换失败且无法自动恢复，旧数据仍在 .bak 里', error: error);
+        }
+      }
+      await _deleteQuietly(transport, tempName);
+      rethrow;
+    }
+    return (await transport.remoteFile(name: primaryName))?.versionKey;
+  }
+
+  Future<void> _deleteQuietly(WebdavTransport transport, String name) async {
+    try {
+      await transport.delete(name: name);
+    } on WebdavException {
+      // 清理失败不该盖掉真正的原因。
+    }
   }
 
   /// Decoding runs off the main isolate because a large snapshot is a lot of

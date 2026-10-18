@@ -48,6 +48,12 @@ class _Probe implements WebdavTransport {
   }) async => null;
 
   @override
+  Future<void> move({String? from, required String? to}) async {}
+
+  @override
+  Future<void> delete({String? name}) async {}
+
+  @override
   void close() {}
 }
 

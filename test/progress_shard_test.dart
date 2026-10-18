@@ -114,6 +114,37 @@ class _ShardTransport implements WebdavTransport {
   }
 
   @override
+  Future<void> move({String? from, required String? to}) async {
+    final source = from == null ? full : files[from];
+    if (source == null) {
+      throw const WebdavException('无法重命名云端文件', statusCode: 404);
+    }
+    if (to == null) {
+      full = source;
+    } else {
+      files[to] = source;
+    }
+    etags[_key(to)] = 'etag-${++_counter}';
+    if (from == null) {
+      full = null;
+      etags.remove('');
+    } else {
+      files.remove(from);
+      etags.remove(from);
+    }
+  }
+
+  @override
+  Future<void> delete({String? name}) async {
+    if (name == null) {
+      full = null;
+    } else {
+      files.remove(name);
+    }
+    etags.remove(_key(name));
+  }
+
+  @override
   void close() => closed = true;
 }
 

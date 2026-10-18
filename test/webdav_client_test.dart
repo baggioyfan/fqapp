@@ -72,6 +72,7 @@ class _FakeServer {
       'depth',
       'content-type',
       'if-match',
+      'destination',
     ]) {
       final value = request.headers.value(name);
       if (value != null) recorded[name] = value;
@@ -171,6 +172,34 @@ class _FakeServer {
         // 坚果云不回 ETag 头；默认也不回，只有显式打开时才给，用来覆盖
         // 「服务端主动告知新版本」那条分支。
         if (sendEtagOnPut) response.headers.set('etag', tag);
+      }
+    } else if (request.method == 'MOVE') {
+      final source = files[request.uri.path];
+      final destination = request.headers.value('destination');
+      if (source == null) {
+        response.statusCode = 404;
+      } else if (destination == null) {
+        response.statusCode = 400;
+      } else {
+        final target = Uri.parse(destination).path;
+        // 坚果云的真实行为：目标已存在一律 409，`Overwrite: T` 不认。
+        // 三步替换之所以是「先删 .bak、再把主文件挪过去」，就是因为这一点。
+        if (files[target] != null) {
+          response.statusCode = 409;
+        } else {
+          files[target] = source;
+          etags[target] = _nextEtag();
+          files.remove(request.uri.path);
+          etags.remove(request.uri.path);
+          response.statusCode = 201;
+        }
+      }
+    } else if (request.method == 'DELETE') {
+      if (files.remove(request.uri.path) == null) {
+        response.statusCode = 404;
+      } else {
+        etags.remove(request.uri.path);
+        response.statusCode = 204;
       }
     } else {
       response.statusCode = 405;
@@ -431,6 +460,55 @@ void main() {
     test('uploads without If-Match when the caller has no version', () async {
       await clientFor().upload(body('{"v":1}'));
       expect(server.headers['PUT']!.containsKey('if-match'), isFalse);
+    });
+  });
+
+  group('rename and delete', () {
+    Uint8List body(String text) => Uint8List.fromList(utf8.encode(text));
+
+    test('move renames the file and removes the source', () async {
+      server.files[server.path] = body('payload');
+
+      await clientFor().move(from: null, to: 'fqapp-sync.json.bak');
+
+      expect(server.files[server.path], isNull);
+      expect(server.files['/dav/fqapp-sync.json.bak'], body('payload'));
+      expect(
+        server.headers['MOVE']!['destination'],
+        endsWith('/dav/fqapp-sync.json.bak'),
+      );
+    });
+
+    test('move onto an existing file is refused, not silently merged', () async {
+      // 坚果云回 409，Overwrite 头不认。三步替换必须先删掉上一轮的 .bak，
+      // 否则每次同步都会在这里失败。
+      server.files[server.path] = body('current');
+      server.files['/dav/fqapp-sync.json.bak'] = body('stale');
+
+      await expectLater(
+        clientFor().move(from: null, to: 'fqapp-sync.json.bak'),
+        throwsA(
+          isA<WebdavException>().having(
+            (error) => error.message,
+            'message',
+            contains('目标文件已存在'),
+          ),
+        ),
+      );
+      expect(server.files[server.path], body('current'), reason: '源文件不该动');
+    });
+
+    test('delete removes the file and tolerates a missing one', () async {
+      server.files['/dav/fqapp-sync.json.tmp'] = body('junk');
+
+      await clientFor().delete(name: 'fqapp-sync.json.tmp');
+      expect(server.files['/dav/fqapp-sync.json.tmp'], isNull);
+
+      // 重试或另一台设备先删了：404 不该变成失败。
+      await expectLater(
+        clientFor().delete(name: 'fqapp-sync.json.tmp'),
+        completes,
+      );
     });
   });
 

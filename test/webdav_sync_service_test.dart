@@ -46,6 +46,10 @@ class _FakeTransport implements WebdavTransport {
   /// 注入的冲突让云端内容也前进一版（模拟另一台设备真的写了东西）。
   Uint8List? conflictReplacement;
 
+  /// 让上传只落一半字节：模拟连接在传输中途断掉、服务端保留了半截文件。
+  /// 三步替换的第一步就该发现它并放弃替换。
+  bool truncateUploads = false;
+
   var _counter = 0;
 
   String _key(String? name) => name ?? '';
@@ -111,17 +115,53 @@ class _FakeTransport implements WebdavTransport {
       throw const WebdavException('云端已被其它设备更新', statusCode: 412);
     }
     puts.add(_key(name));
+    final stored = truncateUploads
+        ? Uint8List.sublistView(bytes, 0, bytes.length ~/ 2)
+        : bytes;
     if (name == null) {
       // 只有整包才更新 `uploaded`：分片 PUT 不该覆盖掉用例要断言的那份内容。
       uploaded = bytes;
-      remote = bytes;
+      remote = stored;
     } else {
-      shards[name] = bytes;
+      shards[name] = stored;
       shardStamps[name] = DateTime.now();
     }
     final next = 'etag-${++_counter}';
     etags[_key(name)] = next;
     return next;
+  }
+
+  @override
+  Future<void> move({String? from, required String? to}) async {
+    final source = from == null ? remote : shards[from];
+    if (source == null) {
+      throw const WebdavException('无法重命名云端文件', statusCode: 404);
+    }
+    if (to == null) {
+      remote = source;
+    } else {
+      shards[to] = source;
+    }
+    etags[_key(to)] = 'etag-${++_counter}';
+    // 真实的 MOVE 是「挪走」，源不再存在 —— 三步替换依赖这一点。
+    if (from == null) {
+      remote = null;
+      etags.remove('');
+    } else {
+      shards.remove(from);
+      etags.remove(from);
+    }
+  }
+
+  @override
+  Future<void> delete({String? name}) async {
+    if (name == null) {
+      remote = null;
+      etags.remove('');
+    } else {
+      shards.remove(name);
+      etags.remove(name);
+    }
   }
 
   @override
@@ -400,6 +440,110 @@ void main() {
     expect(transport.closed, isTrue);
   });
 
+  group('atomic replacement', () {
+    test('the first sync leaves no temp file behind', () async {
+      await ShelfStore.instance.add(_item('local-1'));
+
+      await service.sync(config, password: 'hunter2');
+
+      expect(LibraryBackup.decode(transport.remote!).shelf.single.item.id, 'local-1');
+      expect(transport.shards.containsKey('fqapp-sync.json.tmp'), isFalse);
+      // 从来没有旧文件，就不该凭空造一个 .bak。
+      expect(transport.shards.containsKey('fqapp-sync.json.bak'), isFalse);
+    });
+
+    test('a second sync keeps the previous version in .bak', () async {
+      await ShelfStore.instance.add(_item('first'));
+      await service.sync(config, password: 'hunter2');
+
+      await ShelfStore.instance.add(_item('second'));
+      await service.sync(config, password: 'hunter2');
+
+      final backup = transport.shards['fqapp-sync.json.bak'];
+      expect(backup, isNotNull, reason: '上一版必须留着，否则坏了就没得退');
+      expect(
+        LibraryBackup.decode(backup!).shelf.map((record) => record.item.id),
+        ['first'],
+      );
+      expect(
+        LibraryBackup.decode(transport.remote!).shelf.map((r) => r.item.id),
+        ['first', 'second'],
+      );
+      expect(transport.shards.containsKey('fqapp-sync.json.tmp'), isFalse);
+    });
+
+    test('a truncated upload is refused instead of replacing the file', () async {
+      // 服务端只收到一半：直接 PUT 主文件的话，现在的云端就是这半截，
+      // 两台设备从此都读不懂它。三步替换要求在这里就停下。
+      await ShelfStore.instance.add(_item('local-1'));
+      await service.sync(config, password: 'hunter2');
+      final good = transport.remote;
+
+      transport.truncateUploads = true;
+      await ShelfStore.instance.add(_item('local-2'));
+
+      await expectLater(
+        service.sync(config, password: 'hunter2'),
+        throwsA(
+          isA<WebdavException>().having(
+            (error) => error.message,
+            'message',
+            contains('上传被截断'),
+          ),
+        ),
+      );
+
+      expect(transport.remote, good, reason: '主文件必须还是上一次那份完整数据');
+      expect(transport.shards.containsKey('fqapp-sync.json.tmp'), isFalse);
+    });
+
+    test('a corrupt primary falls back to the last good version', () async {
+      // 云端主文件坏掉（历史上某次直传被截断留下的）。没有 .bak 就只能停；
+      // 有 .bak 就必须用它继续，否则用户在这台设备上永远同步不了。
+      await ShelfStore.instance.add(_item('local-1'));
+      transport.remote = Uint8List.fromList(utf8.encode('{ not json'));
+      transport.shards['fqapp-sync.json.bak'] = snapshot(
+        shelf: [
+          ShelfRecord(
+            item: _item('from-backup'),
+            addedAt: DateTime.fromMillisecondsSinceEpoch(1000),
+          ),
+        ],
+      ).encode();
+
+      final report = await service.sync(config, password: 'hunter2');
+
+      expect(report.shelf, 1);
+      expect(
+        ShelfStore.instance.records().map((record) => record.item.id).toSet(),
+        {'local-1', 'from-backup'},
+      );
+      // 坏文件已经被一次完整的替换覆盖掉。
+      expect(
+        LibraryBackup.decode(transport.remote!).shelf
+            .map((record) => record.item.id)
+            .toSet(),
+        {'local-1', 'from-backup'},
+      );
+    });
+
+    test('a corrupt primary without a backup still stops the sync', () async {
+      await ShelfStore.instance.add(_item('local-1'));
+      transport.remote = Uint8List.fromList(utf8.encode('{ not json'));
+
+      await expectLater(
+        service.sync(config, password: 'hunter2'),
+        throwsA(isA<WebdavException>()),
+      );
+      // 没有可退的版本时，宁可停下也不要用本机数据盖掉那份坏文件 ——
+      // 它可能只是暂时读不懂，用户还能去网盘取回来。
+      expect(
+        transport.remote,
+        Uint8List.fromList(utf8.encode('{ not json')),
+      );
+    });
+  });
+
   test('a failed upload surfaces and still closes the transport', () async {
     final failing = WebdavSyncService(
       transport: (config, password) => _FailingTransport(transport),
@@ -446,6 +590,13 @@ class _FailingTransport implements WebdavTransport {
   }) async {
     throw const WebdavException('上传云端备份失败：服务器返回 500');
   }
+
+  @override
+  Future<void> move({String? from, required String? to}) =>
+      inner.move(from: from, to: to);
+
+  @override
+  Future<void> delete({String? name}) => inner.delete(name: name);
 
   @override
   void close() => inner.close();

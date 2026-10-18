@@ -54,6 +54,18 @@ abstract interface class WebdavTransport {
   /// 不补引号：坚果云只认裸 token，按 RFC 加引号会一律 412。
   Future<String?> upload(Uint8List bytes, {String? name, String? ifMatch});
 
+  /// 把同一目录下的 [from] 挪到 [to]。
+  ///
+  /// 目标必须不存在：坚果云对「覆盖已存在目标」的 MOVE 一律回 409，`Overwrite`
+  /// 头也不认。所以调用方要先删目标 —— 原子替换的顺序正是按这一点排的。
+  Future<void> move({String? from, required String? to});
+
+  /// 删除一个文件。目标不存在算成功（幂等）。
+  ///
+  /// 只能删文件：坚果云对目录的 DELETE 一律 403，空目录也一样，所以「清理
+  /// 云端」必须逐个文件来，目录留给用户在网页端删。
+  Future<void> delete({String? name});
+
   void close();
 }
 
@@ -302,6 +314,39 @@ class WebdavClient implements WebdavTransport {
     }
   }
 
+  @override
+  Future<void> move({String? from, required String? to}) async {
+    final response = await _read(
+      await _open('MOVE', _uriFor(from), destination: _uriFor(to)),
+      limit: _controlLimit,
+    );
+    switch (response.statusCode) {
+      case 200:
+      case 201:
+      case 204:
+        return;
+      case 409:
+        throw _statusError(
+          response,
+          '无法重命名云端文件',
+          hint: '（目标文件已存在，需要先删掉它）',
+        );
+      default:
+        _requireSuccess(response, '无法重命名云端文件');
+    }
+  }
+
+  @override
+  Future<void> delete({String? name}) async {
+    final response = await _read(
+      await _open('DELETE', _uriFor(name)),
+      limit: _controlLimit,
+    );
+    // 已经在的删除请求（重试、或另一台设备先删了）不该算失败。
+    if (response.statusCode == 404) return;
+    _requireSuccess(response, '无法删除云端文件');
+  }
+
   /// Buffers a response, refusing anything above [limit] instead of letting a
   /// wrong URL pull an unbounded body into memory.
   Future<http.Response> _read(
@@ -333,6 +378,7 @@ class WebdavClient implements WebdavTransport {
     List<int>? body,
     String? contentType,
     String? ifMatch,
+    Uri? destination,
   }) async {
     final request = http.Request(method, uri)
       // See the class comment: a replayed PUT is worse than a clear error.
@@ -342,6 +388,11 @@ class WebdavClient implements WebdavTransport {
     if (contentType != null) request.headers['Content-Type'] = contentType;
     // 原样透传，不补引号 —— 见 WebdavTransport.upload 的说明。
     if (ifMatch != null) request.headers['If-Match'] = ifMatch;
+    if (destination != null) {
+      // MOVE 的 Destination 必须是绝对 URL，即使同一个目录也一样。
+      request.headers['Destination'] = destination.toString();
+      request.headers['Overwrite'] = 'T';
+    }
     if (body != null) request.bodyBytes = body;
     try {
       return await _client.send(request).timeout(timeout);
