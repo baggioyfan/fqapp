@@ -76,16 +76,19 @@ class SearchHistoryStore implements SearchHistoryRepository {
     await preferences.remove(key);
   });
 
-  /// Unions exported terms into the local list, keeping local entries first,
-  /// and returns how many of them were new. [normalizeSearchHistory] owns
-  /// deduplication, whitespace folding and the [maxEntries] cap, so importing
-  /// the same snapshot twice adds nothing.
+  /// 把另一台设备的搜索历史并进来，返回其中**新出现**的条数。
+  ///
+  /// 顺序由 [interleaveSearchHistory] 决定（两边轮流取），去重、空白折叠和
+  /// 上限也都归它管，所以同一份快照合并两次不会多出东西。
   Future<int> merge(Iterable<String> incoming) => _serialize(() async {
     final current = await _read();
-    final merged = normalizeSearchHistory([...current, ...incoming]);
+    final merged = interleaveSearchHistory(current, incoming);
     final preferences = await SharedPreferences.getInstance();
     await preferences.setStringList(key, merged);
-    return merged.length - current.length;
+    final known = current.map((item) => item.toLowerCase()).toSet();
+    // 按「真正多出来的词」计数，而不是列表长度的差：两边各有一条不同的词时
+    // 长度不变，但内容确实变了，报 0 会让人以为什么都没同步到。
+    return merged.where((item) => !known.contains(item.toLowerCase())).length;
   });
 
   Future<T> _serialize<T>(Future<T> Function() action) {
@@ -113,6 +116,36 @@ List<String> normalizeSearchHistory(Iterable<String> values) {
     if (normalized.isEmpty || !seen.add(normalized.toLowerCase())) continue;
     output.add(normalized);
     if (output.length == SearchHistoryStore.maxEntries) break;
+  }
+  return List.unmodifiable(output);
+}
+
+/// 两边各按自己的新旧顺序轮流取一条，凑满 [SearchHistoryStore.maxEntries] 为止。
+///
+/// 旧做法是「本机在前、云端在后」拼起来再截断：本机一旦满 20 条，云端的新词
+/// 就永远挤不进来 —— 在一台很少搜索的设备上，另一台搜过的词一个都同步不到。
+///
+/// 搜索历史只存顺序、不存时间，没法按「谁更新」裁决，轮流取是唯一不偏袒
+/// 任何一边的做法。它也是幂等的：对同一个输入再合并一次，结果不变。
+List<String> interleaveSearchHistory(
+  Iterable<String> current,
+  Iterable<String> incoming,
+) {
+  final left = current.toList(growable: false);
+  final right = incoming.toList(growable: false);
+  final output = <String>[];
+  final seen = <String>{};
+  var index = 0;
+  while (output.length < SearchHistoryStore.maxEntries &&
+      (index < left.length || index < right.length)) {
+    for (final list in [left, right]) {
+      if (index >= list.length) continue;
+      final normalized = normalizeSearchQuery(list[index]);
+      if (normalized.isEmpty || !seen.add(normalized.toLowerCase())) continue;
+      output.add(normalized);
+      if (output.length == SearchHistoryStore.maxEntries) break;
+    }
+    index++;
   }
   return List.unmodifiable(output);
 }

@@ -552,6 +552,65 @@ void main() {
     });
   });
 
+  group('error kinds', () {
+    Uint8List body(String text) => Uint8List.fromList(utf8.encode(text));
+
+    test('a 401 is an auth failure that retrying cannot fix', () async {
+      // 页面靠这个决定要不要摆「重试」：密码错了，点一百次也一样。
+      server.forcedStatus = 401;
+
+      await expectLater(
+        clientFor().remoteFile(),
+        throwsA(
+          isA<WebdavException>()
+              .having((error) => error.kind, 'kind', WebdavErrorKind.auth)
+              .having((error) => error.canRetry, 'canRetry', isFalse),
+        ),
+      );
+    });
+
+    test('a 507 is a quota failure, not a network one', () async {
+      server.forcedStatus = 507;
+
+      await expectLater(
+        clientFor().upload(body('{}')),
+        throwsA(
+          isA<WebdavException>()
+              .having((error) => error.kind, 'kind', WebdavErrorKind.quota)
+              .having((error) => error.canRetry, 'canRetry', isFalse),
+        ),
+      );
+    });
+
+    test('a 412 is worth another manual attempt', () async {
+      server.files[server.path] = body('{"v":1}');
+      server.forcedStatus = 412;
+
+      await expectLater(
+        clientFor().upload(body('{"v":2}')),
+        throwsA(
+          isA<WebdavException>()
+              .having((error) => error.kind, 'kind', WebdavErrorKind.conflict)
+              .having((error) => error.canRetry, 'canRetry', isTrue),
+        ),
+      );
+    });
+
+    test('a 503 that survives the replay stays retryable', () async {
+      // 自动重发一次仍失败，说明上游还在抖 —— 页面上再点一次仍然有意义。
+      server.failTimes = 2;
+
+      await expectLater(
+        clientFor().remoteFile(),
+        throwsA(
+          isA<WebdavException>()
+              .having((error) => error.kind, 'kind', WebdavErrorKind.protocol)
+              .having((error) => error.canRetry, 'canRetry', isTrue),
+        ),
+      );
+    });
+  });
+
   group('conditional write', () {
     Uint8List body(String text) => Uint8List.fromList(utf8.encode(text));
 

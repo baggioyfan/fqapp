@@ -27,12 +27,16 @@ class _SpySync implements WebdavSyncService {
   WebdavConfig? receivedConfig;
   String? receivedPassword;
 
+  /// 同步被调了几次。用来断言「重试」真的又跑了一遍，而不是只换个文案。
+  int syncCalls = 0;
+
   @override
   Future<WebdavSyncReport> sync(
     WebdavConfig config, {
     required String password,
     SyncPriority priority = SyncPriority.manual,
   }) async {
+    syncCalls++;
     receivedConfig = config;
     receivedPassword = password;
     if (failure case final error?) throw error;
@@ -225,6 +229,32 @@ void main() {
       service.receivedConfig!.collectionUrl,
       'https://dav.example.com/dav/',
     );
+    // 密码错了，再点一次结果一样 —— 不该摆一个只能得到同样结果的按钮。
+    expect(find.text('重试'), findsNothing);
+  });
+
+  testWidgets('offers a retry for a transient failure and runs it again', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({
+      WebdavConfigStore.urlKey: 'https://dav.example.com/dav/',
+    });
+    final service = await pumpPage(
+      tester,
+      failure: const WebdavException(
+        '与服务器的连接中断，请稍后重试',
+        retryable: true,
+        kind: WebdavErrorKind.network,
+      ),
+    );
+
+    await tester.tap(find.text('立即同步'));
+    await tester.pumpAndSettle();
+    expect(service.syncCalls, 1);
+
+    await tester.tap(find.text('重试'));
+    await tester.pumpAndSettle();
+    expect(service.syncCalls, 2);
   });
 
   testWidgets('syncs with the stored address and the decrypted password', (

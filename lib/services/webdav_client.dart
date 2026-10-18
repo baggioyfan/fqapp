@@ -9,16 +9,49 @@ import '../models/library_backup.dart';
 import 'transient_retry.dart';
 import 'webdav_config.dart';
 
+/// 失败的性质。
+///
+/// 光看一句文案分不出「等一下就好」和「你得去改配置」：`401` 和 `503` 在页面上
+/// 都是一行红字，但点「重试」对前者毫无意义。这个枚举让页面能据此决定要不要
+/// 给重试按钮，以及要不要指路到具体设置项。
+enum WebdavErrorKind {
+  /// 连不上：DNS 失败、连接被拒或被复位、证书不被信任。
+  network,
+
+  /// 对方太久没动静，或整段读取超出时限。
+  timeout,
+
+  /// 401：账号或密码不对（或应用专用密码）。重试没有意义。
+  auth,
+
+  /// 403 / 423：身份没问题，但没有这个目录的权限，或文件被锁住。
+  permission,
+
+  /// 409 / 412：目录不在，或另一台设备刚刚写过。
+  conflict,
+
+  /// 507：云端空间不足。
+  quota,
+
+  /// 服务端拒绝、返回了别的错误码、或返回的内容看不懂。
+  protocol,
+
+  /// 备份超过大小上限（本机数据太大，或云端那份太大）。
+  tooLarge,
+}
+
 /// Carries text that is already safe to show in the settings page.
 class WebdavException implements Exception {
   const WebdavException(
     this.message, {
     this.statusCode,
     this.retryable = false,
+    this.kind = WebdavErrorKind.protocol,
   });
 
   final String message;
   final int? statusCode;
+  final WebdavErrorKind kind;
 
   /// 重发一次**可能**成功。
   ///
@@ -28,8 +61,22 @@ class WebdavException implements Exception {
   /// 由调用方重新读、重新合并。
   final bool retryable;
 
+  /// 在页面上再点一次「重试」有意义。
+  ///
+  /// 比 [retryable] 宽一档：412 自动重发没用（要重新合并），但对用户来说
+  /// 「再点一次同步」确实可能成功，值得给按钮。
+  bool get canRetry => switch (kind) {
+    WebdavErrorKind.network || WebdavErrorKind.timeout => true,
+    // 412 是「另一台设备刚写过」：再同步一次会重新读、重新合并，可能就过了。
+    // 409 是「目录不在」或「目标已存在」，再点一次是同一句话。
+    WebdavErrorKind.conflict => statusCode == 412,
+    // 5xx 是上游抖动；4xx 再点一百次也是同一句话。
+    WebdavErrorKind.protocol => (statusCode ?? 0) >= 500,
+    _ => false,
+  };
+
   @override
-  String toString() => 'WebdavException($statusCode: $message)';
+  String toString() => 'WebdavException($kind/$statusCode: $message)';
 }
 
 /// The part of a WebDAV server the sync service needs.
@@ -345,6 +392,7 @@ class WebdavClient implements WebdavTransport {
         throw const WebdavException(
           '云端文件已被其它设备更新，本次写入已取消，稍后会自动重试',
           statusCode: 412,
+          kind: WebdavErrorKind.conflict,
         );
       case 404:
       case 409:
@@ -479,6 +527,7 @@ class WebdavClient implements WebdavTransport {
       fail(
         WebdavException(
           '读取云端数据超过 ${readDeadline.inSeconds} 秒仍未完成，已中断，请稍后重试',
+          kind: WebdavErrorKind.timeout,
         ),
       );
     });
@@ -490,6 +539,7 @@ class WebdavClient implements WebdavTransport {
             WebdavException(
               '服务器返回的内容超过 ${(limit / (1024 * 1024)).toStringAsFixed(1)} MB，'
               '已停止读取',
+              kind: WebdavErrorKind.tooLarge,
             ),
           );
           return;
@@ -530,19 +580,36 @@ class WebdavClient implements WebdavTransport {
       return WebdavException(
         '服务器超过 ${readIdleTimeout.inSeconds} 秒没有返回数据，连接已断开，'
         '请检查网络或稍后重试',
+        kind: WebdavErrorKind.timeout,
       );
     }
     if (error is SocketException) {
       final detail = error.osError?.message ?? error.message;
-      return WebdavException('与服务器的连接中断（$detail）', retryable: true);
+      return WebdavException(
+        '与服务器的连接中断（$detail）',
+        retryable: true,
+        kind: WebdavErrorKind.network,
+      );
     }
     if (error is http.ClientException) {
-      return WebdavException('请求失败：${error.message}', retryable: true);
+      return WebdavException(
+        '请求失败：${error.message}',
+        retryable: true,
+        kind: WebdavErrorKind.network,
+      );
     }
     if (error is HttpException) {
-      return const WebdavException('与服务器的连接中断，请稍后重试', retryable: true);
+      return const WebdavException(
+        '与服务器的连接中断，请稍后重试',
+        retryable: true,
+        kind: WebdavErrorKind.network,
+      );
     }
-    return const WebdavException('读取云端数据时连接中断，请稍后重试', retryable: true);
+    return const WebdavException(
+      '读取云端数据时连接中断，请稍后重试',
+      retryable: true,
+      kind: WebdavErrorKind.network,
+    );
   }
 
   Future<http.StreamedResponse> _open(
@@ -571,16 +638,34 @@ class WebdavClient implements WebdavTransport {
     try {
       return await _client.send(request).timeout(timeout);
     } on TimeoutException {
-      throw const WebdavException('连接服务器超时，请检查地址、网络和服务器状态');
+      throw const WebdavException(
+        '连接服务器超时，请检查地址、网络和服务器状态',
+        kind: WebdavErrorKind.timeout,
+      );
     } on HandshakeException {
-      throw const WebdavException('安全连接失败：服务器证书不被信任');
+      throw const WebdavException(
+        '安全连接失败：服务器证书不被信任',
+        kind: WebdavErrorKind.network,
+      );
     } on SocketException catch (error) {
       final detail = error.osError?.message ?? error.message;
-      throw WebdavException('无法连接服务器（$detail）', retryable: true);
+      throw WebdavException(
+        '无法连接服务器（$detail）',
+        retryable: true,
+        kind: WebdavErrorKind.network,
+      );
     } on http.ClientException catch (error) {
-      throw WebdavException('请求失败：${error.message}', retryable: true);
+      throw WebdavException(
+        '请求失败：${error.message}',
+        retryable: true,
+        kind: WebdavErrorKind.network,
+      );
     } on HttpException {
-      throw const WebdavException('与服务器的连接中断，请稍后重试', retryable: true);
+      throw const WebdavException(
+        '与服务器的连接中断，请稍后重试',
+        retryable: true,
+        kind: WebdavErrorKind.network,
+      );
     }
   }
 
@@ -611,10 +696,18 @@ class WebdavClient implements WebdavTransport {
             ? '$what：服务器要求跳转，请确认地址以 / 结尾'
             : '$what：服务器要求跳转到 $location，请把地址改成它',
         statusCode: status,
+        kind: WebdavErrorKind.protocol,
       );
     }
     // 只有「再来一次可能就好」的状态码才重发：500/502/503/504 是上游抖动，
     // 408/429 是让我等等。401/403/404/409/423/507 再发一百次也是同一句话。
+    final kind = switch (status) {
+      401 => WebdavErrorKind.auth,
+      403 || 423 => WebdavErrorKind.permission,
+      409 || 412 => WebdavErrorKind.conflict,
+      507 => WebdavErrorKind.quota,
+      _ => WebdavErrorKind.protocol,
+    };
     return WebdavException(
       switch (status) {
         401 => '认证失败：请检查用户名和密码',
@@ -628,6 +721,7 @@ class WebdavClient implements WebdavTransport {
       },
       statusCode: status,
       retryable: _transientStatuses.contains(status),
+      kind: kind,
     );
   }
 

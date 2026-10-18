@@ -352,8 +352,16 @@ class WebdavSyncService {
       final shard = await Isolate.run(() => ProgressShard.decode(bytes));
       return _backups.restoreHistory(shard.history);
     } on FormatException catch (error) {
+      if (error.message.contains('MB')) {
+        throw const WebdavException(
+          '云端的进度文件超过 8 MB 上限，本机无法读取它。'
+          '可以在另一台设备上「设置 → 数据 → 清空历史」后重新同步',
+          kind: WebdavErrorKind.tooLarge,
+        );
+      }
       throw WebdavException(
         '云端的进度文件无法识别（${error.message}），已停止同步，云端文件未被改动',
+        kind: WebdavErrorKind.protocol,
       );
     }
   }
@@ -433,6 +441,7 @@ class WebdavSyncService {
         WebdavException(
           '同步超过 ${budget.inSeconds} 秒仍未完成，已中止。'
           '请检查网络后重试；云端文件未被改动。',
+          kind: WebdavErrorKind.timeout,
         ),
       );
     });
@@ -582,7 +591,7 @@ class WebdavSyncService {
   ) async {
     await _ensureCollection(transport, config);
     final snapshot = await _backups.capture();
-    final bytes = await Isolate.run(snapshot.encode);
+    final bytes = await _encode(snapshot);
     final version = await _writeAtomically(transport, config, bytes);
     await _config.markFullVersion(version);
     final progressBytes = await Isolate.run(
@@ -641,7 +650,7 @@ class WebdavSyncService {
       );
     }
     final snapshot = await _backups.capture();
-    final bytes = await Isolate.run(snapshot.encode);
+    final bytes = await _encode(snapshot);
     return (
       snapshot: snapshot,
       bytes: bytes,
@@ -759,6 +768,8 @@ class WebdavSyncService {
       throw WebdavException(
         '上传被截断：云端只收到 $size 字节，应为 ${bytes.length} 字节，'
         '已放弃本次替换，云端文件保持原样',
+        retryable: true,
+        kind: WebdavErrorKind.network,
       );
     }
 
@@ -770,6 +781,7 @@ class WebdavSyncService {
       throw const WebdavException(
         '云端文件已被其它设备更新，本次写入已取消，稍后会自动重试',
         statusCode: 412,
+        kind: WebdavErrorKind.conflict,
       );
     }
 
@@ -813,8 +825,42 @@ class WebdavSyncService {
     try {
       return await Isolate.run(() => LibraryBackup.decode(bytes));
     } on FormatException catch (error) {
+      // 超上限和「格式不对」是两件事：前者有明确的下一步（腾空间），后者
+      // 只能报「读不懂」。混成一句会让用户以为云端文件坏了去点覆盖。
+      if (error.message.contains('16 MB')) {
+        throw const WebdavException(
+          '云端备份超过 16 MB 的读取上限，本机暂时无法合并它。'
+          '可以在另一台设备上「设置 → 数据 → 清空历史」后重新同步',
+          kind: WebdavErrorKind.tooLarge,
+        );
+      }
       throw WebdavException(
         '云端的备份文件无法识别（${error.message}），已停止同步，云端文件未被改动',
+        kind: WebdavErrorKind.protocol,
+      );
+    }
+  }
+
+  /// 编码同样离开主 isolate。
+  ///
+  /// `LibraryBackup.encode()` 超上限时抛的是 `FormatException`。不翻译的话它
+  /// 会一路冒到页面的兜底分支，显示成「请检查地址、账号和网络后重试」——
+  /// 但这件事跟网络、地址、账号都没有关系，能做的只有腾空间。
+  Future<Uint8List> _encode(LibraryBackup snapshot) async {
+    try {
+      return await Isolate.run(snapshot.encode);
+    } on FormatException catch (error) {
+      if (error.message.contains('16 MB')) {
+        throw const WebdavException(
+          '本机数据已超过 16 MB 的同步上限，无法上传。'
+          '可以到「设置 → 数据 → 清空历史」腾出空间（会一起删掉全部阅读/播放进度），'
+          '或减少书架条目后重试',
+          kind: WebdavErrorKind.tooLarge,
+        );
+      }
+      throw WebdavException(
+        '本机数据无法整理成备份文件（${error.message}），本次同步已取消，云端文件未被改动',
+        kind: WebdavErrorKind.protocol,
       );
     }
   }
@@ -843,5 +889,5 @@ String describeSyncReport(WebdavSyncReport report, {bool brief = false}) {
         '在另一台手机打开本页点「立即同步」即可拿到这些数据。';
   }
   return '已从云端合并：${syncCounts(report)}；并把合并后的结果（$size）写回云端。'
-      '同一作品保留读得更靠后的进度，收藏与已看取并集。';
+      '同一作品保留读得更靠后的进度，已看取并集，收藏的增删按发生时间先后生效。';
 }

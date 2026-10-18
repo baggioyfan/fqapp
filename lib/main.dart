@@ -352,9 +352,10 @@ class _RootShellState extends State<RootShell> with WidgetsBindingObserver {
       if (!mounted) return;
       if (answer == true) {
         await _syncFromPrompt(update);
-      } else {
-        // 关掉也算「这一版先不管」：同一个云端版本不再追问，
-        // 云端再被改过才会重新提示。
+      } else if (answer == false) {
+        // 只有明确点了「忽略」才算「这一版先不管」：同一个云端版本不再追问，
+        // 云端再被改过才会重新提示。点遮罩或按返回键是 null —— 那只是
+        // 「先不回答」，不该被记成一次回答，否则用户下次打开就再也看不到提示。
         await WebdavAutoSync.instance.dismiss(update);
       }
     } finally {

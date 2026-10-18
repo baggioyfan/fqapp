@@ -37,6 +37,10 @@ class _WebdavSyncPageState extends State<WebdavSyncPage> {
   bool _obscure = true;
   String? _busy;
   String? _message;
+
+  /// 上一次失败的操作。只在「失败的性质是等一等可能就好」时留着，页面据此
+  /// 多给一个「重试」；认证失败、超过上限这类不给，因为再点一次结果一样。
+  Future<void> Function()? _retry;
   DateTime? _lastSyncedAt;
 
   @override
@@ -217,13 +221,20 @@ class _WebdavSyncPageState extends State<WebdavSyncPage> {
     setState(() {
       _busy = label;
       _message = null;
+      _retry = null;
     });
     try {
       await action();
     } on SecretStoreException catch (error) {
       if (mounted) setState(() => _message = error.message);
     } on WebdavException catch (error) {
-      if (mounted) setState(() => _message = error.message);
+      if (!mounted) return;
+      setState(() {
+        _message = error.message;
+        // 「重试」只在值得重试时出现 —— 401 或超过上限时摆一个按钮在那里，
+        // 点下去只会得到一模一样的结果。
+        _retry = error.canRetry ? () => _run(label, action) : null;
+      });
     } on StateError catch (error) {
       if (mounted) setState(() => _message = '本机数据尚未就绪：${error.message}');
     } catch (error, stack) {
@@ -297,8 +308,8 @@ class _WebdavSyncPageState extends State<WebdavSyncPage> {
                     ),
                     const SizedBox(height: 8),
                     Text(
-                      '只合并不删除：在一台手机上移除的收藏，会被另一台手机同步回来。'
-                      '需要彻底清理时，请先在两端都删掉再同步。',
+                      '收藏的增删也会同步：在一台手机上移除的收藏，另一台同步后会一起消失；'
+                      '若那台在之后又重新加回，以加回的那次为准。',
                       style: TextStyle(color: palette.muted),
                     ),
                     const SizedBox(height: 8),
@@ -421,6 +432,16 @@ class _WebdavSyncPageState extends State<WebdavSyncPage> {
                     const SizedBox(height: 16),
                     _section(palette, [
                       Semantics(liveRegion: true, child: Text(message)),
+                      if (_retry case final retry?) ...[
+                        const SizedBox(height: 8),
+                        Align(
+                          alignment: Alignment.centerLeft,
+                          child: TextButton(
+                            onPressed: _busy == null ? retry : null,
+                            child: const Text('重试'),
+                          ),
+                        ),
+                      ],
                     ]),
                   ],
                 ],
