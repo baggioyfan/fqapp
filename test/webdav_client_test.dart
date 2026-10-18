@@ -4,6 +4,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
 
 import 'package:fqapp/services/webdav_client.dart';
 import 'package:fqapp/services/webdav_config.dart';
@@ -39,11 +40,6 @@ class _FakeServer {
   /// PUT 是否因为 `If-Match` 不匹配被拒 —— 用来断言「条件写真的发出去了」。
   int rejectedByIfMatch = 0;
 
-  /// 响应头发完就沉默。用来测客户端有没有自己的读超时：真实服务器在弱网上
-  /// 就是这样挂住的，而 `await for` 不会自己醒来。
-  bool stallBody = false;
-  final _stall = Completer<void>();
-
   /// 真实坚果云在 PUT 响应里不给 ETag；打开这个开关才模拟「会回 ETag」的服务端。
   bool sendEtagOnPut = false;
 
@@ -63,11 +59,7 @@ class _FakeServer {
     });
   }
 
-  Future<void> stop() async {
-    // 卡住的应答不会自己结束；先放手，再强制关连接。
-    if (!_stall.isCompleted) _stall.complete();
-    await _server.close(force: true);
-  }
+  Future<void> stop() => _server.close(force: true);
 
   String get origin => 'http://127.0.0.1:${_server.port}';
 
@@ -103,15 +95,6 @@ class _FakeServer {
     if (forcedStatus case final status?) {
       response.statusCode = status;
       await response.close();
-      return;
-    }
-    if (stallBody) {
-      // 头发完就不说话了：客户端必须自己发现，不能等下去。
-      // contentLength 先声明出来，连接才不会因为「正文已完整」而被判定结束。
-      response.statusCode = 200;
-      response.contentLength = 4096;
-      await response.flush();
-      await _stall.future;
       return;
     }
     if (request.method == 'PROPFIND') {
@@ -227,6 +210,26 @@ class _FakeServer {
   }
 }
 
+/// 头发回来了、正文一个字节都不来的连接。
+///
+/// 用真 `HttpServer` 摆出这个状态要赌「不写正文也不关响应」能被稳定复现，
+/// 而这里要测的恰恰是客户端自己有没有读超时 —— 直接给一条只发头、不发正文
+/// 的流，比赌服务端行为可靠得多。
+class _SilentClient extends http.BaseClient {
+  final _body = StreamController<List<int>>();
+
+  @override
+  Future<http.StreamedResponse> send(http.BaseRequest request) async =>
+      http.StreamedResponse(
+        _body.stream,
+        200,
+        headers: const {'content-length': '4096'},
+        request: request,
+      );
+
+  Future<void> dispose() => _body.close();
+}
+
 void main() {
   late _FakeServer server;
 
@@ -248,19 +251,21 @@ void main() {
 
   WebdavClient clientFor({
     String password = 'secret',
+    http.Client? client,
     Duration readIdleTimeout = WebdavClient.defaultReadIdleTimeout,
     Duration readDeadline = WebdavClient.defaultReadDeadline,
   }) {
-    final client = WebdavClient(
+    final webdav = WebdavClient(
       config: configFor(),
       password: password,
+      client: client,
       timeout: const Duration(seconds: 5),
       readIdleTimeout: readIdleTimeout,
       readDeadline: readDeadline,
     );
     // Left open, an idle connection outlives the assertions it belongs to.
-    addTearDown(client.close);
-    return client;
+    addTearDown(webdav.close);
+    return webdav;
   }
 
   group('collection', () {
@@ -425,9 +430,11 @@ void main() {
     test('a body that stalls is abandoned instead of hanging forever', () async {
       // 服务器把响应头发完就沉默。没有自己的读超时，这条请求会永远挂着，
       // 而同步队列是串行的 —— 之后每一次同步都排在它后面，页面上只剩转圈。
-      server.stallBody = true;
+      final silent = _SilentClient();
+      addTearDown(silent.dispose);
       await expectLater(
         clientFor(
+          client: silent,
           readIdleTimeout: const Duration(milliseconds: 150),
         ).remoteFile(),
         throwsA(
@@ -442,9 +449,11 @@ void main() {
 
     test('a body that drips too slowly hits the read deadline', () async {
       // 每块都不超时，但整段拖得太久：分块计时发现不了，只有总时长能。
-      server.stallBody = true;
+      final silent = _SilentClient();
+      addTearDown(silent.dispose);
       await expectLater(
         clientFor(
+          client: silent,
           readIdleTimeout: const Duration(seconds: 30),
           readDeadline: const Duration(milliseconds: 150),
         ).remoteFile(),
