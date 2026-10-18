@@ -183,6 +183,11 @@ class WebdavClient implements WebdavTransport {
   /// or misconfigured server from being buffered without limit.
   static const _controlLimit = 256 * 1024;
 
+  /// 再来一次可能就好的状态码：上游抖动（5xx）与「让我等等」（408/429）。
+  ///
+  /// 401/403/404/409/412/423/507 不在里面：再发一百次也是同一句话。
+  static const _transientStatuses = {408, 429, 500, 502, 503, 504};
+
   /// 四个属性一个都不能少。
   ///
   /// `getetag` 是版本判断的全部依据；`getlastmodified` 是它的备用键，也用于
@@ -226,6 +231,7 @@ class WebdavClient implements WebdavTransport {
       body: utf8.encode(_propfindBody),
       contentType: 'application/xml; charset=utf-8',
       limit: _controlLimit,
+      what: '无法访问云端目录',
     );
     switch (response.statusCode) {
       case 404:
@@ -246,6 +252,7 @@ class WebdavClient implements WebdavTransport {
       'MKCOL',
       config.collectionUri,
       limit: _controlLimit,
+      what: '云端目录不存在，且无法创建（WebDAV 地址需要指向一个已存在的目录）',
     );
     // 405 means the folder appeared between the two requests.
     if (response.statusCode == 201 || response.statusCode == 405) return;
@@ -263,6 +270,7 @@ class WebdavClient implements WebdavTransport {
       'GET',
       _uriFor(name),
       limit: LibraryBackup.maxBytes,
+      what: '无法读取云端备份',
     );
     if (response.statusCode == 404) return null;
     _requireSuccess(response, '无法读取云端备份');
@@ -283,6 +291,7 @@ class WebdavClient implements WebdavTransport {
       body: utf8.encode(_propfindBody),
       contentType: 'application/xml; charset=utf-8',
       limit: _controlLimit,
+      what: '无法读取云端备份信息',
     );
     // 文件还不存在：首次同步前是正常状态，不算错误。
     if (response.statusCode == 404) return null;
@@ -322,6 +331,7 @@ class WebdavClient implements WebdavTransport {
       contentType: 'application/json; charset=utf-8',
       ifMatch: ifMatch,
       limit: _controlLimit,
+      what: '上传云端备份失败',
     );
     switch (response.statusCode) {
       case 200:
@@ -360,6 +370,7 @@ class WebdavClient implements WebdavTransport {
       _uriFor(from),
       destination: _uriFor(to),
       limit: _controlLimit,
+      what: '无法重命名云端文件',
       retry: false,
     );
     switch (response.statusCode) {
@@ -385,6 +396,7 @@ class WebdavClient implements WebdavTransport {
       'DELETE',
       _uriFor(name),
       limit: _controlLimit,
+      what: '无法删除云端文件',
     );
     // 已经在的删除请求（重试、或另一台设备先删了）不该算失败。
     if (response.statusCode == 404) return;
@@ -393,12 +405,18 @@ class WebdavClient implements WebdavTransport {
 
   /// 发一次请求并把正文读完；[retry] 为 true 时对连接层失败重发一次。
   ///
+  /// 重试必须能「看见」状态码，所以 5xx/408/429 在这里就地抛成
+  /// [WebdavException]：它们本来也会被调用方的 `_requireSuccess` 抛出来，
+  /// 只是那样已经出了重试的范围。非重试状态（404/409/412/507…）原样返回，
+  /// 由调用方按自己的语义解释。
+  ///
   /// `MOVE` 传 false：它不幂等，重发一次拿到的是 404（源已经挪走）或 409
   /// （目标已存在），把「其实已经成功」报成失败比不重试更糟。
   Future<http.Response> _request(
     String method,
     Uri uri, {
     required int limit,
+    required String what,
     String? depth,
     List<int>? body,
     String? contentType,
@@ -406,18 +424,25 @@ class WebdavClient implements WebdavTransport {
     Uri? destination,
     bool retry = true,
   }) {
-    Future<http.Response> once() async => _read(
-      await _open(
-        method,
-        uri,
-        depth: depth,
-        body: body,
-        contentType: contentType,
-        ifMatch: ifMatch,
-        destination: destination,
-      ),
-      limit: limit,
-    );
+    Future<http.Response> once() async {
+      final response = await _read(
+        await _open(
+          method,
+          uri,
+          depth: depth,
+          body: body,
+          contentType: contentType,
+          ifMatch: ifMatch,
+          destination: destination,
+        ),
+        limit: limit,
+      );
+      if (_transientStatuses.contains(response.statusCode)) {
+        throw _statusError(response, what);
+      }
+      return response;
+    }
+
     if (!retry) return once();
     return retryTransient(
       once,
@@ -590,7 +615,6 @@ class WebdavClient implements WebdavTransport {
     }
     // 只有「再来一次可能就好」的状态码才重发：500/502/503/504 是上游抖动，
     // 408/429 是让我等等。401/403/404/409/423/507 再发一百次也是同一句话。
-    const transient = {408, 429, 500, 502, 503, 504};
     return WebdavException(
       switch (status) {
         401 => '认证失败：请检查用户名和密码',
@@ -603,7 +627,7 @@ class WebdavClient implements WebdavTransport {
         _ => '$what：服务器返回 $status',
       },
       statusCode: status,
-      retryable: transient.contains(status),
+      retryable: _transientStatuses.contains(status),
     );
   }
 
