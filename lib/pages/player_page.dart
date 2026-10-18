@@ -719,6 +719,9 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     _pagingSettled = null;
     _watchTime.stop();
     unawaited(_persistProgress());
+    // 离开播放页也推一次进度。和阅读页对齐：应用还在前台，请求跑得完。
+    // 没有这一句，「播几分钟按返回键回书架」要等到回桌面那次 flush 才上云。
+    unawaited(WebdavAutoSync.instance.syncOnLeave());
     unawaited(_teardownPlayer());
     super.dispose();
   }

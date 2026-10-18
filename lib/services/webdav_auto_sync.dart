@@ -128,9 +128,16 @@ class WebdavAutoSync {
   ///
   /// 页面在离开前已经把进度落盘（`_persistProgress`），所以这里读到的是
   /// 最新值。只碰 `progress.json`，一次 PROPFIND + 一次 PUT。
+  ///
+  /// **必须自己置脏**：`_dirty` 只有 [markDirty] 和 [markPlaybackWrite] 会写，
+  /// 而阅读页只在「切到后台」时才调 [markDirty]。正常读完按返回键离开走的是
+  /// 这里，不置位的话三级闸门会落到「云端没动 + 本机没改」那条短路 ——
+  /// 云端有分片、`progressSyncedAt` 又是上一次推送的时刻，于是这一页的进度
+  /// 一条都推不上去，而且看起来一切正常。
   Future<bool> syncOnLeave() {
     _debounce?.cancel();
     _debounce = null;
+    _dirty = true;
     return syncProgressNow(reason: 'leave');
   }
 

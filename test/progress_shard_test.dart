@@ -373,6 +373,42 @@ void main() {
       expect(decoded.history.map((e) => e['id']), contains('via-full'));
     });
 
+    test('leaving a page uploads even when the cloud shard is unchanged', () async {
+      // 第二次及以后离开阅读页时，云端已经有分片，`progressSyncedAt` 正好是
+      // 上次推送的时刻。这时若 `_dirty` 仍是 false，三级闸门会落到「云端没动
+      // + 本机没改」那条短路，这一页的进度永远推不上去，而且日志里一片安静。
+      transport.files[ProgressShard.fileName] = ProgressShard.capture(
+        const [],
+      ).encode();
+      final stamp = DateTime.now().toUtc();
+      transport.stamps[ProgressShard.fileName] = stamp;
+      await WebdavConfigStore.instance.markProgressSynced(
+        stamp.add(const Duration(minutes: 5)),
+      );
+      await WebdavConfigStore.instance.save(config);
+      await library.addHistory({
+        'id': 'left-page',
+        'kind': 'book',
+        'title': '读完退出',
+        'time': 6000,
+        'episode': 5,
+        'progress': 0.6,
+      });
+      final auto = WebdavAutoSync(
+        service: service,
+        transport: (config, password) => transport,
+      );
+      addTearDown(auto.dispose);
+
+      expect(await auto.syncOnLeave(), isTrue);
+
+      expect(transport.puts, [ProgressShard.fileName]);
+      final decoded = ProgressShard.decode(
+        transport.files[ProgressShard.fileName]!,
+      );
+      expect(decoded.history.map((e) => e['id']), contains('left-page'));
+    });
+
     test('a background exit within a day only pushes the shard', () async {
       // 整包已经同步过、冷数据没动 → 退出时只推进度。否则「读两页就退出」
       // 会把整个书库重传一遍。
