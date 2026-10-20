@@ -136,8 +136,13 @@ class FanqieHistoryPreview {
     return FanqieHistoryPreview._(
       LibraryBackup.capture(
         shelf: [],
+        // 旧版历史文件只带进度；书架、已看、时长、搜索历史都没有内容。
+        shelfRemoved: const {},
         history: unique.values.toList(),
-        watched: {},
+        watched: const {},
+        daily: const {},
+        books: const [],
+        searchHistory: const [],
       ),
       sourceCount,
       records.length - unique.length,
