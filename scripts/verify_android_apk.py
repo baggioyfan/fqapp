@@ -78,16 +78,21 @@ def output_path(directory: Path, relative: str) -> Path:
     if not parts or any(part in ("", ".", "..") or "\\" in part or ":" in part
                         for part in parts):
         raise VerificationError(f"Unsafe report path: {relative!r}")
+    # Containment is judged against the resolved root. On macOS a temporary
+    # directory sits under /var, which resolves to /private/var, so comparing
+    # a resolved child against an unresolved root rejects every file this
+    # script writes -- the guard was only ever exercised on Linux.
+    root = directory.resolve()
     parent = directory
     for part in parts[:-1]:
         parent = parent / part
         if parent.is_symlink():
             raise VerificationError(f"Report subdirectory is a symlink: {parent}")
         parent.mkdir(exist_ok=True)
-        if not parent.is_dir() or not inside_directory(parent.resolve(), directory):
+        if not parent.is_dir() or not inside_directory(parent.resolve(), root):
             raise VerificationError(f"Report path escapes its directory: {parent}")
     destination = parent / parts[-1]
-    if destination.is_symlink() or not inside_directory(destination.resolve(), directory):
+    if destination.is_symlink() or not inside_directory(destination.resolve(), root):
         raise VerificationError(f"Unsafe existing report file: {destination}")
     if destination.exists() and not destination.is_file():
         raise VerificationError(f"Report output is not a regular file: {destination}")

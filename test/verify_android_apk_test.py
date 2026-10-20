@@ -53,7 +53,16 @@ class SignatureClassificationTest(unittest.TestCase):
                 if name == "apksigner.log":
                     return output
                 if name == "aapt-badging.log":
-                    return "package: name='com.fqapp.fqapp' versionCode='127' versionName='1.0.122'\n"
+                    # The verifier pins the packaged label to the one declared
+                    # in strings.xml, so the fixture has to report it. Read the
+                    # declared value instead of hard-coding it: a rename then
+                    # keeps this fixture honest.
+                    label = verifier.declared_display_name() or "番茄小铺"
+                    return (
+                        "package: name='com.fqapp.fqapp' versionCode='127'"
+                        " versionName='1.0.122'\n"
+                        f"application-label:'{label}'\n"
+                    )
                 return "fixture SDK command succeeded\n"
 
             with mock.patch.object(verifier, "executable", return_value="fixture-tool"), \
