@@ -70,14 +70,14 @@ android {
         // --split-per-abi` makes the Flutter Gradle plugin configure AGP
         // splits, and AGP rejects abiFilters whenever splits are set
         // ("abiFilters cannot be present when splits abi filters are set").
-        // The split APKs therefore contain exactly the ABIs Flutter was
-        // asked to build (--target-platform android-arm,android-arm64).
+        // The split APK therefore contains exactly the ABI Flutter was asked
+        // to build (--target-platform android-arm64).
         // The guards against a backend-less slice are the packaging check
-        // below (both libfqapi_core.so files must exist and match their
-        // ABI) and scripts/verify_android_apk.py --abi, which rejects any
-        // unexpected ABI in the APK. Always build with the documented
-        // split command; a plain fat `flutter build apk` would include an
-        // x86_64 slice with no Rust backend.
+        // below (libfqapi_core.so must exist and match AArch64 ELF64) and
+        // scripts/verify_android_apk.py --abi, which rejects any unexpected
+        // ABI in the APK. Always build with the documented split command; a
+        // plain fat `flutter build apk` would include an x86_64 slice with no
+        // Rust backend.
         //
         // NOTE: do not re-add abiFilters to "restrict" the build. It breaks
         // every split build at configuration time.
@@ -183,12 +183,14 @@ flutter {
 // (scripts/build_rust_backend.ps1 / .sh produce it).
 val verifyRequiredNativeLibraries = tasks.register("verifyRequiredNativeLibraries") {
     group = "verification"
-    description = "Checks the external Android Rust core libraries (ARM64 + ARMv7) before packaging."
+    description = "Checks the external Android Rust core library (ARM64) before packaging."
     // ABI directory -> (ELF class byte, e_machine). arm64-v8a is ELF64/AArch64
-    // (class 2, machine 183); armeabi-v7a is ELF32/ARM (class 1, machine 40).
+    // (class 2, machine 183). The 32-bit entry (armeabi-v7a, ELF32/ARM, class 1
+    // machine 40) was removed together with the armv7 build target: nothing
+    // packages that slice any more. The stale-prebuilt guard below still scans
+    // both ABI directories.
     val nativeLibraries = listOf(
         Triple("arm64-v8a", 2, 183),
-        Triple("armeabi-v7a", 1, 40),
     )
     val nativeFiles = nativeLibraries.map { (abi, _, _) ->
         layout.projectDirectory.file("src/main/jniLibs/$abi/libfqapi_core.so").asFile
@@ -197,9 +199,12 @@ val verifyRequiredNativeLibraries = tasks.register("verifyRequiredNativeLibrarie
     // instead of Gradle failing input validation before our check can run.
     inputs.files(nativeFiles).withPropertyName("requiredNativeLibraries").optional()
     doLast {
-        // The legacy prebuilt crypto library must not come back in either ABI
+        // The legacy prebuilt crypto library must not come back in any ABI
         // directory: native/ now builds it automatically for every ABI.
-        for ((abi, _, _) in nativeLibraries) {
+        // armeabi-v7a is scanned even though the slice is no longer built, so
+        // an old checkout that still has that directory is cleaned up instead
+        // of silently packaging a stale prebuilt.
+        for (abi in listOf("arm64-v8a", "armeabi-v7a")) {
             val legacyCrypto = layout.projectDirectory.file(
                 "src/main/jniLibs/$abi/libshortplay_crypto.so"
             ).asFile

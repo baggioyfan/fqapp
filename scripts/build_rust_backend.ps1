@@ -1,12 +1,13 @@
 <#
 Builds the Rust native core (rust/ -> libfqapi_core.so) for Android
-(arm64-v8a and armeabi-v7a) and copies each library into its
+(arm64-v8a) and copies the library into its
 android/app/src/main/jniLibs/<abi> directory.
 
-Both ABIs are always built: the split APK build packages both (see the
-split-per-ABI build in .github/workflows/android-apk.yml), so building
-only one would leave the packaging verification without the other
-library and fail the build.
+Only ARM64 is built. The 32-bit target (armv7-linux-androideabi) was
+dropped together with the 32-bit APK split: it doubled the cross-compile
+for hardware nobody ships to. Adding it back is one Build-AndroidTarget
+call plus the Rust toolchain target in
+.github/workflows/android-apk.yml.
 Cargo caches per target, so a rebuild with no Rust changes is fast.
 
 This is the single entry point for the Rust build: it regenerates the
@@ -138,9 +139,9 @@ if (-not (Test-Path -LiteralPath $Prebuilt)) {
 $ApiLevel = 21
 
 # Cross-compiles the Rust core for one Android ABI and installs it into
-# that ABI's jniLibs directory. The armv7 target uses the armv7a NDK triple
-# (armeabi-v7a with NEON, the same assumption the Flutter engine build
-# makes for 32-bit ARM).
+# that ABI's jniLibs directory. The function stays ABI-agnostic so re-adding
+# armv7 is a one-line call; its clang triple would be
+# armv7a-linux-androideabi (armeabi-v7a with NEON).
 function Build-AndroidTarget {
     param(
         [Parameter(Mandatory = $true)][string]$RustTarget,
@@ -190,7 +191,6 @@ function Build-AndroidTarget {
 }
 
 Build-AndroidTarget -RustTarget 'aarch64-linux-android' -ClangTriple 'aarch64-linux-android' -Abi 'arm64-v8a'
-Build-AndroidTarget -RustTarget 'armv7-linux-androideabi' -ClangTriple 'armv7a-linux-androideabi' -Abi 'armeabi-v7a'
 
 if ($HostLib) {
     Write-Host '==> building host cdylib...'

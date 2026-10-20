@@ -145,7 +145,11 @@ jobs:
           # not the floating `stable` channel: a new stable must not silently
           # change the toolchain a release was built with. Bump deliberately.
           toolchain: '1.99.1'
-          targets: aarch64-linux-android, armv7-linux-androideabi
+          # ARM64 only. The 32-bit (armv7) target was dropped on purpose: it
+          # doubled the Rust cross-compile and the APK build for devices that
+          # are not in use. Re-adding it means the toolchain target, the
+          # compile/verify steps, the build script and the release assets.
+          targets: aarch64-linux-android
           components: rustfmt, clippy
 
       - name: Cache the Cargo build
@@ -277,38 +281,35 @@ jobs:
             printf 'bindings_sha256=%s\n' "$after"
           } > build/ci-artifacts/bindings-digest.txt
 
-      - name: Compile the Rust core for Android (ARM64 + ARMv7)
+      - name: Compile the Rust core for Android (ARM64)
         run: bash scripts/build_rust_backend.sh --skip-codegen
 
-      - name: Check the Android Rust core libraries
+      - name: Check the Android Rust core library
         run: |
           mkdir -p build/ci-artifacts
-          # Both ABIs are built by the script above; each library gets the
-          # same gates (bridge symbols exported, 16 KiB ELF layout).
-          for abi in arm64-v8a armeabi-v7a; do
-            so=android/app/src/main/jniLibs/$abi/libfqapi_core.so
-            test -s "$so"
-            nm_bin="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-nm"
-            "$nm_bin" --dynamic --defined-only "$so" > "build/ci-artifacts/rust-core-symbols-$abi.txt"
-            # flutter_rust_bridge entry points must be exported for dart:ffi.
-            for symbol in frb_get_rust_content_hash store_dart_post_cobject; do
-              if ! grep -Eq "[[:space:]]${symbol}$" "build/ci-artifacts/rust-core-symbols-$abi.txt"; then
-                echo "Missing Rust bridge symbol in $abi: $symbol" >&2
-                exit 1
-              fi
-            done
-            # 16 KiB page alignment is required by Android 15+. The check runs
-            # through scripts/check_native_alignment.cjs -- the same script the
-            # APK verifier uses on the packaged libraries -- so there is one
-            # definition of "aligned": every LOAD segment p_align >= 16 KiB,
-            # power-of-two, with offset/address congruent mod 16 KiB. The old
-            # inline `readelf | grep LOAD.*0x4000$` only eyeballed one field
-            # and could pass a library misaligned in the other dimensions.
-            # The readelf dump stays as a diagnostics artifact.
-            readelf_bin="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf"
-            "$readelf_bin" -l "$so" > "build/ci-artifacts/rust-core-program-headers-$abi.txt"
-            node scripts/check_native_alignment.cjs "$so"
+          abi=arm64-v8a
+          so=android/app/src/main/jniLibs/$abi/libfqapi_core.so
+          test -s "$so"
+          nm_bin="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-nm"
+          "$nm_bin" --dynamic --defined-only "$so" > "build/ci-artifacts/rust-core-symbols-$abi.txt"
+          # flutter_rust_bridge entry points must be exported for dart:ffi.
+          for symbol in frb_get_rust_content_hash store_dart_post_cobject; do
+            if ! grep -Eq "[[:space:]]${symbol}$" "build/ci-artifacts/rust-core-symbols-$abi.txt"; then
+              echo "Missing Rust bridge symbol in $abi: $symbol" >&2
+              exit 1
+            fi
           done
+          # 16 KiB page alignment is required by Android 15+. The check runs
+          # through scripts/check_native_alignment.cjs -- the same script the
+          # APK verifier uses on the packaged libraries -- so there is one
+          # definition of "aligned": every LOAD segment p_align >= 16 KiB,
+          # power-of-two, with offset/address congruent mod 16 KiB. The old
+          # inline `readelf | grep LOAD.*0x4000$` only eyeballed one field
+          # and could pass a library misaligned in the other dimensions.
+          # The readelf dump stays as a diagnostics artifact.
+          readelf_bin="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf"
+          "$readelf_bin" -l "$so" > "build/ci-artifacts/rust-core-program-headers-$abi.txt"
+          node scripts/check_native_alignment.cjs "$so"
 
       # A contributor or fork has no access to the release keystore secrets, and
       # a hard failure here would make the workflow README recommends unusable
@@ -412,11 +413,12 @@ jobs:
           flutter analyze --no-pub
           flutter test --no-pub --concurrency=2 --reporter compact
 
-      - name: Compile release APKs (ARM64 + ARMv7)
-        # --split-per-abi produces one APK per ABI (app-arm64-v8a-release.apk,
-        # app-armeabi-v7a-release.apk) instead of a fat APK, so a 32-bit
-        # device does not download the ARM64 native libraries and vice versa.
-        run: flutter build apk --release --target-platform android-arm,android-arm64 --split-per-abi --no-pub
+      - name: Compile the release APK (ARM64)
+        # --split-per-abi still produces the per-ABI name
+        # (app-arm64-v8a-release.apk) instead of a fat APK. The 32-bit split was
+        # dropped along with the armv7 Rust target: no device we ship to needs
+        # it, and it doubled the cross-compile plus a full APK build.
+        run: flutter build apk --release --target-platform android-arm64 --split-per-abi --no-pub
 
       - name: Test Android runtime boundaries
         working-directory: app/android
@@ -466,35 +468,28 @@ jobs:
             version_args=(--expected-version-name "${GITHUB_REF_NAME#v}")
           fi
           # The fingerprint is pinned only when the release signature was
-          # actually applied. Without the secrets the packages carry the debug
+          # actually applied. Without the secrets the package carries the debug
           # identity, so there is no certificate that pinning could match -- but
           # the signature requirement itself is not dropped (see signer_args).
-          # Each split APK is verified with its own ABI, into its own report
-          # directory, so the two reports never overwrite each other.
-          for abi in arm64-v8a armeabi-v7a; do
-            python3 scripts/verify_android_apk.py \
-              --apk "build/app/outputs/flutter-apk/app-$abi-release.apk" \
-              --abi "$abi" \
-              --build-tools "$ANDROID_HOME/build-tools/$BUILD_TOOLS_VERSION" \
-              "${signer_args[@]}" \
-              "${version_args[@]}" \
-              --report-dir "build/ci-artifacts/verification/$abi"
-            cp "build/app/outputs/flutter-apk/app-$abi-release.apk" "build/ci-artifacts/app-$abi-release.apk"
-          done
+          abi=arm64-v8a
+          python3 scripts/verify_android_apk.py \
+            --apk "build/app/outputs/flutter-apk/app-$abi-release.apk" \
+            --abi "$abi" \
+            --build-tools "$ANDROID_HOME/build-tools/$BUILD_TOOLS_VERSION" \
+            "${signer_args[@]}" \
+            "${version_args[@]}" \
+            --report-dir "build/ci-artifacts/verification/$abi"
+          cp "build/app/outputs/flutter-apk/app-$abi-release.apk" "build/ci-artifacts/app-$abi-release.apk"
           {
             printf 'App commit: %s\n' "$GITHUB_SHA"
             printf 'Rust core: fqapi_core (flutter_rust_bridge %s)\n' "$FRB_VERSION"
-            for abi in arm64-v8a armeabi-v7a; do
-              printf 'Rust core library SHA-256 (%s): ' "$abi"
-              sha256sum "android/app/src/main/jniLibs/$abi/libfqapi_core.so"
-            done
-            # Record the identity the packages actually carry, not the one that
+            printf 'Rust core library SHA-256 (%s): ' "$abi"
+            sha256sum "android/app/src/main/jniLibs/$abi/libfqapi_core.so"
+            # Record the identity the package actually carries, not the one that
             # was requested: a fork build falls back to the debug key, and anyone
             # installing two builds needs to know whether those identities match.
-            for abi in arm64-v8a armeabi-v7a; do
-              printf 'APK signer certificate SHA-256 (%s): %s\n' "$abi" \
-                "$(python3 -c 'import json,sys; print(", ".join(json.load(open(sys.argv[1]))["signature"]["certificate_sha256"]))' "build/ci-artifacts/verification/$abi/report.json")"
-            done
+            printf 'APK signer certificate SHA-256 (%s): %s\n' "$abi" \
+              "$(python3 -c 'import json,sys; print(", ".join(json.load(open(sys.argv[1]))["signature"]["certificate_sha256"]))' "build/ci-artifacts/verification/$abi/report.json")"
             if [ "$HAS_RELEASE_SIGNING" = "true" ]; then
               printf 'Signing identity: the release keystore\n'
             else
@@ -528,26 +523,6 @@ jobs:
             app/build/ci-artifacts/verification/arm64-v8a/*.sha256
             app/build/ci-artifacts/verification/arm64-v8a/*.log
 
-      - name: Upload ARMv7 (32-bit) APK and verification reports
-        id: artifact-armv7
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          # Same retention as the ARM64 artifact. Older 32-bit devices
-          # (including many e-readers) install this one; the ARM64 APK
-          # refuses to install on them.
-          name: fqapp-armv7-${{ steps.artifact-ids.outputs.safe_ref }}-${{ steps.artifact-ids.outputs.short_sha }}-${{ github.run_number }}
-          retention-days: 14
-          if-no-files-found: error
-          compression-level: 0
-          path: |
-            app/build/ci-artifacts/app-armeabi-v7a-release.apk
-            app/build/ci-artifacts/build-info.txt
-            app/build/ci-artifacts/rust-core-symbols-armeabi-v7a.txt
-            app/build/ci-artifacts/rust-core-program-headers-armeabi-v7a.txt
-            app/build/ci-artifacts/verification/armeabi-v7a/*.json
-            app/build/ci-artifacts/verification/armeabi-v7a/*.sha256
-            app/build/ci-artifacts/verification/armeabi-v7a/*.log
-
       # Publishing is opt-in: a release is only created when the run was started
       # with a tag, so an ordinary branch build can never publish one.
       - name: Publish the GitHub Release
@@ -567,15 +542,12 @@ jobs:
             echo "::error::Release $RELEASE_TAG already exists; refusing to overwrite it." >&2
             exit 1
           fi
-          # Both splits are published: the ARM64 package is the one most devices
-          # want, the ARMv7 one is for older 32-bit hardware (many e-readers) that
-          # cannot install the ARM64 APK at all.
+          # The release carries the single ARM64 package; the 32-bit one is no
+          # longer built (see the toolchain target above).
           assets=()
-          for abi in arm64-v8a armeabi-v7a; do
-            asset="build/ci-artifacts/fqapp-$RELEASE_TAG-$abi.apk"
-            cp "build/ci-artifacts/app-$abi-release.apk" "$asset"
-            assets+=("$asset")
-          done
+          asset="build/ci-artifacts/fqapp-$RELEASE_TAG-arm64-v8a.apk"
+          cp "build/ci-artifacts/app-arm64-v8a-release.apk" "$asset"
+          assets+=("$asset")
           gh release create "$RELEASE_TAG" \
             --title "$RELEASE_TAG" \
             --notes-file .github/release-notes.md \
@@ -602,18 +574,14 @@ jobs:
       - name: Write download summary
         env:
           ARTIFACT_URL_ARM64: ${{ steps.artifact-arm64.outputs.artifact-url }}
-          ARTIFACT_URL_ARMV7: ${{ steps.artifact-armv7.outputs.artifact-url }}
           HAS_RELEASE_SIGNING: ${{ steps.signing.outputs.has_release_signing }}
         run: |
           {
             printf '[下载 ARM64 APK 和校验报告](%s)\n\n' "$ARTIFACT_URL_ARM64"
-            printf '[下载 ARMv7（32 位）APK 和校验报告](%s)\n\n' "$ARTIFACT_URL_ARMV7"
             printf 'App commit: `%s`  \n' "$GITHUB_SHA"
             printf 'Rust core: `fqapi_core` (flutter_rust_bridge `%s`)\n\n' "$FRB_VERSION"
             printf 'Rust core library SHA-256 (arm64-v8a): `%s`\n\n' \
               "$(sha256sum android/app/src/main/jniLibs/arm64-v8a/libfqapi_core.so | cut -d ' ' -f 1)"
-            printf 'Rust core library SHA-256 (armeabi-v7a): `%s`\n\n' \
-              "$(sha256sum android/app/src/main/jniLibs/armeabi-v7a/libfqapi_core.so | cut -d ' ' -f 1)"
             # Record the identity the packages actually carry, not the one that
             # was requested: a fork build falls back to the debug key, and anyone
             # installing two builds needs to know whether those identities match.

@@ -40,7 +40,7 @@ Rust 核心库 `libfqapi_core.so` 由 `scripts/build_rust_backend.ps1` / `build_
 JNI 方法名保留，但网络回调增加了长度探测和分两步准备/连接请求，必须将 Kotlin 与新库一起构建。
 
 ```powershell
-flutter build apk --release --target-platform android-arm,android-arm64 --split-per-abi
+flutter build apk --release --target-platform android-arm64 --split-per-abi
 ```
 
 ELF 的 LOAD 段和 APK ZIP 都需要满足 16 KiB 对齐，构建后还需在 16 KiB 页 Android 设备上
