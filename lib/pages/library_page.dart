@@ -320,13 +320,29 @@ class _LibraryPageState extends State<LibraryPage> {
   /// 那个要联网取目录的页面。这里只在「无网 + 有缓存」时抄这条捷径：联网时
   /// 仍走详情页（或按设置 → 阅读 →「点击书籍直接进入阅读」自动进阅读器），
   /// 段评、章节目录预览这些联网能力不会被悄悄降级。
-  Future<void> _open(MediaItem item) async {
+  Future<void> _open(MediaItem item, {bool importedResume = false}) async {
     if (ImportedBookStore.isLocalBookId(item.id)) {
       await _openLocalBook(item);
       return;
     }
     if (await _openCached(item)) return;
     if (!mounted) return;
+    // The shelf snapshot already knows which entries carry imported anchors.
+    // Ordinary books must keep the original navigation timing; DetailPage
+    // awaits pending reader writes when it actually resolves a resume target.
+    if (importedResume) {
+      await Navigator.push(
+        context,
+        MaterialPageRoute<void>(
+          builder: (_) => DetailPage(
+            item: item,
+            readerStore: widget.readerStore,
+            autoOpenReader: true,
+          ),
+        ),
+      );
+      return;
+    }
     await openBookDetail(context, item);
   }
 
@@ -964,7 +980,7 @@ class _LibraryPageState extends State<LibraryPage> {
     if (_editing) {
       _toggleSelected(entry);
     } else {
-      _open(entry.item);
+      _open(entry.item, importedResume: entry.importedResume);
     }
   }
 
@@ -1102,6 +1118,7 @@ class _ShelfEntry {
   final int addedAt;
   final double? progress;
   final int? episode;
+  final bool importedResume;
 
   const _ShelfEntry({
     required this.item,
@@ -1111,6 +1128,7 @@ class _ShelfEntry {
     this.readTime,
     this.progress,
     this.episode,
+    this.importedResume = false,
   });
 
   factory _ShelfEntry.fromRecord(
@@ -1125,6 +1143,10 @@ class _ShelfEntry {
     readTime: _timeOf(history),
     progress: _progressOf(history),
     episode: _episodeOf(history),
+    importedResume:
+        record.item.kind == 'book' &&
+        history?['fanqieImported'] == true &&
+        history?['chapterId'] != null,
   );
 
   factory _ShelfEntry.fromHistory(Map<String, dynamic> history) {
@@ -1148,6 +1170,10 @@ class _ShelfEntry {
       readTime: _timeOf(history),
       progress: _progressOf(history),
       episode: _episodeOf(history),
+      importedResume:
+          item.kind == 'book' &&
+          history['fanqieImported'] == true &&
+          history['chapterId'] != null,
     );
   }
 

@@ -31,12 +31,15 @@ class MainActivity : FlutterActivity() {
         flutterEngine.plugins.add(LibraryBackupPlugin())
         // WebDAV 密码：密钥库加密后再落 SharedPreferences，见 SecretStorePlugin。
         flutterEngine.plugins.add(SecretStorePlugin())
+        flutterEngine.plugins.add(FanqieAccountPlugin())
         // 官方系统分享是 Intent.ACTION_SEND；没有可分享的应用时回 false。
         flutterEngine.plugins.add(SharePlugin())
         // 整本 TXT 导出：MediaStore.Downloads 或应用外部目录，见 DownloadsPlugin。
         flutterEngine.plugins.add(DownloadsPlugin())
         // 海信墨水屏整屏刷新（压残影）：反射调用厂商 EPD 接口。
         flutterEngine.plugins.add(EinkRefreshPlugin())
+        // 小米澎湃 OS 公平运行内存：收 TRIM/KILL 广播，转发 Dart 处理后回系统。
+        flutterEngine.plugins.add(FairMemoryPlugin())
 
         // 音量键翻页通道：Dart -> 原生 setEnabled 控制是否拦截；原生 -> Dart
         // volumeKey 回调翻页方向（+1 下一页 / -1 上一页）。
