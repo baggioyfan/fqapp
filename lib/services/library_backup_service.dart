@@ -1,3 +1,4 @@
+import 'platform_channel.dart';
 import 'dart:isolate';
 
 import 'package:flutter/services.dart';
@@ -8,7 +9,7 @@ import 'search_history_store.dart';
 import 'shelf_store.dart';
 
 class LibraryBackupService {
-  static const _channel = MethodChannel('fqapp/library_backup');
+  static const _channel = AppMethodChannel('fqapp/library_backup');
 
   Future<LibraryBackup> capture() async {
     final library = LibraryStore.instance;

@@ -16,7 +16,7 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 # https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
 # In Windows, build-name is used as the major, minor, and patch parts
 # of the product and file versions while build-number is used as the build suffix.
-version: 1.0.122+129
+version: 1.0.131+136
 
 environment:
   sdk: ^3.12.2
@@ -56,7 +56,22 @@ dependencies:
   connectivity_plus: ^7.3.1
   image: ^4.12.0
   flutter_svg: ^2.3.0
+  media_kit: 1.2.6
+  media_kit_video: 2.0.1
+  # Windows 专用 libmpv；不要把 umbrella 的 media_kit_libs_video 加回来，否则
+  # Android/iOS/macOS/Linux 的播放库会一起进包（APK 多出 ~11 MB）。
+  media_kit_libs_windows_video: 1.0.11
+  file_selector: ^1.1.0
+  flutter_tts: ^4.2.5
+  webview_windows:
+    path: third_party/webview_windows
+  window_manager: ^0.5.1
+  screen_retriever: 0.2.2
+  smtc_windows: ^1.1.0
+  ffi: ^2.1.4
 dev_dependencies:
+  integration_test:
+    sdk: flutter
   flutter_test:
     sdk: flutter
 
@@ -86,10 +101,6 @@ flutter:
     - assets/config/filter.json
     - assets/config/device_pool.example.json
     - assets/filters/
-    - assets/web/
-    - assets/web/assets/
-    - assets/web/assets/css/
-    - assets/web/assets/webfonts/
     - assets/plugins/
     - assets/images/app_logo.webp
     - assets/images/bubble/

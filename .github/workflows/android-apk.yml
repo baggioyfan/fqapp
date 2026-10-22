@@ -170,7 +170,10 @@ jobs:
 
       - name: Install flutter_rust_bridge_codegen
         if: steps.frb-cache.outputs.cache-hit != 'true'
-        run: cargo install flutter_rust_bridge_codegen --version "$FRB_VERSION" --locked
+        # Swatinem/rust-cache also restores ~/.cargo/bin, so a codegen-cache key
+        # miss (any change to rust/Cargo.lock) can still find an older binary
+        # there; --force keeps the install working either way.
+        run: cargo install flutter_rust_bridge_codegen --version "$FRB_VERSION" --locked --force
 
       - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
         with:
@@ -402,8 +405,9 @@ jobs:
             "$(keytool -exportcert -keystore "$path" -storepass android \
                -alias androiddebugkey | sha256sum | cut -d ' ' -f 1)"
 
-      # Dependencies were resolved once, before the Rust gates; every step from
-      # there on runs with --no-pub against that resolved package config.
+      # Analysis/tests reuse the resolved package config. The release build
+      # resolves it again: flutter test registers the dev-only integration_test
+      # plugin, whose Android module must not leak into release registration.
       # --reporter compact prints progress ticks instead of one line per
       # passing test: passing tests whose names contain "failed"/"error"
       # (error-handling coverage) no longer look like failures in the log,
@@ -418,7 +422,9 @@ jobs:
         # (app-arm64-v8a-release.apk) instead of a fat APK. The 32-bit split was
         # dropped along with the armv7 Rust target: no device we ship to needs
         # it, and it doubled the cross-compile plus a full APK build.
-        run: flutter build apk --release --target-platform android-arm64 --split-per-abi --no-pub
+        # Keep pub enabled (no --no-pub) so the release plugin registrant is
+        # regenerated after tests, per the upstream note above.
+        run: flutter build apk --release --target-platform android-arm64 --split-per-abi
 
       - name: Test Android runtime boundaries
         working-directory: app/android
@@ -503,6 +509,25 @@ jobs:
             java -version 2>&1
           } > build/ci-artifacts/build-info.txt
 
+      - name: Check APK size and Android media boundary
+        run: |
+          python3 - <<'PY'
+          import json
+          import pathlib
+          import zipfile
+          rows = []
+          for abi in ('arm64-v8a', 'armeabi-v7a'):
+              apk = pathlib.Path(f'build/app/outputs/flutter-apk/app-{abi}-release.apk')
+              with zipfile.ZipFile(apk) as archive:
+                  native = [name for name in archive.namelist() if name.startswith('lib/') and name.endswith('.so')]
+              unexpected = [name for name in native if any(token in name.lower() for token in ('libmpv', 'libavcodec', 'libavformat', 'libavutil', 'libmediakitandroid'))]
+              if unexpected:
+                  raise SystemExit(f'Android must retain ExoPlayer without desktop media libraries: {unexpected}')
+              rows.append({'abi': abi, 'size_bytes': apk.stat().st_size, 'native_libraries': native})
+          print(json.dumps(rows, indent=2))
+          pathlib.Path('build/ci-artifacts/android-media-boundary.json').write_text(json.dumps(rows, indent=2))
+          PY
+
       - name: Upload ARM64 APK and verification reports
         id: artifact-arm64
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -516,6 +541,7 @@ jobs:
           compression-level: 0
           path: |
             app/build/ci-artifacts/app-arm64-v8a-release.apk
+            app/build/ci-artifacts/android-media-boundary.json
             app/build/ci-artifacts/build-info.txt
             app/build/ci-artifacts/rust-core-symbols-arm64-v8a.txt
             app/build/ci-artifacts/rust-core-program-headers-arm64-v8a.txt

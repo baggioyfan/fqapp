@@ -1,3 +1,5 @@
+import '../services/desktop_platform.dart';
+import '../services/app_log.dart';
 import 'dart:async';
 import 'dart:io';
 
@@ -186,8 +188,8 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     // 小米公平运行内存：KILL 广播到达时刷一次播放进度，避免被杀丢进度。
-    _unregisterFairMemoryFlush =
-        FairMemoryService.instance.registerFlushHandler(_persistProgress);
+    _unregisterFairMemoryFlush = FairMemoryService.instance
+        .registerFlushHandler(_persistProgress);
     unawaited(NativePlayer.setKeepScreenOn(true).catchError((Object _) {}));
     unawaited(PlayerPreferences.loadFloatingWindow());
     _index = widget.eps.isEmpty
@@ -397,7 +399,8 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
                 watchedIds: _watchedIds,
                 initialDetail: _seriesDetail,
                 historyStore: widget.historyStore,
-                hasPlaybackProgress: (_player?.position.inMilliseconds ?? 0) > 0,
+                hasPlaybackProgress:
+                    (_player?.position.inMilliseconds ?? 0) > 0,
                 seriesLoader: widget.seriesLoader,
                 onOpenRelatedSeries: (entry) {
                   Navigator.of(context).pop();
@@ -760,9 +763,9 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     _lastLifecycleState = state;
-    _loadTrace?.setAppActive(state == AppLifecycleState.resumed);
+    _loadTrace?.setAppActive(playbackAppIsActive(state));
     _syncWatchClock();
-    if (state == AppLifecycleState.resumed) {
+    if (playbackAppIsActive(state)) {
       _resumePendingAutoplay();
       if (_floating) unawaited(_stopFloating());
     } else {
@@ -782,6 +785,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
 
   /// 是否满足进悬浮窗的条件：开关开 + 正在播 + 播放器就绪。
   bool _canFloat() =>
+      !isWindowsDesktop &&
       !_floating &&
       PlayerPreferences.floatingWindow.value &&
       _player != null &&
@@ -930,7 +934,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
 
   bool get _appActive {
     final state = WidgetsBinding.instance.lifecycleState;
-    return state == null || state == AppLifecycleState.resumed;
+    return playbackAppIsActive(state);
   }
 
   void _resumePendingAutoplay() {
@@ -944,6 +948,12 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
 
   Future<void> _tryAutoplay(int generation) async {
     final player = _pendingAutoplay;
+    if (isWindowsDesktop && player != null) {
+      AppLog.d(
+        'desktop-autoplay',
+        'active=$_appActive lifecycle=${WidgetsBinding.instance.lifecycleState} paging=$_paging current=${_current(generation, player)}',
+      );
+    }
     if (player == null ||
         !_current(generation, player) ||
         (!_appActive && !_floating) ||
@@ -1451,7 +1461,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
 
   void _syncWatchClock() {
     final state = WidgetsBinding.instance.lifecycleState;
-    final active = state == null || state == AppLifecycleState.resumed;
+    final active = playbackAppIsActive(state);
     if (active &&
         !_switchingSeries &&
         _hasDisplayed &&
@@ -1576,6 +1586,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       hotComments: _hotComments,
       onHotCommentTap: widget.shortSeries ? _openHotComment : null,
       seriesTitle: _seriesTitle,
+      synopsis: _seriesDetail?.intro ?? '',
       // 官方播放页标题行「剧名 >」（ql3/v0 `a1()`）与选集面板头部箭头
       // 都进剧集详情页（`series_detail`）。
       onOpenSeriesDetail: widget.shortSeries ? _openSeriesDetail : null,
@@ -1724,10 +1735,15 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
         if (texture != null)
           RotatedBox(
             quarterTurns: _player!.videoRotationCorrection ~/ 90,
-            child: Texture(
-              key: const ValueKey('player-texture'),
-              textureId: texture,
-            ),
+            child: isWindowsDesktop
+                ? DesktopPlatform.instance.videoSurface(
+                    texture,
+                    key: const ValueKey('player-texture'),
+                  )
+                : Texture(
+                    key: const ValueKey('player-texture'),
+                    textureId: texture,
+                  ),
           ),
         if (waiting || _error != null)
           PlayerCover(

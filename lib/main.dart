@@ -1,3 +1,8 @@
+import 'services/audio_downloader.dart';
+import 'widgets/desktop_app_frame.dart';
+import 'services/native_player.dart';
+import 'services/desktop_platform.dart';
+import 'services/platform_channel.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter/services.dart';
@@ -19,7 +24,6 @@ import 'pages/mine_page.dart';
 import 'services/app_log.dart';
 import 'services/app_theme.dart';
 import 'services/audio_download_store.dart';
-import 'services/audio_downloader.dart';
 import 'services/audio_preferences.dart';
 import 'services/player_preferences.dart';
 import 'services/backend_service.dart';
@@ -43,8 +47,9 @@ import 'services/webdav_sync_service.dart' show describeSyncReport;
 import 'widgets/lazy_indexed_stack.dart';
 import 'widgets/home/home_design.dart';
 
-void main() {
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  if (isWindowsDesktop) await DesktopPlatform.instance.initialize();
   // 应用内日志：接管 debugPrint 与 FlutterError.onError，未处理异步异常由
   // runZonedGuarded 捕获；文件持久化异步开启，失败只退回内存模式。
   AppLog.instance.install();
@@ -55,7 +60,7 @@ void main() {
   // 插件回 false 表示没能调起选择器（没有可分享的应用），必须原样返回：
   // 「调不起来」与「已分享」是两件事。
   SharePlusLite.handler = ({required title, required text}) async {
-    final launched = await const MethodChannel(
+    final launched = await const AppMethodChannel(
       'fqapp/share',
     ).invokeMethod<bool>('shareText', {'title': title, 'text': text});
     return launched ?? false;
@@ -63,6 +68,20 @@ void main() {
   // Rust 核心日志的读取入口：日志页「Rust」视图读 runtime_dir/rust.log。
   // 核心只在 Android 落盘（桌面/测试构建不装 logger），读不到时页面给空态。
   RustLogSource.reader = BackendService.instance.readRustLog;
+  if (isWindowsDesktop) {
+    DesktopPlatform.instance.beforeClose = () async {
+      DramaDownloader.instance.pauseAll();
+      AudioDownloader.instance.pauseAll();
+      await FairMemoryService.instance.flushForExit();
+      try {
+        await NativePlayer.pauseOthers();
+      } catch (_) {}
+      try {
+        await BackendService.instance.stop();
+      } catch (_) {}
+      await Hive.close();
+    };
+  }
   runZonedGuarded(
     () => runApp(const ProviderScope(child: FqApp())),
     (error, stack) => AppLog.e('zone', '未捕获异步异常', error: error, stack: stack),
@@ -168,7 +187,9 @@ class FqApp extends StatefulWidget {
 }
 
 class _FqAppState extends State<FqApp> {
-  final _navigatorKey = GlobalKey<NavigatorState>();
+  final _navigatorKey = isWindowsDesktop
+      ? DesktopPlatform.navigatorKey
+      : GlobalKey<NavigatorState>();
 
   @override
   Widget build(BuildContext context) {
@@ -184,7 +205,9 @@ class _FqAppState extends State<FqApp> {
               navigatorKey: _navigatorKey,
               builder: (context, child) => AudioPlaybackScope(
                 navigatorKey: _navigatorKey,
-                child: child ?? const SizedBox.shrink(),
+                child: isWindowsDesktop
+                    ? DesktopAppFrame(child: child ?? const SizedBox.shrink())
+                    : child ?? const SizedBox.shrink(),
               ),
               title: '番茄小铺',
               debugShowCheckedModeBanner: false,
@@ -323,6 +346,36 @@ class RootShell extends StatefulWidget {
 class _RootShellState extends State<RootShell> with WidgetsBindingObserver {
   int _index = 0;
   bool _backendReady = false;
+
+  /// 首页 feed 的滚动控制器，由壳层持有以便底部栏触发回顶部。
+  final ScrollController _homeScroll = ScrollController();
+
+  /// 上一次「重复点击底部首页 tab」的时间，用于 800ms 防抖。
+  ///
+  /// 官方对重复点击用 `throttleFirst(800L, MILLISECONDS)`
+  /// （BookshelfVideoMultiTabFragment.java:101）。
+  DateTime? _lastHomeTabRepeatAt;
+
+  /// 底部 tab 被选中。重复点当前 tab 时回到首页顶部。
+  ///
+  /// 官方把它放在底部栏而不是页内：`onBottomTabRepeatClick()` 转发到当前
+  /// fragment，最终是 `scrollToPosition(0)`（BookshelfVideoTabFragment.java:247）。
+  /// 首页头部是普通 sliver（不是折叠 AppBar），把 offset 归零即等价，吸顶的
+  /// 分类栏会自己重新吸住。
+  void _selectTab(int index) {
+    if (index != _index) {
+      setState(() => _index = index);
+      return;
+    }
+    if (index != 0) return; // 只有首页有 feed 需要回顶
+    final now = DateTime.now();
+    final last = _lastHomeTabRepeatAt;
+    if (last != null && now.difference(last).inMilliseconds < 800) return;
+    _lastHomeTabRepeatAt = now;
+    if (!_homeScroll.hasClients) return;
+    // 官方是瞬间跳转（scrollToPosition(0)），没有动画。
+    _homeScroll.jumpTo(_homeScroll.position.minScrollExtent);
+  }
   String? _backendError;
 
   /// 检查云端是否有更新时置位：回到前台可能连续触发几次，别把弹窗叠起来。
@@ -462,6 +515,12 @@ class _RootShellState extends State<RootShell> with WidgetsBindingObserver {
   }
 
   @override
+  void dispose() {
+    _homeScroll.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     if (!_backendReady) {
       return Scaffold(
@@ -514,6 +573,20 @@ class _RootShellState extends State<RootShell> with WidgetsBindingObserver {
         ),
       );
     }
+    if (isWindowsDesktop) {
+      return ValueListenableBuilder<int>(
+        valueListenable: desktopTab,
+        builder: (context, index, _) => LazyIndexedStack(
+          index: index,
+          children: [
+            const HomePage(),
+            const DramaPage(),
+            LibraryPage(onBrowse: () => desktopTab.value = 0),
+            const MinePage(),
+          ],
+        ),
+      );
+    }
     final palette = HomePalette.of(context);
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final isDramaTab = _index == 1;
@@ -530,9 +603,7 @@ class _RootShellState extends State<RootShell> with WidgetsBindingObserver {
         shadowColor: Colors.transparent,
         indicatorColor: eink
             ? Colors.black
-            : HomePalette.accent.withValues(
-                alpha: glassDark ? 0.20 : 0.12,
-              ),
+            : HomePalette.accent.withValues(alpha: glassDark ? 0.20 : 0.12),
         indicatorShape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(16),
         ),
@@ -540,9 +611,7 @@ class _RootShellState extends State<RootShell> with WidgetsBindingObserver {
           (states) => IconThemeData(
             size: 22,
             color: states.contains(WidgetState.selected)
-                ? (eink
-                      ? Colors.white
-                      : HomePalette.accent)
+                ? (eink ? Colors.white : HomePalette.accent)
                 : (eink
                       ? Colors.black
                       : (glassDark
@@ -559,9 +628,7 @@ class _RootShellState extends State<RootShell> with WidgetsBindingObserver {
             color: states.contains(WidgetState.selected)
                 ? (eink
                       ? Colors.black
-                      : (glassDark
-                            ? HomePalette.accent
-                            : palette.accentText))
+                      : (glassDark ? HomePalette.accent : palette.accentText))
                 : (eink
                       ? Colors.black
                       : (glassDark
@@ -572,9 +639,7 @@ class _RootShellState extends State<RootShell> with WidgetsBindingObserver {
       ),
       child: NavigationBar(
         selectedIndex: _index,
-        onDestinationSelected: (i) {
-          if (i != _index) setState(() => _index = i);
-        },
+        onDestinationSelected: _selectTab,
         backgroundColor: Colors.transparent,
         elevation: 0,
         destinations: const [
@@ -635,7 +700,7 @@ class _RootShellState extends State<RootShell> with WidgetsBindingObserver {
         child: LazyIndexedStack(
           index: _index,
           children: [
-            const HomePage(),
+            HomePage(scrollController: _homeScroll),
             const DramaPage(),
             // 空书架上的「去书城找书」切回首页 tab。
             LibraryPage(onBrowse: () => setState(() => _index = 0)),
@@ -684,19 +749,16 @@ class _RootShellState extends State<RootShell> with WidgetsBindingObserver {
                         decoration: BoxDecoration(
                           color: Colors.white,
                           borderRadius: BorderRadius.circular(28),
-                          border: Border.all(
-                            color: Colors.black,
-                            width: 0.8,
-                          ),
+                          border: Border.all(color: Colors.black, width: 0.8),
                         ),
                         child: navBar,
                       )
                     : isDramaTab
-                        ? staticNavBar
-                        : BackdropFilter(
-                            filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
-                            child: staticNavBar,
-                          ),
+                    ? staticNavBar
+                    : BackdropFilter(
+                        filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
+                        child: staticNavBar,
+                      ),
               ),
             ),
           ),

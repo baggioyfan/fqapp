@@ -1,3 +1,5 @@
+import '../services/desktop_platform.dart';
+import 'desktop_video_chrome.dart';
 import 'dart:async';
 import 'dart:math' as math;
 
@@ -46,6 +48,11 @@ class VideoPlayerChrome extends StatefulWidget {
   final Widget child;
   final String coverUrl;
   final ValueChanged<bool>? onPagingChanged;
+
+  /// 桌面 feed 的滚轮翻剧：宿主（如短剧推荐流）传入时，桌面 chrome 在视频
+  /// 区把滚轮上下滚转成 ±1 的切剧请求；节流与边界由宿主负责。null 时
+  /// 滚轮在视频区无动作（播放页不切剧）。
+  final ValueChanged<int>? onWheelNavigate;
   final Future<void> Function(int) onSelectEpisode;
   final void Function(Object) onError;
 
@@ -108,6 +115,9 @@ class VideoPlayerChrome extends StatefulWidget {
   /// 选集面板头部的剧信息（官方 \`aa8.xml:7-15\`）。
   final String seriesTitle;
 
+  /// 作品简介。桌面宽屏停靠面板在剧名/集数下展示；空串时不出现该段。
+  final String synopsis;
+
   /// 标题行「剧名 >」点击 → 官方进剧集详情页（`series_detail`，ql3/v0
   /// `a1()` 的默认分支）。null 时不响应（非短剧形态）。
   final VoidCallback? onOpenSeriesDetail;
@@ -143,6 +153,8 @@ class VideoPlayerChrome extends StatefulWidget {
   final List<EpisodeVariant> qualityVariants;
   final String? currentQualityUrl;
   final ValueChanged<EpisodeVariant>? onQualitySelected;
+  final Future<void> Function(double)? onPlaybackRateChanged;
+  final Future<void> Function(double)? onPlaybackVolumeChanged;
 
   /// 最终确定的 seek 目标（进度条拖动收尾、横滑收尾、±10s 快进/回拖、
   /// 播完重播回零）。拖动过程中的实时 seek 不上报，只报收尾值，
@@ -176,6 +188,7 @@ class VideoPlayerChrome extends StatefulWidget {
     this.coverUrl = '',
     this.watchedEpisodes = const <int>{},
     this.onPagingChanged,
+    this.onWheelNavigate,
     required this.onSelectEpisode,
     required this.onError,
     this.shortSeries = false,
@@ -196,6 +209,7 @@ class VideoPlayerChrome extends StatefulWidget {
     this.hotComments = const [],
     this.onHotCommentTap,
     this.seriesTitle = '',
+    this.synopsis = '',
     this.onOpenSeriesDetail,
     this.onOpenRelatedSeries,
     this.seriesCover = '',
@@ -216,6 +230,8 @@ class VideoPlayerChrome extends StatefulWidget {
     this.qualityVariants = const [],
     this.currentQualityUrl,
     this.onQualitySelected,
+    this.onPlaybackRateChanged,
+    this.onPlaybackVolumeChanged,
     this.openFullScreen = false,
   });
 
@@ -348,9 +364,7 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
     _panel.addListener(_panelChanged);
     _listenToPosition();
     WidgetsBinding.instance.addObserver(this);
-    _appActive =
-        WidgetsBinding.instance.lifecycleState == null ||
-        WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed;
+    _appActive = playbackAppIsActive(WidgetsBinding.instance.lifecycleState);
     _lockController =
         AnimationController(
           vsync: this,
@@ -523,19 +537,25 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    // `inactive` 只是瞬态打断（下拉通知栏/控制中心/分屏呼出、画中画失焦）：
-    // 应用仍在前台可见，播放继续；只有 hidden/paused/detached 才表示真正离场，
-    // 此时暂停并在回前台时续播。
-    final backgrounded =
-        state == AppLifecycleState.hidden ||
-        state == AppLifecycleState.paused ||
-        state == AppLifecycleState.detached;
-    final active = state == AppLifecycleState.resumed;
-    if (backgrounded && _appActive) {
+    // `inactive` 只是瞬态打断（下拉通知栏/控制中心/分屏呼出）：应用仍在
+    // 前台可见，播放继续；只有 hidden/paused/detached 才表示真正离场。
+    if (state == AppLifecycleState.inactive && !isWindowsDesktop) return;
+    final active = playbackAppIsActive(state);
+    if (!active && _appActive) {
       _appActive = false;
       ++_interaction;
+      // 「刚才想播吗」现读播放器，不用 [VideoPlayerChrome.playing] 属性：
+      // 桌面 chrome 直接暂停播放器、不经宿主会话，该属性（会话的 playing
+      // 通知器，靠 playWhenReady 事件重算）可能还停在暂停前的值，拿它
+      // 记账会在回到前台时把用户的手动暂停误恢复。移动端的暂停都经会话
+      // 中介，现读结果与旧记账一致。
+      final resumePlayer = widget.player;
       _resumeOnForeground =
-          _ready && (_playbackRequested || (_seeking && _resumeAfterSeek));
+          _ready &&
+          ((resumePlayer?.playing ?? false) ||
+              ((resumePlayer?.playWhenReady ?? false) &&
+                  !(resumePlayer?.completed ?? false)) ||
+              (_seeking && _resumeAfterSeek));
       _cancelSeek(resume: false);
       _endBoost();
       _doubleTapGuard?.cancel();
@@ -1498,7 +1518,15 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
   }
 
   @override
-  Widget build(BuildContext context) => AnnotatedRegion<SystemUiOverlayStyle>(
+  Widget build(BuildContext context) => isWindowsDesktop
+      ? DesktopVideoChrome(configuration: widget, onRateSelected: (rate) async {
+          ++_rateGeneration;
+          setState(() => _rate = rate);
+          await PlayerPreferences.savePlaybackRate(rate);
+          if (widget.onPlaybackRateChanged case final changed?) { await changed(rate); }
+          else { await _control((player) => player.setRate(rate)); }
+        }, onVolumeSelected: widget.onPlaybackVolumeChanged)
+      : AnnotatedRegion<SystemUiOverlayStyle>(
     value: const SystemUiOverlayStyle(
       statusBarColor: Colors.transparent,
       statusBarIconBrightness: Brightness.light,
@@ -1624,7 +1652,7 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
                     _refreshLockVisibility();
                   } else if (portraitSeries) {
                     // 保留吞单击窗口，避免双击尾部的触摸误切播放状态。
-                    if (_ready && !_clearScreen) _guardDoubleTap();
+                    if (_ready && !_clearScreen) { _guardDoubleTap(); }
                   } else if (!widget.shortSeries) {
                     _togglePlayback();
                   } else {

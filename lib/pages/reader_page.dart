@@ -1,3 +1,6 @@
+import 'package:flutter/gestures.dart';
+import '../services/desktop_platform.dart';
+import '../widgets/desktop_chapter_sidebar.dart';
 import 'dart:async';
 import 'dart:collection';
 import 'package:flutter/material.dart';
@@ -6,6 +9,7 @@ import 'package:flutter_lucide/flutter_lucide.dart';
 
 import '../models/book_comment.dart';
 import '../models/chapter_ideas.dart';
+import '../models/comment_reply.dart';
 import '../models/media_item.dart';
 import '../services/api_client.dart';
 import '../services/app_theme.dart';
@@ -23,6 +27,8 @@ import '../services/reader_history.dart';
 import '../services/reader_preferences.dart';
 import '../services/reader_tap_zones.dart';
 import '../services/reader_underline_store.dart';
+import '../services/shelf_toggle.dart';
+import '../services/shelf_store.dart';
 import '../services/system_tts.dart';
 import '../services/webdav_auto_sync.dart';
 import '../widgets/chapter_cache_sheet.dart';
@@ -80,6 +86,10 @@ class ReaderPage extends StatefulWidget {
   /// Resolves one paragraph's comment bodies. See [ParagraphCommentResolver].
   final ParagraphCommentResolver? commentResolver;
 
+  /// 加入书架时用的条目（issue #103）。详情页传入原 `MediaItem`，书架卡片因此
+  /// 保留作者/徽标等字段；其他入口省略，按 [bookId]/[title]/[cover] 兜底成小说。
+  final MediaItem? shelfItem;
+
   const ReaderPage({
     super.key,
     required this.bookId,
@@ -95,6 +105,7 @@ class ReaderPage extends StatefulWidget {
     this.imageProviderFactory,
     this.ideasLoader,
     this.commentResolver,
+    this.shelfItem,
     this.underlineStore,
   });
 
@@ -139,6 +150,21 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
   Timer? _autoTurnTimer;
 
   bool get _paged => _preferences.pageMode == ReaderPageMode.paged;
+
+  /// 阅读器自己的书架条目（issue #103）：详情页传了原 item 就用它，否则按本页
+  /// 已有的书籍字段兜底。书架 key 是 `kind:id`，这里固定 'book'——漫画走自己的
+  /// 阅读器（kind 'manga'），两者在书架上本就是两条。
+  MediaItem get _shelfEntry =>
+      widget.shelfItem ??
+      MediaItem(
+        id: widget.bookId,
+        title: widget.title,
+        cover: widget.cover,
+        author: '',
+        badge: '',
+        ep: '',
+        kind: 'book',
+      );
 
   /// 全局墨水屏模式覆盖阅读器显示预设（#15/#9）：开启时阅读器强制纯黑白，
   /// 不改用户保存的预设，关闭后恢复原预设。夜间切换等仍写保存的预设。
@@ -445,8 +471,8 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     ListeningSession.instance.addListener(_onListeningTick);
     WidgetsBinding.instance.addObserver(this);
     // 小米公平运行内存：KILL 广播到达时刷一次阅读进度，避免被杀丢进度。
-    _unregisterFairMemoryFlush =
-        FairMemoryService.instance.registerFlushHandler(_persistProgress);
+    _unregisterFairMemoryFlush = FairMemoryService.instance
+        .registerFlushHandler(_persistProgress);
     _appActive =
         WidgetsBinding.instance.lifecycleState == null ||
         WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed;
@@ -875,8 +901,10 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     final chapterId = _chapter.itemId;
     final loadGeneration = _loadGeneration;
     final existing = _rangeUnderlines
-        .where((underline) => underline.coversExactly(selection.start,
-            selection.end))
+        .where(
+          (underline) =>
+              underline.coversExactly(selection.start, selection.end),
+        )
         .toList();
     if (!add && existing.isEmpty) return;
     final record = ReaderRangeUnderline(
@@ -984,9 +1012,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     List<ReaderRangeUnderline> ranges;
     try {
       final saved = await store.load(widget.bookId, chapterId);
-      ids = {
-        for (final entry in saved.values) entry.id,
-      };
+      ids = {for (final entry in saved.values) entry.id};
       ranges = await store.loadRanges(widget.bookId, chapterId);
     } catch (_) {
       ids = const {};
@@ -1263,6 +1289,9 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
                 cursor,
               );
             },
+            // 回复按需展开（issue #95）。与段评正文同一套「注入即离线」
+            // 约定：调用方自己提供数据时不接网络，也就不给可点的回复入口。
+            replyLoader: _ideasReplyLoader(),
           ),
         ),
       );
@@ -1306,6 +1335,25 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
       itemVersion: chapter.version.isNotEmpty ? chapter.version : ideaVersion,
       paraIndex: paragraph.paraIndex,
       cursor: cursor,
+    );
+  }
+
+  /// Loads one comment's replies for the paragraph sheet.
+  ///
+  /// Null when the caller injected its own comment data or when a chapter
+  /// cache was injected (both mark an offline caller), which keeps the reply
+  /// counter a plain read-only number for them.
+  Future<CommentReplyPage> Function(String commentId)? _ideasReplyLoader() {
+    if (widget.commentResolver != null ||
+        widget.ideasLoader != null ||
+        widget.chapterCache != null) {
+      return null;
+    }
+    if (widget.bookId.isEmpty) return null;
+    return (commentId) => ApiClient.instance.commentReplies(
+      widget.bookId,
+      commentId,
+      groupId: widget.bookId,
     );
   }
 
@@ -1795,6 +1843,9 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
       'bookId': widget.bookId,
       'chapterId': chapterId,
       'episode': index,
+      // 总章数：书架靠「第 N/M 章」区分「读到末尾」与「全书读完」
+      // （issue #110 第 3 条）。官方存的是 itemCounts，见 ChaseUpdateModel。
+      'chapterCount': widget.chapters.length,
       'position': position,
       'maxScroll': max,
       'positionVersion': 2,
@@ -1829,6 +1880,18 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
         widget.chapters.length;
   }
 
+  /// Goes to the previous chapter.
+  ///
+  /// [startAtEnd] exists for the *continuous reading* paths only: paging past
+  /// the first page of a chapter, overscrolling at the top, or a tap zone that
+  /// means "back one chapter while scrolling". Those land on the previous
+  /// chapter's end so reading continues where it left off.
+  ///
+  /// An explicit「上一章」controls (toolbar button, chapter slider arrow, menu
+  /// row) must NOT pass it: the official client addresses chapters as
+  /// `Y(chapterId, 0, …)` — always the chapter start — and landing on the last
+  /// page while「下一章」lands on the first made the pair feel broken
+  /// (issue #110).
   Future<void> _prev({bool startAtEnd = false}) async {
     if (_index <= 0 || _changingChapter) return;
     _changingChapter = true;
@@ -1963,7 +2026,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
         _pauseListenFollow();
         unawaited(_turnPage(1));
       case ReaderTapZoneAction.prevChapter:
-        unawaited(_prev(startAtEnd: true));
+        unawaited(_prev());
       case ReaderTapZoneAction.nextChapter:
         unawaited(_next());
       case ReaderTapZoneAction.toc:
@@ -2175,10 +2238,9 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
           paragraphAnchored &&
           !_chapterContent.timelineChecked) {
         _showMessage('正在获取本段音频…');
-        await _refreshCachedChapter(chapter).timeout(
-          const Duration(seconds: 12),
-          onTimeout: () {},
-        );
+        await _refreshCachedChapter(
+          chapter,
+        ).timeout(const Duration(seconds: 12), onTimeout: () {});
         // The user may have turned the page while the timeline was in flight.
         // Serving another chapter's paragraph position would start playback at
         // a place nobody asked for.
@@ -2277,7 +2339,97 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     );
   }
 
+  DateTime _desktopWheelAt = DateTime.fromMillisecondsSinceEpoch(0);
+
+  void _desktopScroll(PointerSignalEvent signal) {
+    if (!_paged || signal is! PointerScrollEvent || signal.scrollDelta.dy == 0) {
+      return;
+    }
+    GestureBinding.instance.pointerSignalResolver.register(signal, (_) {
+      final now = DateTime.now();
+      if (now.difference(_desktopWheelAt).inMilliseconds < 180) return;
+      _desktopWheelAt = now;
+      unawaited(_turnPage(signal.scrollDelta.dy > 0 ? 1 : -1));
+    });
+  }
+
   Widget _buildReader(BuildContext context) {
+    if (!isWindowsDesktop) return _buildReaderSurface(context);
+    return LayoutBuilder(
+      builder: (context, bounds) => ColoredBox(
+        color: _effectivePreset.backgroundColor,
+        child: Row(
+          children: [
+            if (bounds.maxWidth >= 1000)
+              DesktopChapterSidebar(
+                chapters: widget.chapters,
+                currentIndex: _index,
+                onSelected: (index) => unawaited(_jumpToChapter(index)),
+              ),
+            Expanded(
+              child: Center(
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 880),
+                  child: Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      Focus(
+                        autofocus: true,
+                        onKeyEvent: (node, event) {
+                          if (event is! KeyDownEvent ||
+                              FocusManager.instance.primaryFocus?.context
+                                      ?.findAncestorWidgetOfExactType<
+                                        EditableText
+                                      >() !=
+                                  null) {
+                            return KeyEventResult.ignored;
+                          }
+                          final key = event.logicalKey;
+                          if ([
+                            LogicalKeyboardKey.arrowRight,
+                            LogicalKeyboardKey.pageDown,
+                          ].contains(key)) {
+                            unawaited(_turnPage(1));
+                            return KeyEventResult.handled;
+                          }
+                          if ([
+                            LogicalKeyboardKey.arrowLeft,
+                            LogicalKeyboardKey.pageUp,
+                          ].contains(key)) {
+                            unawaited(_turnPage(-1));
+                            return KeyEventResult.handled;
+                          }
+                          return KeyEventResult.ignored;
+                        },
+                        child: Listener(
+                          onPointerSignal: _desktopScroll,
+                          child: _buildReaderSurface(context),
+                        ),
+                      ),
+                      Positioned.fill(
+                        child: IgnorePointer(
+                          child: ValueListenableBuilder<double>(
+                            valueListenable: DesktopPlatform.readerBrightness,
+                            builder: (_, brightness, _) => ColoredBox(
+                              color: Colors.black.withValues(
+                                alpha: 1 - brightness,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildReaderSurface(BuildContext context) {
     final preset = _effectivePreset;
     final windowPadding = MediaQuery.paddingOf(context);
     final overlayStyle = preset.isDark
@@ -2373,9 +2525,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
                 _menuEdge(top: false, child: _buildReaderControls(preset)),
                 // 墨水屏软件白闪：盖全屏白帧，迫使 EPD 控制器全量刷新。
                 if (_einkFlashVisible)
-                  const Positioned.fill(
-                    child: ColoredBox(color: Colors.white),
-                  ),
+                  const Positioned.fill(child: ColoredBox(color: Colors.white)),
               ],
             ),
           ),
@@ -2471,13 +2621,28 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
                 ),
                 icon: Icon(LucideIcons.message_circle, color: preset.textColor),
               ),
+            ValueListenableBuilder<int>(
+              valueListenable: ShelfStore.instance.listenable,
+              builder: (context, _, _) {
+                final inShelfNow = inShelf(_shelfEntry);
+                return IconButton(
+                  key: const ValueKey('reader-shelf-button'),
+                  tooltip: inShelfNow ? '已在书架' : '加入书架',
+                  onPressed: () =>
+                      unawaited(toggleShelf(context, _shelfEntry)),
+                  icon: Icon(
+                    inShelfNow
+                        ? LucideIcons.bookmark_check
+                        : LucideIcons.bookmark_plus,
+                    color: preset.textColor,
+                  ),
+                );
+              },
+            ),
             IconButton(
               tooltip: '收起阅读菜单',
               onPressed: _toggleControls,
-              icon: Icon(
-                LucideIcons.chevron_up,
-                color: preset.textColor,
-              ),
+              icon: Icon(LucideIcons.chevron_up, color: preset.textColor),
             ),
           ],
         ),
@@ -2676,7 +2841,11 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     final origin = overlayBox.globalToLocal(
       entry.box.localToGlobal(Offset(caret.x, caret.top)),
     );
-    return (x: origin.dx, top: origin.dy, bottom: origin.dy + caret.bottom - caret.top);
+    return (
+      x: origin.dx,
+      top: origin.dy,
+      bottom: origin.dy + caret.bottom - caret.top,
+    );
   }
 
   /// [offset] (chapter space) resolved into [block]'s text space, snapping a
@@ -2728,9 +2897,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     // A drag can land a bound on the '\n' separator between two blocks; such
     // a range paints nothing, so grow it onto the next real character — the
     // finger must never hold an invisible selection.
-    if (next.isValid &&
-        next.end < range.$2 &&
-        _selectionPaintsNothing(next)) {
+    if (next.isValid && next.end < range.$2 && _selectionPaintsNothing(next)) {
       next = next.copyWith(end: next.end + 1);
     }
     if (next == selection) return;
@@ -2928,9 +3095,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(fontSize: 14, height: 1.4),
                     ),
-                    onPressed: _index > 0
-                        ? () => _prev(startAtEnd: true)
-                        : null,
+                    onPressed: _index > 0 ? _prev : null,
                   ),
                 ),
                 const SizedBox(width: 16),
@@ -2989,7 +3154,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
       seekValue: seekValue,
       deviceAvailable: _deviceAvailable,
       systemBrightness: _deviceStatus.systemBrightness,
-      onPrevious: _index > 0 ? () => _prev(startAtEnd: true) : null,
+      onPrevious: _index > 0 ? _prev : null,
       onNext: _index < widget.chapters.length - 1 ? _next : null,
       onSeek: (value) => setState(() => _chapterSeekValue = value),
       onSeekEnd: (value) {
@@ -3230,13 +3395,13 @@ class _ChapterDirectorySheetState extends State<_ChapterDirectorySheet> {
                             if (widget.cachedIds.contains(chapter.itemId))
                               const Tooltip(
                                 message: '已缓存',
-                                child: Icon(
-                                  LucideIcons.circle_check,
-                                  size: 18,
-                                ),
+                                child: Icon(LucideIcons.circle_check, size: 18),
                               ),
                             if (current)
-                              Icon(LucideIcons.locate_fixed, color: scheme.primary),
+                              Icon(
+                                LucideIcons.locate_fixed,
+                                color: scheme.primary,
+                              ),
                           ],
                         ),
                       ),

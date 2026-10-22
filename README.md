@@ -1,21 +1,17 @@
 <p align="center">
-  <img src="assets/images/app_logo.webp" width="120" height="120" alt="fqapp Logo">
+  <img src="assets/images/app_logo.webp" width="100" alt="fqapp">
 </p>
 
-<h1 align="center">fqapp</h1>
+<h1 align="center">fqapp · 看小说、短剧、漫画的手机 App</h1>
+
+<p align="center">不用注册 · 不用付费 · 打开就能看</p>
 
 <p align="center">
-  <strong>内容聚合客户端</strong><br>
-  小说 · 短剧 · 漫剧 · 漫画 · 听书，签名 / 解密 / 缓存全部在手机本地完成
+  <a href="https://github.com/ch6vip/fqapp/releases/latest"><img alt="Release" src="https://img.shields.io/github/v/release/ch6vip/fqapp?color=EF5038&label=Release&logo=github"></a> <a href="https://github.com/ch6vip/fqapp/releases"><img alt="Downloads" src="https://img.shields.io/github/downloads/ch6vip/fqapp/total?color=14B8A6&label=Downloads&logo=github"></a> <img alt="Platform" src="https://img.shields.io/badge/Android-7.0%2B-3DDC84?logo=android&logoColor=white"> <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/License-GPL--3.0-blue"></a> <a href="https://github.com/ch6vip/fqapp/stargazers"><img alt="Stars" src="https://img.shields.io/github/stars/ch6vip/fqapp?style=social"></a>
 </p>
 
 <p align="center">
-  <a href="#-功能一览">功能一览</a> ·
-  <a href="#-下载与安装">下载与安装</a> ·
-  <a href="#-快速上手">快速上手</a> ·
-  <a href="#-常见问题">常见问题</a> ·
-  <a href="#-支持作者">支持作者</a> ·
-  <a href="DEVELOPMENT.md">开发者文档</a>
+  <a href="https://github.com/ch6vip/fqapp/releases/latest"><img alt="下载 APK" height="40" src="https://img.shields.io/badge/%E4%B8%8B%E8%BD%BD-APK-3DDC84?style=for-the-badge&logo=android&logoColor=white"></a>
 </p>
 
 <p align="center">
@@ -181,34 +177,10 @@
 
 <img src=".github/wechat.png" width="260" alt="微信赞助">
 
-应用内的同一入口在「设置 → 关于 → 支持作者」。
-
-## 🙏 致谢
-
-Thanks to the [LINUX DO](https://linux.do/) community for its support and feedback.
-
-感谢 [LINUX DO](https://linux.do/) 社区的支持与反馈。
-
-## 📄 许可与免责声明
-
-本项目代码以 [GPL-3.0](LICENSE) 协议开源，Copyright (C) 2026 ch6vip。
-
-本项目仅供学习与研究交流，不内置、不分发任何内容资源；在线内容均来自第三方公开接口，版权归原权利方所有。本项目与内容提供方无关联，未获其授权；使用产生的一切后果由使用者自行承担，如有侵权请联系删除。请遵守相关法律法规，仅限个人学习研究使用。
-
-## ⭐ Star History
-
-<a href="https://www.star-history.com/?repos=ch6vip%2Ffqapp&type=date&legend=top-left">
- <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=ch6vip/fqapp&type=date&theme=dark&legend=top-left" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=ch6vip/fqapp&type=date&legend=top-left" />
-   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=ch6vip/fqapp&type=date&legend=top-left" />
- </picture>
-</a>
+App 里也有入口：「设置 → 关于 → 支持作者」。
 
 ---
 
-## 开发者
+**电脑版** [Windows 桌面版](WINDOWS.md) ｜ **开发者** [编译与开发](DEVELOPMENT.md) ｜ [如何反馈](CONTRIBUTING.md) ｜ **许可** [GPL-3.0](LICENSE)，Copyright (C) 2026 ch6vip ｜ **致谢** [LINUX DO](https://linux.do/)
 
-架构、构建、API 对接、调试与开发计划等开发向文档见 **[DEVELOPMENT.md](DEVELOPMENT.md)**；构建与维护脚本说明见 [scripts/README.md](scripts/README.md)。
-
-想参与改进请先读 **[CONTRIBUTING.md](CONTRIBUTING.md)**：报告缺陷该给哪些信息、功能建议的产品边界、提交代码前必须通过的检查，都在那里。
+<a href="https://www.star-history.com/?repos=ch6vip%2Ffqapp&type=date&legend=top-left"><picture><source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=ch6vip/fqapp&type=date&theme=dark&legend=top-left" /><source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=ch6vip/fqapp&type=date&legend=top-left" /><img alt="Star History" src="https://api.star-history.com/chart?repos=ch6vip/fqapp&type=date&legend=top-left" /></picture></a>
