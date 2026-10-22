@@ -335,6 +335,7 @@ class _WebdavSyncPageState extends State<WebdavSyncPage> {
                       controller: _url,
                       label: 'WebDAV 目录地址',
                       hint: 'https://dav.example.com/dav/我的目录/',
+                      keyboardType: TextInputType.url,
                     ),
                     _field(
                       palette,
@@ -459,17 +460,25 @@ class _WebdavSyncPageState extends State<WebdavSyncPage> {
     required String label,
     String? hint,
     bool obscure = false,
+    TextInputType? keyboardType,
     Widget? suffix,
   }) => Padding(
     padding: const EdgeInsets.only(bottom: 12),
     child: TextField(
       controller: controller,
       obscureText: obscure,
+      // Flutter 会把「autocorrect 与 suggestions 都关掉的普通文本框」映射成
+      // Android 的 TYPE_TEXT_VARIATION_VISIBLE_PASSWORD，输入法据此判定为密码框、
+      // 切到系统安全键盘。所以这里显式声明键盘类型，联想也只对真正的密码框关闭。
+      keyboardType: keyboardType ?? TextInputType.text,
+      // 这一页是「服务器地址 + 账号」，不是登录表单：把自动填充提示显式置空，
+      // 否则 Android 会把地址/用户名/密码当成一组凭据，给每个框都弹密码建议。
+      autofillHints: const <String>[],
       // Disabled until the stored configuration has been read, so a keystroke
       // cannot be overwritten by the values arriving from storage.
       enabled: _busy == null && !_loading,
       autocorrect: false,
-      enableSuggestions: false,
+      enableSuggestions: !obscure,
       style: TextStyle(fontSize: 14.5, color: palette.ink),
       decoration: InputDecoration(
         labelText: label,

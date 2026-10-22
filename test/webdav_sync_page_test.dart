@@ -145,6 +145,42 @@ void main() {
   String textOf(WidgetTester tester, int index) =>
       tester.widget<TextField>(fieldAt(index)).controller!.text;
 
+  testWidgets('keeps the plain fields on the system text keyboard', (
+    tester,
+  ) async {
+    await pumpPage(tester);
+
+    final fields = tester
+        .widgetList<TextField>(find.byType(TextField))
+        .toList();
+    expect(fields, hasLength(4));
+
+    // 只有密码框该被输入法当成密码。Flutter 会把「关掉联想 + 关掉纠错」的普通
+    // 文本框映射成 Android 的 TYPE_TEXT_VARIATION_VISIBLE_PASSWORD，输入法据此
+    // 切到系统安全键盘（没有中文候选、不许粘贴），四个框会一起中招。
+    expect(fields.map((field) => field.obscureText).toList(), [
+      false,
+      false,
+      true,
+      false,
+    ]);
+    expect(fields.map((field) => field.enableSuggestions).toList(), [
+      true,
+      true,
+      false,
+      true,
+    ]);
+    expect(fields[0].keyboardType, TextInputType.url);
+    expect(fields[1].keyboardType, TextInputType.text);
+    expect(fields[3].keyboardType, TextInputType.text);
+
+    // 这一页是「服务器 + 账号」，不是登录表单：空提示让 Android 不要把它
+    // 当成一组凭据，也就不会给每个框弹密码建议。
+    for (final field in fields) {
+      expect(field.autofillHints, isEmpty);
+    }
+  });
+
   testWidgets('refuses to save without an address', (tester) async {
     await pumpPage(tester);
     expect(tester.widget<TextField>(fieldAt(0)).enabled, isTrue);
