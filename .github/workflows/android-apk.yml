@@ -124,15 +124,21 @@ jobs:
       - name: Validate version tag
         if: github.ref_type == 'tag'
         run: |
-          # A version tag must be a plain semver triple (v1.2.3): the APK's
-          # versionName is compared against the tag below, and anything else
-          # (v1.2, v1.2.3-rc.1, a typo) would silently ship a mismatched build.
-          if [[ ! "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "::error::Version tag must match v<major>.<minor>.<patch> (got '$GITHUB_REF_NAME')" >&2
+          # A version tag is a semver triple with an optional fork suffix
+          # (v1.2.3 or v1.2.3-fq1): the APK's versionName is compared against
+          # the tag below, and anything else (v1.2, a typo) would silently
+          # ship a mismatched build. The -fqN suffix is the fork's release
+          # counter on top of an upstream baseline; it is release metadata
+          # only and never part of the versionName, so every comparison
+          # against the APK strips it.
+          if [[ ! "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-fq[0-9]+)?$ ]]; then
+            echo "::error::Version tag must match v<major>.<minor>.<patch>[-fqN] (got '$GITHUB_REF_NAME')" >&2
             exit 1
           fi
+          version_name="${GITHUB_REF_NAME#v}"
+          version_name="${version_name%%-fq*}"
           printf 'Building version tag %s (expected versionName %s)\n' \
-            "$GITHUB_REF_NAME" "${GITHUB_REF_NAME#v}"
+            "$GITHUB_REF_NAME" "$version_name"
 
       # The product build has no private backend checkout and no extra
       # toolchain. The golden vectors in rust/testdata/ are checked in and
@@ -461,7 +467,10 @@ jobs:
           version_name="$(grep -m1 '^version:' pubspec.yaml | sed -E 's/^version:[[:space:]]*([^+]+).*/\1/')"
           highest_tag="$(git tag --list 'v*' --sort=-v:refname | head -1)"
           if [ -n "$highest_tag" ] && [ -n "$version_name" ]; then
+            # Strip the fork's -fqN suffix before comparing: it is release
+            # metadata on top of an upstream baseline, not the versionName.
             highest_version="${highest_tag#v}"
+            highest_version="${highest_version%%-fq*}"
             lowest="$(printf '%s\n%s\n' "$version_name" "$highest_version" | sort -V | head -1)"
             if [ "$lowest" = "$version_name" ] && [ "$version_name" != "$highest_version" ]; then
               echo "::error::pubspec version $version_name is below the highest tag $highest_tag" >&2
@@ -470,8 +479,10 @@ jobs:
           fi
           version_args=()
           if [ "$GITHUB_REF_TYPE" = "tag" ]; then
-            # Tag shape was validated above; strip the leading v.
-            version_args=(--expected-version-name "${GITHUB_REF_NAME#v}")
+            # Tag shape was validated above; strip the leading v and the fork
+            # suffix (-fqN) — the suffix is not part of the versionName.
+            expected="${GITHUB_REF_NAME#v}"
+            version_args=(--expected-version-name "${expected%%-fq*}")
           fi
           # The fingerprint is pinned only when the release signature was
           # actually applied. Without the secrets the package carries the debug
@@ -558,9 +569,9 @@ jobs:
           RELEASE_TAG: ${{ inputs.release_tag }}
         run: |
           case "$RELEASE_TAG" in
-            v*) ;;
+            v[0-9]*.[0-9]*.[0-9]*|v[0-9]*.[0-9]*.[0-9]*-fq[0-9]*) ;;
             *)
-              echo "::error::The release tag must start with 'v' (got '$RELEASE_TAG')." >&2
+              echo "::error::The release tag must match v<major>.<minor>.<patch>[-fqN] (got '$RELEASE_TAG')." >&2
               exit 1
               ;;
           esac
