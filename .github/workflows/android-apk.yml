@@ -527,7 +527,9 @@ jobs:
           import pathlib
           import zipfile
           rows = []
-          for abi in ('arm64-v8a', 'armeabi-v7a'):
+          # The fork dropped the 32-bit split along with the armv7 Rust
+          # target, so only the arm64 APK exists here; upstream checks both.
+          for abi in ('arm64-v8a',):
               apk = pathlib.Path(f'build/app/outputs/flutter-apk/app-{abi}-release.apk')
               with zipfile.ZipFile(apk) as archive:
                   native = [name for name in archive.namelist() if name.startswith('lib/') and name.endswith('.so')]
