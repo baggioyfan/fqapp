@@ -508,6 +508,9 @@ class _AudioPlaybackController extends ChangeNotifier
       _saveTimer = Timer.periodic(const Duration(seconds: 5), (_) {
         if (!player.playing) return;
         unawaited(_persistProgress());
+        // 与 player_page（短剧）对齐：播放期间写入不会停，走节流入口。
+        // markPlaybackWrite 内部按 15 分钟放行一次，这里每 5 秒调用是安全的。
+        WebdavAutoSync.instance.markPlaybackWrite();
         // 每 5 秒回一次真实位置：系统进度条靠外推前进，缓冲/卡顿时会跑偏。
         _syncForeground();
       });
@@ -863,6 +866,8 @@ class _AudioPlaybackController extends ChangeNotifier
     }
     await player.play();
     if (!_current(generation, player)) return;
+    // 恢复播放：20 秒内那次暂停推送取消，进度马上又会开始变化。
+    WebdavAutoSync.instance.cancelPlaybackPause();
     if (!_wantPlay) await player.pause();
     if (!_current(generation, player)) return;
     _syncListenClock();
@@ -876,6 +881,9 @@ class _AudioPlaybackController extends ChangeNotifier
       await player.pause();
       if (_current(generation, player)) {
         await _persistProgress();
+        // 播放 → 暂停的跃迁：写入流断了，趁应用还在前台把进度推上去。
+        // 20 秒短防抖吸收「播完 → 下一章」的抖动（见 markPlaybackPaused）。
+        WebdavAutoSync.instance.markPlaybackPaused();
         _syncForeground();
       }
     } catch (error) {
@@ -1252,6 +1260,10 @@ class _AudioPlaybackController extends ChangeNotifier
     NativePlayer.clearRemoteCommandHandler();
     ListeningSession.instance.clear();
     final saved = _persistProgress().catchError((Object _) {});
+    // 离开听书也推一次进度，与 player_page / reader_page 对齐：应用还在前台，
+    // 请求跑得完。定时中的「暂停推送」就此作废——立刻推比 20 秒后再推更对。
+    WebdavAutoSync.instance.cancelPlaybackPause();
+    unawaited(WebdavAutoSync.instance.syncOnLeave());
     final released = _releasePlayer();
     notifyListeners();
     // The foreground-service stop is best-effort: every other call site

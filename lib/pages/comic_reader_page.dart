@@ -18,6 +18,7 @@ import '../services/reader_history.dart';
 import '../services/shelf_store.dart';
 import '../services/shelf_toggle.dart';
 import '../services/user_facing_error.dart';
+import '../services/webdav_auto_sync.dart';
 
 typedef ComicChapterLoader = Future<List<ComicImage>> Function(Chapter chapter);
 typedef ComicImageProviderFactory =
@@ -169,6 +170,9 @@ class _ComicReaderPageState extends State<ComicReaderPage>
     _settleReadTime();
     _sessionActive = false;
     unawaited(_saveProgress());
+    // 退出漫画页立刻推一次进度，与 reader_page / player_page 对齐：应用还在
+    // 前台，请求跑得完。不推的话「看几页按返回键」要等退到后台才上云。
+    unawaited(WebdavAutoSync.instance.syncOnLeave());
     _scroll.dispose();
     super.dispose();
   }
@@ -200,6 +204,9 @@ class _ComicReaderPageState extends State<ComicReaderPage>
       _sessionActive = false;
       _appActive = false;
       unawaited(_saveProgress());
+      // 与 reader_page 对齐：只是标记「有改动」，真正发请求的是 root 的
+      // paused 兜底 —— 那里会先等这次写入落盘，避免把上一秒的进度推上去。
+      WebdavAutoSync.instance.markDirty();
     } else if (active && !_appActive) {
       _appActive = true;
       _startReadTime();

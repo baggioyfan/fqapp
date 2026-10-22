@@ -395,6 +395,7 @@ class _RootShellState extends State<RootShell> with WidgetsBindingObserver {
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _homeScroll.dispose();
     super.dispose();
   }
 
@@ -512,12 +513,6 @@ class _RootShellState extends State<RootShell> with WidgetsBindingObserver {
         });
       }
     }
-  }
-
-  @override
-  void dispose() {
-    _homeScroll.dispose();
-    super.dispose();
   }
 
   @override
