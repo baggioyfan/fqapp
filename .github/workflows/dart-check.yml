@@ -31,6 +31,11 @@ jobs:
           flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
 
+      - name: No platform-specific pub overrides committed
+        # pubspec_overrides.yaml 只由 macOS 构建在本地临时生成；一旦入库，下面这条
+        # --enforce-lockfile 就会因为 connectivity_plus 版本对不上而失败。
+        run: test ! -f pubspec_overrides.yaml
+
       - name: Resolve Dart package dependencies
         run: flutter pub get --enforce-lockfile
 

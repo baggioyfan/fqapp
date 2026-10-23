@@ -27,6 +27,9 @@ migrate_working_dir/
 **/doc/api/
 **/ios/Flutter/.last_build_id
 .dart_tool/
+# 平台专用的临时依赖覆盖。macOS 构建把它生成出来，把 connectivity_plus 降到 7.0.0；
+# 一旦入库，Android 的 `flutter pub get --enforce-lockfile` 就会判 lock 不一致。
+pubspec_overrides.yaml
 .flutter-plugins-dependencies
 .pub-cache/
 .pub/

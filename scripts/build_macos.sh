@@ -74,6 +74,35 @@ cat > macos/Runner/DebugProfile.entitlements <<'PLIST'
 </plist>
 PLIST
 
+# --- macOS 专用的依赖覆盖 ---------------------------------------------------
+# macOS 构建机只有 Xcode 16.4（macOS 15.5 SDK），connectivity_plus 7.1.0+ 用到的
+# NWPath.isUltraConstrained 编译不过；Android 侧继续用 7.3.x。这里用 pub 官方的
+# pubspec_overrides.yaml 做局部覆盖，pubspec.yaml / pubspec.lock 保持 Android 取值。
+# 覆盖文件与 lock 只在本次构建期间变化，脚本退出（含失败）时一律还原 ——
+# Android 的 CI 带 --enforce-lockfile，留着 7.0.0 的 lock 会直接把那次构建打红。
+OVERRIDES_FILE="pubspec_overrides.yaml"
+LOCK_SNAPSHOT="$(mktemp "${TMPDIR:-/tmp}/fqapp-lock.XXXXXX")"
+cp pubspec.lock "$LOCK_SNAPSHOT"
+PREV_OVERRIDES=""
+if [ -f "$OVERRIDES_FILE" ]; then
+  PREV_OVERRIDES="$(mktemp "${TMPDIR:-/tmp}/fqapp-overrides.XXXXXX")"
+  mv "$OVERRIDES_FILE" "$PREV_OVERRIDES"
+fi
+restore_android_deps() {
+  rm -f "$OVERRIDES_FILE"
+  if [ -n "$PREV_OVERRIDES" ]; then mv "$PREV_OVERRIDES" "$OVERRIDES_FILE"; fi
+  cp "$LOCK_SNAPSHOT" pubspec.lock
+  rm -f "$LOCK_SNAPSHOT"
+  echo "==> 已还原 pubspec.lock（Android 依赖回到 7.3.x）"
+}
+trap restore_android_deps EXIT
+
+echo "==> 生成 pubspec_overrides.yaml（connectivity_plus → 7.0.0，仅本次 macOS 构建）"
+cat > "$OVERRIDES_FILE" <<'YAML'
+dependency_overrides:
+  connectivity_plus: 7.0.0
+YAML
+
 if [ "${FQAPP_MACOS_CODEGEN:-0}" = "1" ]; then
   echo "==> 2b/6 重跑 flutter_rust_bridge codegen"
   if ! command -v flutter_rust_bridge_codegen >/dev/null 2>&1; then

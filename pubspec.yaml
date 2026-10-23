@@ -53,13 +53,17 @@ dependencies:
   flutter_lucide: ^1.43.0
   lottie: ^3.6.1
   flutter_rust_bridge: 2.13.0
-  # 7.1.0 起在 macOS 侧用了 `#available(macOS 26.0, *)` + NWPath.isUltraConstrained，
-  # 而 #available 只做运行时判断，编译期仍要求该符号存在。CI 的 Xcode 16.4
-  # （macOS 15.5 SDK）编不过：
+  # Android 用 7.3.x；macOS 构建另降到 7.0.0（见下）。
+  # 7.1.0 起插件的 macOS 实现用了 NWPath.isUltraConstrained，`#available(macOS 26.0, *)`
+  # 只做运行时判断、编译期仍要求该符号存在，而 macOS 构建机只有 Xcode 16.4（macOS 15.5 SDK）：
   #   error: value of type 'NWPath' has no member 'isUltraConstrained'
-  # 7.0.0 没有 satellite 分支。本应用只用到 none/wifi/ethernet 与
-  # onConnectivityChanged，无 API 依赖，故锁在 7.0.0。
-  connectivity_plus: 7.0.0
+  # 所以 macOS 侧不写在这里，而是构建时生成 pubspec_overrides.yaml 覆盖到 7.0.0
+  # （scripts/build_macos.sh 与 .github/workflows/macos.yml 各自注入，构建结束即删）。
+  # 该文件不入库 —— Android 的 CI 带 --enforce-lockfile，会把 7.0.0 判成 lock 不一致。
+  # 本应用只用到 none/wifi/ethernet 与 onConnectivityChanged，两个版本的依赖树
+  # 除 connectivity_plus 本身外完全一致（nm 0.5.0 / web / meta / collection /
+  # platform_interface 2.1.0 都同时满足），所以只有 lock 里这一条会变。
+  connectivity_plus: ^7.3.1
   image: ^4.12.0
   flutter_svg: ^2.3.0
   media_kit: 1.2.6

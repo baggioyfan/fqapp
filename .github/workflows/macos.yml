@@ -79,6 +79,14 @@ jobs:
           rm -rf ~/Library/Developer/Xcode/DerivedData || true
           df -h /
 
+      - name: Pin connectivity_plus to 7.0.0 for the macOS SDK
+        # 本 runner 只有 Xcode 16.4（macOS 15.5 SDK），connectivity_plus 7.1.0+ 的
+        # NWPath.isUltraConstrained 编译不过。用 pub 的局部覆盖降到 7.0.0，
+        # pubspec.yaml / pubspec.lock 保持 Android 的 7.3.x（覆盖文件在 .gitignore 里）。
+        run: |
+          printf 'dependency_overrides:\n  connectivity_plus: 7.0.0\n' > pubspec_overrides.yaml
+          cat pubspec_overrides.yaml
+
       - name: Analyze and run desktop tests
         run: |
           flutter pub get

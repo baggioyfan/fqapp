@@ -53,7 +53,7 @@ Rust 侧对应 `cargo build --release --target x86_64-apple-darwin`。
 | `rust/Cargo.toml` | `reqwest` 的 `blocking` feature 从 `cfg(windows)` 扩到 `cfg(any(windows, macos))` | `desktop_media` 用阻塞客户端做本地回环代理 |
 | `rust/src/lib.rs` | `mod desktop_media` 的 cfg 门加 macOS | 同上 |
 | `pubspec.yaml` | 新增 `media_kit_libs_macos_video` | libmpv（universal 产物，含 x86_64 与 arm64） |
-| `pubspec.yaml` | `connectivity_plus` 锁到 `7.0.0` | 7.1.0 起用了 macOS 26 的 `NWPath.isUltraConstrained`，Xcode 16.4 编不过；本项目只用 `none/wifi/ethernet`，无 API 依赖 |
+| `pubspec_overrides.yaml`（构建期生成，不入库） | macOS 构建把 `connectivity_plus` 降到 `7.0.0`；`pubspec.yaml` / `pubspec.lock` 保持 Android 的 `^7.3.1` | 7.1.0 起用了 macOS 26 的 `NWPath.isUltraConstrained`，Xcode 16.4 编不过；本项目只用 `none/wifi/ethernet`，无 API 依赖。两版依赖树除该包外完全相同，故只在构建期覆盖 |
 | `lib/services/secret_store.dart` | 新增系统钥匙串后端：通道不存在时（macOS/Windows runner 是 `flutter create` 原样输出，没有 `SecretStorePlugin`）改走 `flutter_secure_storage` | 原先桌面端 WebDAV 密码**根本存不下来**，只会报「当前环境不支持系统密钥库」 |
 | `lib/services/secure_key_provider.dart` | `FlutterSecureStorage` 显式传 `MacOsOptions(useDataProtectionKeyChain: false)` | 插件默认走 data protection keychain，需要 `keychain-access-groups` 授权，ad-hoc 签名下 `SecItemAdd` 返回 `-34018`；拿不到 Hive 密钥就等于每次启动都换一把钥匙，本地数据全成空库 |
 | `scripts/build_macos.sh` | 新增 | 生成 `macos/` 壳、覆盖 entitlements、编 Rust、打进 .app、签名、校验架构与 `minos` |
@@ -84,7 +84,7 @@ Rust 侧对应 `cargo build --release --target x86_64-apple-darwin`。
 | 打开 app 提示「已损坏」 | 未公证 + quarantine | `xattr -dr com.apple.quarantine fqapp.app` |
 | 阅读时不阻止息屏 | `caffeinate` 没起来 | 手动 `which caffeinate`，macOS 自带 |
 | `flutter test` 里 `Failed to load dynamic library 'kernel32.dll'` | `flutter test` 会把 `defaultTargetPlatform` 强制成 **android**（FLUTTER_TEST 环境变量），基于 `TargetPlatform` 的 `isMacDesktop` 在测试宿主上恒为 false | 挑原生库/原生二进制一律用 `dart:io` 的 `Platform`（本分支已加 `isMacHost` / `isWindowsHost`），不要用 `defaultTargetPlatform` |
-| `xcodebuild` 报某插件 `has no member 'isUltraConstrained'` | 插件用了 macOS 26 SDK 的新 Swift API，`#available` 只在运行时判断，编译期仍需符号存在；Xcode 16.4 只有 macOS 15.5 SDK | 降该插件版本（`connectivity_plus` 锁 7.0.0），或换带 macOS 26 SDK 的构建机 |
+| `xcodebuild` 报某插件 `has no member 'isUltraConstrained'` | 插件用了 macOS 26 SDK 的新 Swift API，`#available` 只在运行时判断，编译期仍需符号存在；Xcode 16.4 只有 macOS 15.5 SDK | 构建期用 `pubspec_overrides.yaml` 把 `connectivity_plus` 降到 7.0.0（`build_macos.sh` 与 `macos.yml` 已自动生成并还原），或换带 macOS 26 SDK 的构建机 |
 | Android job 报 `Unable to satisfy pubspec.yaml using pubspec.lock` | 改了 `pubspec.yaml` 的依赖但没同步 `pubspec.lock`（Android 的 CI 带 `--enforce-lockfile`） | 跑一次 `flutter pub get` 并提交 lock；无 Flutter 环境时可按 pub.dev API 的 `archive_sha256` 手改 |
 | 日志显示 app 已 Built 但 job 仍失败 | 脚本收尾的 `echo "... ${VAR}（...）"` 用了 `$VAR` 紧贴全角字符，被 bash 当成变量名一部分，`set -u` 报 unbound variable | 变量一律写 `${VAR}` |
 | WebDAV 保存密码提示「当前环境不支持系统密钥库」 | 桌面 runner 没有 `fqapp/secrets` 通道（只有 Android 的 `SecretStorePlugin` 实现） | 已修：`SecretStore` 在通道缺失时改用系统钥匙串（macOS Keychain / Windows 凭据管理器） |
