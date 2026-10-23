@@ -7,7 +7,7 @@ use std::{
     ffi::{c_char, c_void, CStr, CString},
     fs::File,
     io::{Read, Seek, SeekFrom, Write},
-    net::{TcpListener, TcpStream},
+    net::{SocketAddr, TcpListener, TcpStream, ToSocketAddrs},
     ptr,
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -43,6 +43,41 @@ unsafe extern "C" {
     fn sp_stream_close(stream: *mut c_void);
 }
 
+/// Media hosts publish both A and AAAA records, and macOS orders AAAA first
+/// (RFC 6724). A burst of fresh IPv6 connections on some home networks drops
+/// the first SYN without a RST, so each of those connects pays a 1/2/4 s TCP
+/// retransmission ladder and can burn the whole connect budget: measured on a
+/// failing host, 8 of 11 parallel IPv6 connects stalled 1–6 s while the same
+/// 11 over IPv4 stayed at 9–22 ms. Resolve once here and hand reqwest an
+/// explicit list with every IPv4 address first, IPv6 kept as the fallback.
+fn ipv4_first(addrs: Vec<SocketAddr>) -> Vec<SocketAddr> {
+    let mut ordered: Vec<SocketAddr> = Vec::with_capacity(addrs.len());
+    ordered.extend(addrs.iter().filter(|addr| addr.is_ipv4()).copied());
+    ordered.extend(addrs.iter().filter(|addr| addr.is_ipv6()).copied());
+    ordered
+}
+
+fn media_client(url: &str) -> Result<Client, String> {
+    let mut builder = Client::builder()
+        .connect_timeout(Duration::from_secs(8))
+        .timeout(Duration::from_secs(15));
+    // `domain()` is None for IP literals, which must keep the default resolver.
+    if let Ok(parsed) = url::Url::parse(url) {
+        if let Some(host) = parsed.domain() {
+            let port = parsed.port_or_known_default().unwrap_or(443);
+            if let Ok(addrs) = (host, port).to_socket_addrs() {
+                let ordered = ipv4_first(addrs.collect());
+                if !ordered.is_empty() {
+                    builder = builder.resolve_to_addrs(host, &ordered);
+                }
+            }
+        }
+    }
+    builder
+        .build()
+        .map_err(|_| "无法初始化媒体连接".to_string())
+}
+
 struct Source {
     file: Option<File>,
     client: Client,
@@ -54,11 +89,7 @@ struct Source {
 impl Source {
     fn open(url: String) -> Result<Self, String> {
         let _ = rustls::crypto::ring::default_provider().install_default();
-        let client = Client::builder()
-            .connect_timeout(Duration::from_secs(8))
-            .timeout(Duration::from_secs(15))
-            .build()
-            .map_err(|_| "无法初始化媒体连接")?;
+        let client = media_client(&url)?;
         let file = if url.starts_with("file:") {
             let path = url::Url::parse(&url)
                 .map_err(|_| "离线文件地址无效")?
@@ -468,6 +499,17 @@ pub unsafe extern "C" fn fq_desktop_media_free(value: *mut c_char) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn media_addresses_prefer_ipv4() {
+        let v4a: SocketAddr = "115.231.82.94:443".parse().unwrap();
+        let v4b: SocketAddr = "183.131.46.68:443".parse().unwrap();
+        let v6a: SocketAddr = "[240e:f7:a096:20e::52]:443".parse().unwrap();
+        let v6b: SocketAddr = "[240e:970:4020:13::61]:443".parse().unwrap();
+        assert_eq!(ipv4_first(vec![v6a, v4a, v6b, v4b]), vec![v4a, v4b, v6a, v6b]);
+        // A host without A records keeps its address list untouched.
+        assert_eq!(ipv4_first(vec![v6a, v6b]), vec![v6a, v6b]);
+        assert!(ipv4_first(Vec::new()).is_empty());
+    }
     #[test]
     fn range_contract() {
         assert_eq!(parse_range(None, 100), Ok((0, 99, false)));
