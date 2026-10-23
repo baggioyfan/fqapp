@@ -108,7 +108,7 @@ assert_arch() {
   got="$(lipo -archs "$file")"
   case " $got " in
     *" $want "*) echo "    $(basename "$file") → $got" ;;
-    *) die "$file 架构为「$got」，缺少 $want" ;;
+    *) die "$file 架构为「${got}」，缺少 $want" ;;
   esac
 }
 
@@ -131,7 +131,9 @@ if ! awk -v m="$MINOS" 'BEGIN {
     }'; then
   die "最低系统版本 $MINOS 高于 macOS 13 Ventura"
 fi
-echo "    最低系统版本 → $MINOS（≤ 13 即 Ventura 可用）"
+# 必须用 ${MINOS} 大括号：紧跟全角括号时，bash 在 UTF-8 locale 下会把
+# 「（」的首字节当成变量名的一部分，set -u 于是报 "MINOS?: unbound variable"。
+echo "    最低系统版本 → ${MINOS}（≤ 13 即 Ventura 可用）"
 
 if [ "${FQAPP_MACOS_SKIP_PACKAGE:-0}" != "1" ]; then
   rm -f "$ZIP"
