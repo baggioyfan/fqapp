@@ -34,6 +34,15 @@ bool get isMacDesktop =>
 /// SMTC media keys, the TTS settings deep link).
 bool get isDesktopHost => isWindowsDesktop || isMacDesktop;
 
+/// Real host operating system, for code that picks a native library or binary.
+///
+/// Never use [defaultTargetPlatform] for that decision: `flutter test` forces it
+/// to [TargetPlatform.android] (via the FLUTTER_TEST env var), so a
+/// TargetPlatform check would send a macOS test run down the kernel32 path and
+/// fail with "Failed to load dynamic library 'kernel32.dll'".
+bool get isMacHost => !kIsWeb && Platform.isMacOS;
+bool get isWindowsHost => !kIsWeb && Platform.isWindows;
+
 /// On Windows/macOS an inactive window is still visible; it simply lacks input
 /// focus. Only hidden/paused/detached windows should defer foreground video
 /// playback.
@@ -305,8 +314,8 @@ class DesktopPlatform with WindowListener {
   }
 
   Future<dynamic> _speech(String method, Map args) async {
-    final engineKey = isMacDesktop ? 'macos' : 'windows';
-    final engineLabel = isMacDesktop ? 'macOS 系统语音' : 'Windows 默认语音';
+    final engineKey = isMacHost ? 'macos' : 'windows';
+    final engineLabel = isMacHost ? 'macOS 系统语音' : 'Windows 默认语音';
     switch (method) {
       case 'engines':
         final voices = await _tts.getVoices;
@@ -346,7 +355,7 @@ class DesktopPlatform with WindowListener {
         if (result == 0) {
           throw PlatformException(
             code: 'tts_failed',
-            message: isMacDesktop ? 'macOS 语音不可用，请在系统设置中启用语音' : 'Windows 语音不可用，请安装中文语音',
+            message: isMacHost ? 'macOS 语音不可用，请在系统设置中启用语音' : 'Windows 语音不可用，请安装中文语音',
           );
         }
         return null;
@@ -356,7 +365,7 @@ class DesktopPlatform with WindowListener {
         await _tts.stop();
         return null;
       case 'settings':
-        if (isMacDesktop) {
+        if (isMacHost) {
           await Process.run('open', const [
             'x-apple.systempreferences:'
                 'com.apple.preference.universalaccess?TextToSpeech',
@@ -431,10 +440,11 @@ class DesktopPlatform with WindowListener {
   };
   void _updateAwake() {
     final want = _readerAwake || _playerAwake;
-    if (isMacDesktop) {
+    if (isMacHost) {
       _syncCaffeinate(want);
       return;
     }
+    if (!isWindowsHost) return;
     final call = DynamicLibrary.open('kernel32.dll')
         .lookupFunction<Uint32 Function(Uint32), int Function(int)>(
           'SetThreadExecutionState',
@@ -594,7 +604,8 @@ String decodeDesktopText(Uint8List bytes) {
   try {
     return utf8.decode(bytes).replaceFirst(RegExp('^\uFEFF'), '');
   } on FormatException {
-    if (isMacDesktop) return decodeGb18030(bytes);
+    if (isMacHost) return decodeGb18030(bytes);
+    if (!isWindowsHost) throw const FormatException('无法识别 TXT 编码');
     final convert = DynamicLibrary.open('kernel32.dll')
         .lookupFunction<
           Int32 Function(
