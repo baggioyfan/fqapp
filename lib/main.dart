@@ -79,6 +79,12 @@ Future<void> main() async {
       try {
         await BackendService.instance.stop();
       } catch (_) {}
+      // 桌面没有「退到后台」，关窗口是最后一次可靠的上云机会，且必须在
+      // Hive.close() 之前（同步要读书架与进度）。给 5 秒上限：网络卡住时
+      // 宁可丢这一页进度，也不能让窗口关不掉。
+      await WebdavAutoSync.instance
+          .flush()
+          .timeout(const Duration(seconds: 5), onTimeout: () => false);
       await Hive.close();
     };
   }
@@ -414,8 +420,13 @@ class _RootShellState extends State<RootShell> with WidgetsBindingObserver {
         // 不是「退出时传完」，而是**平时就把脏数据推上去**，让退出时几乎没事可做。
         unawaited(WebdavAutoSync.instance.flush());
       case AppLifecycleState.inactive:
-        // inactive 会在下拉通知栏、来电时触发，太频繁，不当作退出。
-        break;
+        // 移动端 inactive 只是下拉通知栏、来电，太频繁，不当作退出。
+        //
+        // 桌面端没有 paused：切到别的应用、点 Dock 只到 inactive，窗口最小化
+        // 才是 hidden。不在这里兜一手，桌面就只剩「关窗口」一次同步机会
+        // （见 beforeClose）。`syncOnBackground` 自带 30 秒间隔，频繁切窗口
+        // 不会把请求连成一串。
+        if (isDesktopHost) unawaited(WebdavAutoSync.instance.flush());
       case AppLifecycleState.detached:
         // 进程即将结束，只做「把待发标记落定」这种同步动作；真正的网络
         // 请求在这里不保证有结果，兜底仍然是上面的 paused/hidden。
