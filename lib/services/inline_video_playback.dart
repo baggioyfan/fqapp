@@ -309,8 +309,13 @@ class InlineVideoPlayback {
     if (previous != null && previousId != null && previousId != contentId) {
       _parkWithState(previousId, previous);
     } else if (previous != null && previousId == contentId) {
-      // Same drama re-activated (a retry): the old decoder is stale.
-      unawaited(previous.dispose());
+      // 同剧重激活（播下一集 / 重试）：旧解码器作废、不还池。它的销毁必须进
+      // 同一条 [_releases] 队列——[switchVariant] 与 [_teardown] 都这么做，
+      // 因为「同一时刻只能有一台原生播放器」是这里的前提（见 [release]）。
+      // 早先这里直接 `unawaited(previous.dispose())`：新解码器在旧解码器还没
+      // 释放时就被创建，Android 上常撞 MediaCodec 名额、macOS 上常撞媒体会话
+      // 未关闭 ⇒ 播下一集时报「播放失败」。
+      _retire(previous);
     }
 
     // Reuse path: the pool still holds this drama's paused decoder.
@@ -1009,6 +1014,28 @@ class InlineVideoPlayback {
   ///
   /// This is the destructive path: [release] parks a player instead, and only
   /// this method (via [disposePlayer], [dispose] and [_fail]) actually frees one.
+  /// Queue [player]'s **destructive** release behind every earlier one, keeping
+  /// the chain in [_releases] so the next `create` waits for it.
+  ///
+  /// Same contract as [_teardown], minus the session-state reset: the caller is
+  /// mid-`activate` and is about to install its own state, so only the native
+  /// side is touched here. Pausing first keeps a decoder that has a surface-less
+  /// audio track from being audible until the release lands.
+  void _retire(NativePlayer player) {
+    final release = () async {
+      try {
+        if (player.isCreated) await player.pause();
+      } catch (_) {
+        // A decoder that refuses pause still has to be released.
+      }
+      await player.dispose();
+    }();
+    _releases = Future.wait([
+      _releases,
+      release,
+    ]).then<void>((_) {}).catchError((Object _) {});
+  }
+
   Future<void> _teardown() {
     final old = _player;
     _player = null;
