@@ -4,6 +4,8 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:hive_ce/hive.dart';
 
+import 'app_log.dart';
+
 /// Minimal read/write surface over the platform secure store, kept as an
 /// interface so tests can substitute an in-memory fake instead of driving a
 /// MethodChannel.
@@ -16,9 +18,19 @@ abstract interface class SecureKeyStorage {
 /// EncryptedSharedPreferences, iOS Keychain). The raw key bytes never touch
 /// SharedPreferences or any other plaintext store.
 class FlutterSecureKeyStorage implements SecureKeyStorage {
-  const FlutterSecureKeyStorage([
-    this._storage = const FlutterSecureStorage(),
-  ]);
+  const FlutterSecureKeyStorage([this._storage = _defaultStorage]);
+
+  /// `useDataProtectionKeyChain: false` is mandatory on macOS. The plugin
+  /// defaults to `true`, which requires a `keychain-access-groups`-style
+  /// entitlement; the macOS build in this repo is ad-hoc signed, so every
+  /// `SecItemAdd` would fail with
+  /// `-34018 A required entitlement is not present` and every key would be
+  /// lost on restart - the Hive boxes would then look empty. The legacy login
+  /// keychain has no such requirement (verified with `codesign -s -`).
+  /// Ignored on other platforms.
+  static const _defaultStorage = FlutterSecureStorage(
+    mOptions: MacOsOptions(useDataProtectionKeyChain: false),
+  );
 
   final FlutterSecureStorage _storage;
 
@@ -127,12 +139,17 @@ class SecureKeyProvider {
           .timeout(storageTimeout);
       _cache[name] = fresh;
       return fresh;
-    } catch (_) {
+    } catch (error) {
       // Secure storage unavailable (or wedged past the timeout): record the
       // failure so the rest of this startup degrades immediately instead of
       // each caller waiting out another timeout. Callers decide how to
       // degrade. The generated-but-unpersisted key is deliberately NOT
       // returned: persisting it is what makes it usable next launch.
+      //
+      // Logged because the visible symptom is not an error but *missing local
+      // data*: without a key those encrypted boxes open empty, so a broken
+      // keychain looks like a wiped library rather than a permission problem.
+      AppLog.w('secure-key', '取不到 $name，本次启动按无密钥降级', error: error);
       _failedAt[name] = DateTime.now();
       return null;
     }
