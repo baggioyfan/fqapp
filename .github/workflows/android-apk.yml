@@ -562,38 +562,9 @@ jobs:
             app/build/ci-artifacts/verification/arm64-v8a/*.sha256
             app/build/ci-artifacts/verification/arm64-v8a/*.log
 
-      # Publishing is opt-in: a release is only created when the run was started
-      # with a tag, so an ordinary branch build can never publish one.
-      - name: Publish the GitHub Release
-        if: github.event_name == 'workflow_dispatch' && inputs.release_tag != ''
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ inputs.release_tag }}
-        run: |
-          case "$RELEASE_TAG" in
-            v[0-9]*.[0-9]*.[0-9]*|v[0-9]*.[0-9]*.[0-9]*-fq[0-9]*) ;;
-            *)
-              echo "::error::The release tag must match v<major>.<minor>.<patch>[-fqN] (got '$RELEASE_TAG')." >&2
-              exit 1
-              ;;
-          esac
-          if gh release view "$RELEASE_TAG" > /dev/null 2>&1; then
-            echo "::error::Release $RELEASE_TAG already exists; refusing to overwrite it." >&2
-            exit 1
-          fi
-          # The release carries the single ARM64 package; the 32-bit one is no
-          # longer built (see the toolchain target above).
-          assets=()
-          asset="build/ci-artifacts/fqapp-$RELEASE_TAG-arm64-v8a.apk"
-          cp "build/ci-artifacts/app-arm64-v8a-release.apk" "$asset"
-          assets+=("$asset")
-          gh release create "$RELEASE_TAG" \
-            --title "$RELEASE_TAG" \
-            --notes-file .github/release-notes.md \
-            --target "$GITHUB_SHA" \
-            "${assets[@]}" \
-            build/ci-artifacts/build-info.txt
-          printf 'Published %s\n' "$RELEASE_TAG"
+      # Publishing moved to the `publish` job at the bottom of this file: a
+      # release must carry both the APK and the macOS build, so it can only be
+      # created once both packaging jobs have uploaded their artifacts.
 
       - name: Retain diagnostics if a build or APK check fails
         if: failure()
@@ -636,3 +607,104 @@ jobs:
       - name: Remove temporary signing file
         if: always()
         run: rm -f -- "$RUNNER_TEMP/fqapp-release.jks"
+
+  # 桌面包与 APK 用同一次 dispatch 产出：macos.yml 是可复用工作流，只有带
+  # release_tag 的发布构建才拉起它，普通 push 仍然只跑 APK（这个 job 跳过）。
+  macos:
+    if: github.event_name == 'workflow_dispatch' && inputs.release_tag != ''
+    uses: ./.github/workflows/macos.yml
+    permissions:
+      contents: read
+
+  publish:
+    needs: [apk, macos]
+    # 原子发布：两个包都成功才建 Release，避免出现只有一半资产的版本。
+    if: >-
+      !cancelled()
+      && github.event_name == 'workflow_dispatch'
+      && inputs.release_tag != ''
+      && needs.apk.result == 'success'
+      && needs.macos.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out the release notes
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Compute the APK artifact name
+        id: ids
+        run: |
+          # 与 apk job 的 artifact 命名保持一致：artifact 名不接受 '/',所以
+          # ref 里的斜杠要换掉；run_number 保留，重跑不会撞名。
+          printf 'apk=%s\n' \
+            "fqapp-arm64-${GITHUB_REF_NAME//\//-}-${GITHUB_SHA:0:7}-${{ github.run_number }}" \
+            >> "$GITHUB_OUTPUT"
+
+      - name: Download the APK artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ steps.ids.outputs.apk }}
+          path: release
+
+      - name: Download the macOS artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: fqapp-macos-x64
+          path: release
+
+      - name: Publish the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          case "$RELEASE_TAG" in
+            v[0-9]*.[0-9]*.[0-9]*|v[0-9]*.[0-9]*.[0-9]*-fq[0-9]*) ;;
+            *)
+              echo "::error::The release tag must match v<major>.<minor>.<patch>[-fqN] (got '$RELEASE_TAG')." >&2
+              exit 1
+              ;;
+          esac
+          if gh release view "$RELEASE_TAG" > /dev/null 2>&1; then
+            echo "::error::Release $RELEASE_TAG already exists; refusing to overwrite it." >&2
+            exit 1
+          fi
+
+          # 资产名统一带 tag：Android 侧是 ARM64 单包（32 位已不再构建），
+          # 桌面侧是 .app 打的 zip（ad-hoc 签名，首次打开要清 quarantine）。
+          mkdir -p dist
+          apk_src="$(find release -name 'app-arm64-v8a-release.apk' -print -quit)"
+          zip_src="$(find release -name 'fqapp-macos-x64.zip' -print -quit)"
+          info_src="$(find release -name 'build-info.txt' -print -quit)"
+          for f in "$apk_src" "$zip_src" "$info_src"; do
+            if [ -z "$f" ]; then
+              echo "::error::发布资产缺失（APK / macOS zip / build-info.txt）" >&2
+              find release -maxdepth 3 -type f | head -50 >&2
+              exit 1
+            fi
+          done
+          cp "$apk_src" "dist/fqapp-$RELEASE_TAG-arm64-v8a.apk"
+          cp "$zip_src" "dist/fqapp-$RELEASE_TAG-macos-x64.zip"
+          cp "$info_src" dist/build-info.txt
+          ls -l dist
+
+          gh release create "$RELEASE_TAG" \
+            --title "$RELEASE_TAG" \
+            --notes-file .github/release-notes.md \
+            --target "$GITHUB_SHA" \
+            "dist/fqapp-$RELEASE_TAG-arm64-v8a.apk" \
+            "dist/fqapp-$RELEASE_TAG-macos-x64.zip" \
+            dist/build-info.txt
+          printf 'Published %s with the APK and the macOS build\n' "$RELEASE_TAG"
+
+      - name: Summarise the release
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          {
+            printf '## 已发布 %s\n\n' "$RELEASE_TAG"
+            printf -- '- `fqapp-%s-arm64-v8a.apk` — Android arm64\n' "$RELEASE_TAG"
+            printf -- '- `fqapp-%s-macos-x64.zip` — macOS 13+（Intel），解压后是 .app\n' "$RELEASE_TAG"
+            printf -- '- `build-info.txt` — Rust 核心与签名指纹\n'
+          } >> "$GITHUB_STEP_SUMMARY"

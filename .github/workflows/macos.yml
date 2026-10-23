@@ -15,6 +15,14 @@ on:
         description: 先重跑 flutter_rust_bridge codegen（仅 Rust API 层变更后需要）
         type: boolean
         default: false
+  # 发布时由 android-apk.yml 复用：同一次 dispatch 里先出 APK 和 .app，
+  # 再合成一个 Release（见那边的 publish job）。单独触发时行为不变。
+  workflow_call:
+    inputs:
+      run_codegen:
+        description: 先重跑 flutter_rust_bridge codegen
+        type: boolean
+        default: false
   pull_request:
     paths:
       - 'lib/**'
@@ -23,6 +31,7 @@ on:
       - 'assets/**'
       - 'pubspec.*'
       - 'scripts/build_macos.sh'
+      - 'scripts/generate_app_icons.py'
       - '.github/workflows/macos.yml'
   push:
     branches: [master]
@@ -33,13 +42,16 @@ on:
       - 'assets/**'
       - 'pubspec.*'
       - 'scripts/build_macos.sh'
+      - 'scripts/generate_app_icons.py'
       - '.github/workflows/macos.yml'
 
 permissions:
   contents: read
 
 concurrency:
-  group: macos-${{ github.ref }}
+  # 被复用时 github.workflow 是调用方的名字（Android APK），因此发布会和
+  # master push 触发的独立 macOS 构建分属不同 group，不会互相取消。
+  group: macos-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:

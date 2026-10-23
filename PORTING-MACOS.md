@@ -10,6 +10,13 @@ Android 与 Windows 桌面版，`macos/` 平台目录不存在，本分支补齐
 - 产物：`fqapp-macos-x64.zip`（内含 `fqapp.app`），未做公证（notarization），
   首次打开需右键 → 打开，或执行
   `xattr -dr com.apple.quarantine /Applications/fqapp.app`
+- 图标：与 Android 同一份源（`assets/branding/app_icon_source.png`）。运行
+  `python scripts/generate_app_icons.py` 导出 1024px 的 `app_icon_macos.png`，
+  构建时由 `build_macos.sh` 用 `sips` 切成 `AppIcon.appiconset` 的 10 个尺寸
+- 版本号：`CFBundleShortVersionString` / `CFBundleVersion` 来自 `pubspec.yaml` 的
+  `version`，`build_macos.sh` 会断言它与 Android 一致（对不上就中止）
+- 发布：`android-apk.yml` 带 `release_tag` 的 dispatch 会以 `workflow_call`
+  并行调起本工作流，两个包都成功后由它的 `publish` job 建成**同一个 Release**
 
 ## 怎么构建
 
@@ -56,8 +63,9 @@ Rust 侧对应 `cargo build --release --target x86_64-apple-darwin`。
 | `pubspec_overrides.yaml`（构建期生成，不入库） | macOS 构建把 `connectivity_plus` 降到 `7.0.0`；`pubspec.yaml` / `pubspec.lock` 保持 Android 的 `^7.3.1` | 7.1.0 起用了 macOS 26 的 `NWPath.isUltraConstrained`，Xcode 16.4 编不过；本项目只用 `none/wifi/ethernet`，无 API 依赖。两版依赖树除该包外完全相同，故只在构建期覆盖 |
 | `lib/services/secret_store.dart` | 新增系统钥匙串后端：通道不存在时（macOS/Windows runner 是 `flutter create` 原样输出，没有 `SecretStorePlugin`）改走 `flutter_secure_storage` | 原先桌面端 WebDAV 密码**根本存不下来**，只会报「当前环境不支持系统密钥库」 |
 | `lib/services/secure_key_provider.dart` | `FlutterSecureStorage` 显式传 `MacOsOptions(useDataProtectionKeyChain: false)` | 插件默认走 data protection keychain，需要 `keychain-access-groups` 授权，ad-hoc 签名下 `SecItemAdd` 返回 `-34018`；拿不到 Hive 密钥就等于每次启动都换一把钥匙，本地数据全成空库 |
-| `scripts/build_macos.sh` | 新增 | 生成 `macos/` 壳、覆盖 entitlements、编 Rust、打进 .app、签名、校验架构与 `minos` |
-| `.github/workflows/macos.yml` | 新增 | Intel runner 上出可分发产物 |
+| `assets/branding/app_icon_macos.png`<br>`assets/branding/macos/Contents.json` | 新增（由 `scripts/generate_app_icons.py` 从 Android 的同一份源图生成） | macOS 图标与 Android 同源。`build_macos.sh` 用 `sips` 切成 `AppIcon.appiconset` 的 10 个尺寸，覆盖 `flutter create` 的默认 Flutter 图标 |
+| `scripts/build_macos.sh` | 新增 | 生成 `macos/` 壳、换图标、覆盖 entitlements、构建期降 `connectivity_plus`、编 Rust、打进 .app、签名、校验架构 / `minos` / 版本号 |
+| `.github/workflows/macos.yml` | 新增 | Intel runner 上出可分发产物；同时暴露 `workflow_call`，供 `android-apk.yml` 在发布时复用 |
 
 `macos/` 目录本身没有提交——由构建脚本用 `flutter create --platforms=macos`
 生成，避免手写 Xcode 工程。生成后脚本会覆盖两份 entitlements：关掉 App Sandbox，
@@ -68,6 +76,9 @@ Rust 侧对应 `cargo build --release --target x86_64-apple-darwin`。
 - **番茄书架导入不可用**：上游用 `webview_windows`（WebView2），macOS 需要
   WKWebView 实现。WebDAV 同步、JSON 备份/恢复不受影响。- **系统媒体键/正在播放不显示**：见上表 SMTC 一行。
 - **未做公证**：自用没问题，分发给别人会被 Gatekeeper 拦一次。
+- **发布是原子的**：`android-apk.yml` 的 `publish` job 要求 APK 与 macOS 两个 job
+  都成功才建 Release，所以 macOS 构建失败时那一版 APK 也不会发布（只会留在
+  Artifacts 里 14 天）。macOS job 跑满约 90 分钟，发布整体时长以它为准。
 - **构建产物的 Rust 桥接必须与已提交的 codegen 一致**：本次只动了 cfg 与
   非 `crate::api` 的模块，`rustContentHash` 不变，所以 CI 默认跳过 codegen。
   若启动即崩且报 content hash 不符，用 `run_codegen` 输入重跑一次。

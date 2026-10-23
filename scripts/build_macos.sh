@@ -74,6 +74,28 @@ cat > macos/Runner/DebugProfile.entitlements <<'PLIST'
 </plist>
 PLIST
 
+echo "==> 2b/6 用与 Android 同源的图标替换 AppIcon"
+# flutter create 生成的是 Flutter 默认图标；Android 那边由
+# scripts/generate_app_icons.py 从 assets/branding/app_icon_source.png 生成，
+# 这里用同一份源图导出的 1024px master 切成 AppIcon.appiconset 的 10 个槽位，
+# 两个平台才会看起来是同一个应用。尺寸清单见 assets/branding/macos/Contents.json。
+ICON_MASTER="assets/branding/app_icon_macos.png"
+ICONSET="macos/Runner/Assets.xcassets/AppIcon.appiconset"
+[ -s "$ICON_MASTER" ] || die "缺少 $ICON_MASTER（先跑 python scripts/generate_app_icons.py）"
+[ -f assets/branding/macos/Contents.json ] || die "缺少 assets/branding/macos/Contents.json"
+[ -d macos/Runner/Assets.xcassets ] || die "macos/ 生成异常：缺少 Assets.xcassets"
+rm -rf "$ICONSET"
+mkdir -p "$ICONSET"
+cp assets/branding/macos/Contents.json "$ICONSET/Contents.json"
+for spec in 16:16x16 32:16x16@2x 32:32x32 64:32x32@2x \
+            128:128x128 256:128x128@2x 256:256x256 512:256x256@2x \
+            512:512x512 1024:512x512@2x; do
+  px="${spec%%:*}"
+  name="${spec##*:}"
+  sips -z "$px" "$px" "$ICON_MASTER" --out "$ICONSET/icon_${name}.png" >/dev/null
+done
+echo "    AppIcon.appiconset 已生成 10 个尺寸（16 → 512@2x）"
+
 # --- macOS 专用的依赖覆盖 ---------------------------------------------------
 # macOS 构建机只有 Xcode 16.4（macOS 15.5 SDK），connectivity_plus 7.1.0+ 用到的
 # NWPath.isUltraConstrained 编译不过；Android 侧继续用 7.3.x。这里用 pub 官方的
@@ -97,19 +119,19 @@ restore_android_deps() {
 }
 trap restore_android_deps EXIT
 
-echo "==> 生成 pubspec_overrides.yaml（connectivity_plus → 7.0.0，仅本次 macOS 构建）"
-cat > "$OVERRIDES_FILE" <<'YAML'
-dependency_overrides:
-  connectivity_plus: 7.0.0
-YAML
-
 if [ "${FQAPP_MACOS_CODEGEN:-0}" = "1" ]; then
-  echo "==> 2b/6 重跑 flutter_rust_bridge codegen"
+  echo "==> 2c/6 重跑 flutter_rust_bridge codegen"
   if ! command -v flutter_rust_bridge_codegen >/dev/null 2>&1; then
     cargo install flutter_rust_bridge_codegen --version 2.13.0 --locked
   fi
   flutter_rust_bridge_codegen generate --config-file flutter_rust_bridge.yaml
 fi
+
+echo "==> 2d/6 生成 pubspec_overrides.yaml（connectivity_plus → 7.0.0，仅本次 macOS 构建）"
+cat > "$OVERRIDES_FILE" <<'YAML'
+dependency_overrides:
+  connectivity_plus: 7.0.0
+YAML
 
 echo "==> 3/6 flutter pub get"
 flutter pub get
@@ -163,6 +185,23 @@ fi
 # 必须用 ${MINOS} 大括号：紧跟全角括号时，bash 在 UTF-8 locale 下会把
 # 「（」的首字节当成变量名的一部分，set -u 于是报 "MINOS?: unbound variable"。
 echo "    最低系统版本 → ${MINOS}（≤ 13 即 Ventura 可用）"
+
+# 版本号必须和 Android 同源（pubspec.yaml 的 version）：Release 里两个包共用
+# 同一个 tag，版本对不上就说明装错了包，或者 Flutter 没读到 pubspec。
+PUB_VERSION="$(sed -n 's/^version:[[:space:]]*//p' pubspec.yaml | head -1)"
+case "$PUB_VERSION" in
+  *+*) WANT_NAME="${PUB_VERSION%%+*}"; WANT_BUILD="${PUB_VERSION##*+}" ;;
+  *)   WANT_NAME="$PUB_VERSION"; WANT_BUILD="$PUB_VERSION" ;;
+esac
+[ -n "$WANT_NAME" ] || die "pubspec.yaml 里读不出 version"
+PLIST="$APP/Contents/Info.plist"
+GOT_NAME="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$PLIST" 2>/dev/null)"
+GOT_BUILD="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$PLIST" 2>/dev/null)"
+[ "$GOT_NAME" = "$WANT_NAME" ] ||
+  die "CFBundleShortVersionString=${GOT_NAME}，与 pubspec 的 ${WANT_NAME} 不一致"
+[ "$GOT_BUILD" = "$WANT_BUILD" ] ||
+  die "CFBundleVersion=${GOT_BUILD}，与 pubspec 的 build ${WANT_BUILD} 不一致"
+echo "    版本 → ${GOT_NAME} (${GOT_BUILD})，与 Android 同源"
 
 if [ "${FQAPP_MACOS_SKIP_PACKAGE:-0}" != "1" ]; then
   rm -f "$ZIP"
