@@ -486,12 +486,40 @@ class AppLog with WidgetsBindingObserver {
   String exportText({int? maxLines}) =>
       formatLogLines(entries, maxLines: maxLines);
 
+  /// 测试收尾：摘掉捕获、等在途写入落完、关掉文件句柄，再清空内存状态。
+  ///
+  /// 只能在**真实**异步环境里 await（`test()` / `setUp` / `tearDown`）。在
+  /// `testWidgets` 体内 await 会永久挂住：这里的 `await` 依赖一次微任务调度，
+  /// 而组件测试的模拟时钟只在 `tester.pump()` 时清空微任务队列——测试体最后
+  /// 一句之后不再有 pump，于是永远等不到下一步（CI 表现为 Test 远超基线直到
+  /// 超时）。组件测试收尾请用 [resetForTestSync]。
   @visibleForTesting
   Future<void> resetForTest() async {
     uninstall();
     // 先让落盘队列跑完再 close：close 与在途 flush 并发同样会抛 StreamSink 错误。
     await _pendingWrite.catchError((Object _) {});
     await _file?.close();
+    _resetState();
+  }
+
+  /// [resetForTest] 的同步版：内存状态立刻复位，剩下的「等写完 + 关文件」丢后台。
+  ///
+  /// 专给 `testWidgets` 收尾用（原因见 [resetForTest] 的说明）。
+  ///
+  /// 复位先于收尾：即使后台的 `close` 还没跑完，单例也已经是可复用的干净状态
+  /// ——`_file` 已置空，新日志不会再排进那条旧队列。
+  @visibleForTesting
+  void resetForTestSync() {
+    uninstall();
+    final writer = _file;
+    final pending = _pendingWrite;
+    _resetState();
+    if (writer == null) return;
+    // 仍然串在旧队列之后 close：与在途 flush 并发会抛 StreamSink 错误。
+    unawaited(pending.catchError((Object _) {}).whenComplete(writer.close));
+  }
+
+  void _resetState() {
     _file = null;
     _pendingWrite = Future<void>.value();
     _dirty = false;

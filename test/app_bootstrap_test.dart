@@ -208,7 +208,9 @@ void main() {
       expect(find.text('无法读取本地数据'), findsOneWidget);
       expect(tester.takeException(), isNull);
     } finally {
-      await AppLog.instance.resetForTest();
+      // 同步收尾：组件测试的模拟时钟只在 pump 时清空微任务队列，在这里
+      // await resetForTest() 会永久挂住（CI 表现为 Test 远超基线直到超时）。
+      AppLog.instance.resetForTestSync();
     }
   });
 }
