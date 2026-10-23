@@ -53,6 +53,7 @@ Rust 侧对应 `cargo build --release --target x86_64-apple-darwin`。
 | `rust/Cargo.toml` | `reqwest` 的 `blocking` feature 从 `cfg(windows)` 扩到 `cfg(any(windows, macos))` | `desktop_media` 用阻塞客户端做本地回环代理 |
 | `rust/src/lib.rs` | `mod desktop_media` 的 cfg 门加 macOS | 同上 |
 | `pubspec.yaml` | 新增 `media_kit_libs_macos_video` | libmpv（universal 产物，含 x86_64 与 arm64） |
+| `pubspec.yaml` | `connectivity_plus` 锁到 `7.0.0` | 7.1.0 起用了 macOS 26 的 `NWPath.isUltraConstrained`，Xcode 16.4 编不过；本项目只用 `none/wifi/ethernet`，无 API 依赖 |
 | `scripts/build_macos.sh` | 新增 | 生成 `macos/` 壳、覆盖 entitlements、编 Rust、打进 .app、签名、校验架构与 `minos` |
 | `.github/workflows/macos.yml` | 新增 | Intel runner 上出可分发产物 |
 
@@ -81,3 +82,7 @@ Rust 侧对应 `cargo build --release --target x86_64-apple-darwin`。
 | `flutter build macos` 报 Xcode/CLT 版本不匹配 | runner 镜像的 Xcode 被换过 | 固定 runner 镜像标签，必要时用 `sudo xcode-select -s` 指向合格版本 |
 | 打开 app 提示「已损坏」 | 未公证 + quarantine | `xattr -dr com.apple.quarantine fqapp.app` |
 | 阅读时不阻止息屏 | `caffeinate` 没起来 | 手动 `which caffeinate`，macOS 自带 |
+| `flutter test` 里 `Failed to load dynamic library 'kernel32.dll'` | `flutter test` 会把 `defaultTargetPlatform` 强制成 **android**（FLUTTER_TEST 环境变量），基于 `TargetPlatform` 的 `isMacDesktop` 在测试宿主上恒为 false | 挑原生库/原生二进制一律用 `dart:io` 的 `Platform`（本分支已加 `isMacHost` / `isWindowsHost`），不要用 `defaultTargetPlatform` |
+| `xcodebuild` 报某插件 `has no member 'isUltraConstrained'` | 插件用了 macOS 26 SDK 的新 Swift API，`#available` 只在运行时判断，编译期仍需符号存在；Xcode 16.4 只有 macOS 15.5 SDK | 降该插件版本（`connectivity_plus` 锁 7.0.0），或换带 macOS 26 SDK 的构建机 |
+| Android job 报 `Unable to satisfy pubspec.yaml using pubspec.lock` | 改了 `pubspec.yaml` 的依赖但没同步 `pubspec.lock`（Android 的 CI 带 `--enforce-lockfile`） | 跑一次 `flutter pub get` 并提交 lock；无 Flutter 环境时可按 pub.dev API 的 `archive_sha256` 手改 |
+| 日志显示 app 已 Built 但 job 仍失败 | 脚本收尾的 `echo "... ${VAR}（...）"` 用了 `$VAR` 紧贴全角字符，被 bash 当成变量名一部分，`set -u` 报 unbound variable | 变量一律写 `${VAR}` |
