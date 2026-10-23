@@ -505,7 +505,10 @@ mod tests {
         let v4b: SocketAddr = "183.131.46.68:443".parse().unwrap();
         let v6a: SocketAddr = "[240e:f7:a096:20e::52]:443".parse().unwrap();
         let v6b: SocketAddr = "[240e:970:4020:13::61]:443".parse().unwrap();
-        assert_eq!(ipv4_first(vec![v6a, v4a, v6b, v4b]), vec![v4a, v4b, v6a, v6b]);
+        assert_eq!(
+            ipv4_first(vec![v6a, v4a, v6b, v4b]),
+            vec![v4a, v4b, v6a, v6b]
+        );
         // A host without A records keeps its address list untouched.
         assert_eq!(ipv4_first(vec![v6a, v6b]), vec![v6a, v6b]);
         assert!(ipv4_first(Vec::new()).is_empty());
