@@ -1,0 +1,83 @@
+# fqapp macOS 版（Intel x86_64 / Ventura 兼容）
+
+基于上游同一份代码的 macOS 移植，保留 GPL-3.0 许可与原作者署名。上游只发布
+Android 与 Windows 桌面版，`macos/` 平台目录不存在，本分支补齐了它。
+
+## 目标与产物
+
+- 架构：**x86_64（Intel）**
+- 最低系统：不高于 **macOS 13 Ventura**（构建脚本会校验 `minos`，超了就报错）
+- 产物：`fqapp-macos-x64.zip`（内含 `fqapp.app`），未做公证（notarization），
+  首次打开需右键 → 打开，或执行
+  `xattr -dr com.apple.quarantine /Applications/fqapp.app`
+
+## 怎么构建
+
+推荐直接用 GitHub Actions，不需要本机装 Xcode：
+
+- 工作流：`.github/workflows/macos.yml`
+- runner：`macos-15-intel`（GitHub 目前唯一的 x86_64 macOS runner，2027-08 退役）
+- 触发：Actions → `macOS build (Intel x86_64, Ventura-compatible)` → Run workflow
+- 产物在本次运行的 Artifacts 里，保留 14 天
+
+本机构建（Apple Silicon 也可以，但必须让 Xcode 产出 x86_64，见下）：
+
+```bash
+cargo install flutter_rust_bridge_codegen --version 2.13.0 --locked   # 仅改了 Rust API 层时需要
+scripts/build_macos.sh
+```
+
+在 Apple Silicon 上想拿到 x86_64 产物，需要显式指定架构（脚本默认按宿主架构
+构建，并在校验阶段因架构不是 x86_64 而失败）：
+
+```bash
+flutter build macos --release --no-pub --config-only
+xcodebuild -workspace macos/Runner.xcworkspace -scheme Runner \
+  -configuration Release ARCHS=x86_64 ONLY_ACTIVE_ARCH=NO build
+```
+
+Rust 侧对应 `cargo build --release --target x86_64-apple-darwin`。
+
+## 相对上游改了什么
+
+| 位置 | 改动 | 为什么 |
+|---|---|---|
+| `lib/services/desktop_platform.dart` | `isWindowsDesktop` → 新增 `isDesktopHost`（Windows∨macOS）与 `isMacDesktop` | 桌面分支（布局、播放、阅读器）两边共用，只有少数系统原语需要分叉 |
+| 同上 | 防休眠：Windows 的 `SetThreadExecutionState` → macOS 起一个 `caffeinate -d -i` 子进程 | 阅读/听书/播放时不能息屏 |
+| 同上 | GBK TXT 解码：`MultiByteToWideChar(54936)` → libiconv（`/usr/lib/libiconv.2.dylib`） | 非 UTF-8 的原文 TXT 需要 GB18030 解码，macOS 没有 Win32 那个 API |
+| 同上 | 系统媒体键 SMTC 段用 `isWindowsDesktop` 包起来 | SMTC 是 Windows 专有；macOS 需要 `MPNowPlayingInfoCenter`，本版未做（媒体键无响应，其余不受影响） |
+| 同上 | 语音设置深链 `explorer.exe ms-settings:speech` → `open x-apple.systempreferences:...` | 打开系统语音设置 |
+| `lib/services/backend_transport.dart` | `RustLib.init()` 显式传 `externalLibrary` | flutter_rust_bridge 在 macOS 上兜底是裸名 `dlopen("libfqapi_core.dylib")`，**不会**搜索 .app 包内；Windows 能工作只是 DLL 搜索顺序凑巧 |
+| `lib/services/desktop_media.dart` | `fqapi_core.dll` → `libfqapi_core.dylib` | FFI 解密代理的加载路径 |
+| `rust/build.rs` | C 解密核心原来**只在 Windows** 编译，现在 macOS 也编 | 这些 C 文件是纯 C11/POSIX，macOS clang 可直接编 |
+| `rust/Cargo.toml` | `reqwest` 的 `blocking` feature 从 `cfg(windows)` 扩到 `cfg(any(windows, macos))` | `desktop_media` 用阻塞客户端做本地回环代理 |
+| `rust/src/lib.rs` | `mod desktop_media` 的 cfg 门加 macOS | 同上 |
+| `pubspec.yaml` | 新增 `media_kit_libs_macos_video` | libmpv（universal 产物，含 x86_64 与 arm64） |
+| `scripts/build_macos.sh` | 新增 | 生成 `macos/` 壳、覆盖 entitlements、编 Rust、打进 .app、签名、校验架构与 `minos` |
+| `.github/workflows/macos.yml` | 新增 | Intel runner 上出可分发产物 |
+
+`macos/` 目录本身没有提交——由构建脚本用 `flutter create --platforms=macos`
+生成，避免手写 Xcode 工程。生成后脚本会覆盖两份 entitlements：关掉 App Sandbox，
+打开 `disable-library-validation`（ad-hoc 签名下加载随包 dylib 需要）。
+
+## 已知缺口
+
+- **番茄书架导入不可用**：上游用 `webview_windows`（WebView2），macOS 需要
+  WKWebView 实现。WebDAV 同步、JSON 备份/恢复不受影响。
+- **系统媒体键/正在播放不显示**：见上表 SMTC 一行。
+- **未做公证**：自用没问题，分发给别人会被 Gatekeeper 拦一次。
+- **构建产物的 Rust 桥接必须与已提交的 codegen 一致**：本次只动了 cfg 与
+  非 `crate::api` 的模块，`rustContentHash` 不变，所以 CI 默认跳过 codegen。
+  若启动即崩且报 content hash 不符，用 `run_codegen` 输入重跑一次。
+
+## 排错对照
+
+| 症状 | 原因 | 处理 |
+|---|---|---|
+| 启动报 `libfqapi_core.dylib` 打不开 | 核心没进 `Contents/MacOS` | 检查 `scripts/build_macos.sh` 第 5 步；确认 `cargo build --release` 产出 |
+| 启动崩、提示 content hash / codegen version | 桥接与 Rust 源码不一致 | Actions 里勾 `run_codegen` 重跑 |
+| 视频页黑屏、只有声音 | libmpv 没进包 | `pod install` 阶段要能联网拉 `media_kit_libs_macos_video` 的产物 |
+| `pod install` 报 platform 版本不够 | `macos/Podfile` 的 `platform :osx` 低于某个 pod 的下限 | 把 `macos/Podfile` 提到 `11.0`，同时把 Runner 的 `MACOSX_DEPLOYMENT_TARGET` 提到同值（仍 ≤ 13，Ventura 可用） |
+| `flutter build macos` 报 Xcode/CLT 版本不匹配 | runner 镜像的 Xcode 被换过 | 固定 runner 镜像标签，必要时用 `sudo xcode-select -s` 指向合格版本 |
+| 打开 app 提示「已损坏」 | 未公证 + quarantine | `xattr -dr com.apple.quarantine fqapp.app` |
+| 阅读时不阻止息屏 | `caffeinate` 没起来 | 手动 `which caffeinate`，macOS 自带 |

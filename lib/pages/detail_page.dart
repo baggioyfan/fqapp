@@ -478,7 +478,7 @@ class _DetailPageState extends State<DetailPage> {
   @override
   Widget build(BuildContext context) {
     final palette = HomePalette.of(context);
-    final desktop = isWindowsDesktop && MediaQuery.sizeOf(context).width >= 700;
+    final desktop = isDesktopHost && MediaQuery.sizeOf(context).width >= 700;
     return AnnotatedRegion<SystemUiOverlayStyle>(
       value:
           (palette.dark

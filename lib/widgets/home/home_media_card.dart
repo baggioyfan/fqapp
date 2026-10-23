@@ -30,7 +30,7 @@ IconData homeKindIcon(String kind) => switch (kind) {
 int _homeColumns(BuildContext context, double width) {
   final scaler = MediaQuery.textScalerOf(context);
   final largeType = scaler.scale(14) > 21;
-  if (isWindowsDesktop) {
+  if (isDesktopHost) {
     return (width / (largeType ? 220 : 170)).floor().clamp(2, 9);
   }
   return largeType && width < 560

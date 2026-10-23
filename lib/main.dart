@@ -49,7 +49,7 @@ import 'widgets/home/home_design.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  if (isWindowsDesktop) await DesktopPlatform.instance.initialize();
+  if (isDesktopHost) await DesktopPlatform.instance.initialize();
   // 应用内日志：接管 debugPrint 与 FlutterError.onError，未处理异步异常由
   // runZonedGuarded 捕获；文件持久化异步开启，失败只退回内存模式。
   AppLog.instance.install();
@@ -68,7 +68,7 @@ Future<void> main() async {
   // Rust 核心日志的读取入口：日志页「Rust」视图读 runtime_dir/rust.log。
   // 核心只在 Android 落盘（桌面/测试构建不装 logger），读不到时页面给空态。
   RustLogSource.reader = BackendService.instance.readRustLog;
-  if (isWindowsDesktop) {
+  if (isDesktopHost) {
     DesktopPlatform.instance.beforeClose = () async {
       DramaDownloader.instance.pauseAll();
       AudioDownloader.instance.pauseAll();
@@ -187,7 +187,7 @@ class FqApp extends StatefulWidget {
 }
 
 class _FqAppState extends State<FqApp> {
-  final _navigatorKey = isWindowsDesktop
+  final _navigatorKey = isDesktopHost
       ? DesktopPlatform.navigatorKey
       : GlobalKey<NavigatorState>();
 
@@ -205,7 +205,7 @@ class _FqAppState extends State<FqApp> {
               navigatorKey: _navigatorKey,
               builder: (context, child) => AudioPlaybackScope(
                 navigatorKey: _navigatorKey,
-                child: isWindowsDesktop
+                child: isDesktopHost
                     ? DesktopAppFrame(child: child ?? const SizedBox.shrink())
                     : child ?? const SizedBox.shrink(),
               ),
@@ -568,7 +568,7 @@ class _RootShellState extends State<RootShell> with WidgetsBindingObserver {
         ),
       );
     }
-    if (isWindowsDesktop) {
+    if (isDesktopHost) {
       return ValueListenableBuilder<int>(
         valueListenable: desktopTab,
         builder: (context, index, _) => LazyIndexedStack(

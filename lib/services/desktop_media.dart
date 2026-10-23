@@ -9,12 +9,16 @@ typedef _Open = Pointer<Utf8> Function(Pointer<Utf8>);
 typedef _FreeNative = Void Function(Pointer<Utf8>);
 typedef _Free = void Function(Pointer<Utf8>);
 
+/// The core ships beside the executable on every desktop host: `fqapp.exe`
+/// next to `fqapi_core.dll` on Windows, `Contents/MacOS/fqapp` next to
+/// `libfqapi_core.dylib` inside the macOS bundle.
 String desktopCoreLibraryPath() {
+  final name = Platform.isMacOS ? 'libfqapi_core.dylib' : 'fqapi_core.dll';
   final bundled = File(
-    '${File(Platform.resolvedExecutable).parent.path}/fqapi_core.dll',
+    '${File(Platform.resolvedExecutable).parent.path}/$name',
   );
   if (bundled.existsSync()) return bundled.path;
-  return File('rust/target/release/fqapi_core.dll').absolute.path;
+  return File('rust/target/release/$name').absolute.path;
 }
 
 class DesktopMedia {

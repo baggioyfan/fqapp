@@ -61,6 +61,9 @@ dependencies:
   # Windows 专用 libmpv；不要把 umbrella 的 media_kit_libs_video 加回来，否则
   # Android/iOS/macOS/Linux 的播放库会一起进包（APK 多出 ~11 MB）。
   media_kit_libs_windows_video: 1.0.11
+  # macOS 专用 libmpv（universal: arm64 + x86_64，Intel 可用）。同样不要换成
+  # umbrella 包，理由同上。
+  media_kit_libs_macos_video: 1.1.4
   file_selector: ^1.1.0
   flutter_tts: ^4.2.5
   webview_windows:

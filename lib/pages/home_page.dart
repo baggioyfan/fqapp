@@ -154,7 +154,7 @@ class _HomePageState extends ConsumerState<HomePage> {
             alignment: Alignment.topCenter,
             child: ConstrainedBox(
               constraints: BoxConstraints(
-                maxWidth: isWindowsDesktop ? 1440 : 840,
+                maxWidth: isDesktopHost ? 1440 : 840,
               ),
               child: SafeArea(
                 bottom: false,

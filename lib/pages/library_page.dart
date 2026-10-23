@@ -878,7 +878,7 @@ class _LibraryPageState extends State<LibraryPage> {
           ShelfTokens.contentBottomInset,
         ),
         gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-          crossAxisCount: isWindowsDesktop
+          crossAxisCount: isDesktopHost
               ? (constraints.maxWidth / 170).floor().clamp(3, 10)
               : ShelfTokens.gridColumns,
           crossAxisSpacing: ShelfTokens.gridSpacing,
@@ -886,7 +886,7 @@ class _LibraryPageState extends State<LibraryPage> {
           childAspectRatio: shelfGridChildAspectRatio(
             context,
             availableWidth: constraints.maxWidth,
-            columns: isWindowsDesktop
+            columns: isDesktopHost
                 ? (constraints.maxWidth / 170).floor().clamp(3, 10)
                 : ShelfTokens.gridColumns,
           ),

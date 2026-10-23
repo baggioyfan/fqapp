@@ -1,0 +1,116 @@
+name: macOS build (Intel x86_64, Ventura-compatible)
+
+# 产出可在 macOS 13 Ventura（Intel）上运行的 .app。上游没有 macos/ 平台目录，
+# 构建前由 scripts/build_macos.sh 用 `flutter create --platforms=macos` 生成。
+#
+# runner 选择：macos-15-intel 是 GitHub 目前唯一的 x86_64 macOS runner
+# （macOS 15 Sequoia / Intel，4 vCPU / 14 GB），2027-08 退役；macos-13（Ventura）
+# 已于 2025-12 停用。原生 x86_64 构建比在 Apple Silicon runner 上交叉编译稳，
+# 后者 Flutter 3.44 会告警、且 CocoaPods 依赖容易缺 x86_64 slice。
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_codegen:
+        description: 先重跑 flutter_rust_bridge codegen（仅 Rust API 层变更后需要）
+        type: boolean
+        default: false
+  pull_request:
+    paths:
+      - 'lib/**'
+      - 'rust/**'
+      - 'native/**'
+      - 'assets/**'
+      - 'pubspec.*'
+      - 'scripts/build_macos.sh'
+      - '.github/workflows/macos.yml'
+  push:
+    branches: [master]
+    paths:
+      - 'lib/**'
+      - 'rust/**'
+      - 'native/**'
+      - 'assets/**'
+      - 'pubspec.*'
+      - 'scripts/build_macos.sh'
+      - '.github/workflows/macos.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-macos:
+    runs-on: macos-15-intel
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec
+        with:
+          toolchain: '1.99.1'
+          targets: x86_64-apple-darwin
+
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          flutter-version: '3.44.6'
+          channel: stable
+          cache: true
+
+      - name: Report toolchain
+        run: |
+          sw_vers
+          uname -m
+          xcodebuild -version
+          flutter --version
+          cargo --version
+
+      - name: Free disk space
+        run: |
+          df -h /
+          # macOS 构建用不到 iOS 模拟器运行时；标准 runner 盘只有 ~14 GB 空闲，
+          # Flutter + Rust（LTO）的中间产物很容易把它撑爆。
+          sudo rm -rf /Library/Developer/CoreSimulator/Profiles/Runtimes/* || true
+          rm -rf ~/Library/Developer/Xcode/DerivedData || true
+          df -h /
+
+      - name: Analyze and run desktop tests
+        run: |
+          flutter pub get
+          flutter analyze --no-pub
+          flutter test --no-pub \
+            test/desktop_platform_test.dart \
+            test/desktop_detail_layout_test.dart \
+            test/desktop_video_layout_test.dart
+
+      - name: Build macOS app
+        env:
+          FQAPP_MACOS_CODEGEN: ${{ inputs.run_codegen && '1' || '0' }}
+        run: |
+          mkdir -p build
+          set -o pipefail
+          bash scripts/build_macos.sh 2>&1 | tee build/macos-build.log
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fqapp-macos-x64
+          path: |
+            fqapp-macos-x64.zip
+            build/macos-build.log
+          if-no-files-found: error
+          retention-days: 14
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: macos-build-logs
+          path: |
+            build/macos-build.log
+            build/macos/**/*.log
+          if-no-files-found: ignore
+          retention-days: 7

@@ -26,12 +26,21 @@ import 'platform_channel.dart';
 bool get isWindowsDesktop =>
     !kIsWeb && defaultTargetPlatform == TargetPlatform.windows;
 
-/// On Windows an inactive window is still visible; it simply lacks input focus.
-/// Only hidden/paused/detached windows should defer foreground video playback.
+bool get isMacDesktop =>
+    !kIsWeb && defaultTargetPlatform == TargetPlatform.macOS;
+
+/// Desktop hosts (Windows / macOS) share every path in this file except the
+/// handful of OS-specific primitives below (`_updateAwake`, `decodeDesktopText`,
+/// SMTC media keys, the TTS settings deep link).
+bool get isDesktopHost => isWindowsDesktop || isMacDesktop;
+
+/// On Windows/macOS an inactive window is still visible; it simply lacks input
+/// focus. Only hidden/paused/detached windows should defer foreground video
+/// playback.
 bool playbackAppIsActive(AppLifecycleState? state) =>
     state == null ||
     state == AppLifecycleState.resumed ||
-    (isWindowsDesktop && state == AppLifecycleState.inactive);
+    (isDesktopHost && state == AppLifecycleState.inactive);
 
 class DesktopPlatform with WindowListener {
   DesktopPlatform._();
@@ -49,6 +58,7 @@ class DesktopPlatform with WindowListener {
   Future<void> Function()? beforeClose;
   bool _readerAwake = false;
   bool _playerAwake = false;
+  Process? _caffeinate;
   String? _readerSession;
   Timer? _readerTimer;
 
@@ -57,7 +67,7 @@ class DesktopPlatform with WindowListener {
   void _emit(String name, dynamic event) => _events[name]?.add(event);
 
   Future<void> initialize() async {
-    if (!isWindowsDesktop) return;
+    if (!isDesktopHost) return;
     MediaKit.ensureInitialized();
     await windowManager.ensureInitialized();
     PlatformChannels.invoke = invoke;
@@ -94,31 +104,36 @@ class DesktopPlatform with WindowListener {
       _emit('fqapp/system_tts_events', {'type': 'error', 'id': id});
     });
     // Optional system media integration must not prevent reading or startup.
-    try {
-      await SMTCWindows.initialize();
-      _smtc = SMTCWindows();
-      _smtc!.buttonPressStream.listen((button) {
-        final action = switch (button) {
-          PressedButton.play => 'playPause',
-          PressedButton.pause => 'playPause',
-          PressedButton.next => 'next',
-          PressedButton.previous => 'prev',
-          PressedButton.stop => 'stop',
-          _ => null,
-        };
-        if (action != null) {
-          unawaited(
-            PlatformChannels.notify(
-              'fqapp/native_player',
-              'onNotificationAction',
-              {'action': action},
-            ),
-          );
-        }
-      });
-      await _smtc!.disableSmtc();
-    } catch (_) {
-      _smtc = null;
+    // SMTC is the Windows system-media (SMTC) bridge; macOS would need
+    // MPNowPlayingInfoCenter/MPRemoteCommandCenter in the runner and is
+    // deliberately left out of this port (media keys simply do nothing).
+    if (isWindowsDesktop) {
+      try {
+        await SMTCWindows.initialize();
+        _smtc = SMTCWindows();
+        _smtc!.buttonPressStream.listen((button) {
+          final action = switch (button) {
+            PressedButton.play => 'playPause',
+            PressedButton.pause => 'playPause',
+            PressedButton.next => 'next',
+            PressedButton.previous => 'prev',
+            PressedButton.stop => 'stop',
+            _ => null,
+          };
+          if (action != null) {
+            unawaited(
+              PlatformChannels.notify(
+                'fqapp/native_player',
+                'onNotificationAction',
+                {'action': action},
+              ),
+            );
+          }
+        });
+        await _smtc!.disableSmtc();
+      } catch (_) {
+        _smtc = null;
+      }
     }
   }
 
@@ -290,13 +305,15 @@ class DesktopPlatform with WindowListener {
   }
 
   Future<dynamic> _speech(String method, Map args) async {
+    final engineKey = isMacDesktop ? 'macos' : 'windows';
+    final engineLabel = isMacDesktop ? 'macOS 系统语音' : 'Windows 默认语音';
     switch (method) {
       case 'engines':
         final voices = await _tts.getVoices;
         return {
-          'defaultEngine': 'windows',
+          'defaultEngine': engineKey,
           'engines': [
-            {'package': 'windows', 'label': 'Windows 默认语音'},
+            {'package': engineKey, 'label': engineLabel},
             if (voices is List)
               for (final voice in voices)
                 if (voice is Map && voice['name'] is String)
@@ -329,7 +346,7 @@ class DesktopPlatform with WindowListener {
         if (result == 0) {
           throw PlatformException(
             code: 'tts_failed',
-            message: 'Windows 语音不可用，请安装中文语音',
+            message: isMacDesktop ? 'macOS 语音不可用，请在系统设置中启用语音' : 'Windows 语音不可用，请安装中文语音',
           );
         }
         return null;
@@ -339,7 +356,14 @@ class DesktopPlatform with WindowListener {
         await _tts.stop();
         return null;
       case 'settings':
-        await Process.run('explorer.exe', ['ms-settings:speech']);
+        if (isMacDesktop) {
+          await Process.run('open', const [
+            'x-apple.systempreferences:'
+                'com.apple.preference.universalaccess?TextToSpeech',
+          ]);
+        } else {
+          await Process.run('explorer.exe', ['ms-settings:speech']);
+        }
         return null;
     }
     throw MissingPluginException(method);
@@ -406,11 +430,42 @@ class DesktopPlatform with WindowListener {
     'systemBrightness': 1.0,
   };
   void _updateAwake() {
+    final want = _readerAwake || _playerAwake;
+    if (isMacDesktop) {
+      _syncCaffeinate(want);
+      return;
+    }
     final call = DynamicLibrary.open('kernel32.dll')
         .lookupFunction<Uint32 Function(Uint32), int Function(int)>(
           'SetThreadExecutionState',
         );
-    call(0x80000000 | (_readerAwake || _playerAwake ? 3 : 0));
+    call(0x80000000 | (want ? 3 : 0));
+  }
+
+  /// macOS counterpart of SetThreadExecutionState: hold a `caffeinate -di`
+  /// child while the reader or player must stay awake, kill it to release the
+  /// assertion (ES_DISPLAY_REQUIRED | ES_SYSTEM_REQUIRED equivalent).
+  void _syncCaffeinate(bool want) {
+    if (want == (_caffeinate != null)) return;
+    if (!want) {
+      _caffeinate?.kill();
+      _caffeinate = null;
+      return;
+    }
+    unawaited(() async {
+      try {
+        final process = await Process.start('caffeinate', const ['-d', '-i']);
+        // The UI may have released the assertion while the child was starting.
+        if (_readerAwake || _playerAwake) {
+          _caffeinate = process;
+        } else {
+          process.kill();
+        }
+      } catch (_) {
+        // caffeinate is part of every macOS install; a failure here only means
+        // the display may sleep, never that reading or playback breaks.
+      }
+    }());
   }
 
   String _safeName(String name) =>
@@ -539,6 +594,7 @@ String decodeDesktopText(Uint8List bytes) {
   try {
     return utf8.decode(bytes).replaceFirst(RegExp('^\uFEFF'), '');
   } on FormatException {
+    if (isMacDesktop) return decodeGb18030(bytes);
     final convert = DynamicLibrary.open('kernel32.dll')
         .lookupFunction<
           Int32 Function(
@@ -566,6 +622,76 @@ String decodeDesktopText(Uint8List bytes) {
       calloc.free(input);
       if (output != nullptr) calloc.free(output);
     }
+  }
+}
+
+/// macOS counterpart of the Windows `MultiByteToWideChar(54936, ...)` path:
+/// decode GBK/GB18030 TXT bytes through libiconv (part of the OS, no extra
+/// dependency) and hand back the UTF-8 string.
+String decodeGb18030(Uint8List bytes) {
+  final libiconv = DynamicLibrary.open('/usr/lib/libiconv.2.dylib');
+  final openIconv = libiconv.lookupFunction<
+    Pointer<Void> Function(Pointer<Utf8>, Pointer<Utf8>),
+    Pointer<Void> Function(Pointer<Utf8>, Pointer<Utf8>)
+  >('iconv_open');
+  // size_t 在这里按有符号 64 位声明：iconv 用 (size_t)-1 表示出错，用 Int64
+  // 声明可以直接拿到 -1，不受无符号回绕影响（ABI 上两者一致）。
+  final convertIconv = libiconv.lookupFunction<
+    Int64 Function(
+      Pointer<Void>,
+      Pointer<Pointer<Uint8>>,
+      Pointer<Uint64>,
+      Pointer<Pointer<Uint8>>,
+      Pointer<Uint64>,
+    ),
+    int Function(
+      Pointer<Void>,
+      Pointer<Pointer<Uint8>>,
+      Pointer<Uint64>,
+      Pointer<Pointer<Uint8>>,
+      Pointer<Uint64>,
+    )
+  >('iconv');
+  final closeIconv = libiconv.lookupFunction<
+    Int32 Function(Pointer<Void>),
+    int Function(Pointer<Void>)
+  >('iconv_close');
+
+  final target = 'UTF-8'.toNativeUtf8();
+  final source = 'GB18030'.toNativeUtf8();
+  final handle = openIconv(target, source);
+  calloc.free(target);
+  calloc.free(source);
+  if (handle.address == -1) throw const FormatException('无法识别 TXT 编码');
+
+  final input = calloc<Uint8>(bytes.length);
+  input.asTypedList(bytes.length).setAll(0, bytes);
+  // GB18030 is at most 4 bytes per character, so 4x the input is a hard bound.
+  final capacity = bytes.length * 4 + 16;
+  final output = calloc<Uint8>(capacity);
+  final inPointer = calloc<Pointer<Uint8>>();
+  final outPointer = calloc<Pointer<Uint8>>();
+  final inLeft = calloc<Uint64>();
+  final outLeft = calloc<Uint64>();
+  try {
+    inPointer.value = input;
+    outPointer.value = output;
+    inLeft.value = bytes.length;
+    outLeft.value = capacity;
+    // iconv returns (size_t)-1 on an unconvertible sequence, otherwise the
+    // (normally zero) count of irreversible conversions.
+    if (convertIconv(handle, inPointer, inLeft, outPointer, outLeft) < 0) {
+      throw const FormatException('无法识别 TXT 编码');
+    }
+    return utf8.decode(output.asTypedList(capacity - outLeft.value));
+  } finally {
+    calloc.free(inPointer);
+    calloc.free(outPointer);
+    calloc.free(inLeft);
+    calloc.free(outLeft);
+    calloc.free(input);
+    calloc.free(output);
+    closeIconv(handle);
   }
 }
 

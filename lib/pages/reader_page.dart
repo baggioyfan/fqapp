@@ -2354,7 +2354,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
   }
 
   Widget _buildReader(BuildContext context) {
-    if (!isWindowsDesktop) return _buildReaderSurface(context);
+    if (!isDesktopHost) return _buildReaderSurface(context);
     return LayoutBuilder(
       builder: (context, bounds) => ColoredBox(
         color: _effectivePreset.backgroundColor,

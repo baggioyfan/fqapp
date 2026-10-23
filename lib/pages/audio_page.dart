@@ -418,7 +418,7 @@ class _AudioPageState extends State<AudioPage> {
           )
         : null;
     // Windows 桌面端用独立版式；它只需要 tones，上面这些局部变量先算好并不吃亏。
-    if (isWindowsDesktop) return _desktopAudio(palette, chapter, tones);
+    if (isDesktopHost) return _desktopAudio(palette, chapter, tones);
     return Scaffold(
       key: ValueKey('audio_session_${c._bookId}'),
       backgroundColor: palette.canvas,

@@ -44,7 +44,9 @@ log = "0.4"
 [build-dependencies]
 cc = "1"
 
-[target.'cfg(windows)'.dependencies]
+# Desktop hosts drive the local decrypting HTTP proxy on a blocking thread pool.
+# Android reads the same media through the in-process server instead.
+[target.'cfg(any(windows, target_os = "macos"))'.dependencies]
 reqwest = { version = "0.13", default-features = false, features = ["blocking"] }
 
 # The shipping app runs the core in-process on Android; `adb logcat` is the

@@ -1,3 +1,5 @@
+import 'dart:io' show Platform;
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -42,6 +44,17 @@ void main() {
     expect(
       decodeDesktopText(Uint8List.fromList([0xfe, 0xff, 0x4e, 0x2d])),
       '中',
+    );
+  });
+
+  // 非 UTF-8 的原文 TXT：Windows 走 MultiByteToWideChar(54936)，macOS 走
+  // libiconv。两条都是平台专有原生路径，各自在对应宿主上跑一遍。
+  test('TXT decoder falls back to GB18030 on desktop hosts', () {
+    if (!Platform.isWindows && !Platform.isMacOS) return;
+    // "中文" 的 GBK/GB18030 编码
+    expect(
+      decodeDesktopText(Uint8List.fromList([0xd6, 0xd0, 0xce, 0xc4])),
+      '中文',
     );
   });
 

@@ -1,10 +1,16 @@
 import 'dart:async';
+import 'dart:io' show File, Platform;
 import 'dart:typed_data';
 
+// ExternalLibrary 只从这个入口导出（flutter_rust_bridge.dart 仅导出
+// loadExternalLibrary）；本仓库生成的 frb_generated.dart 用的也是它。
+import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart'
+    show ExternalLibrary;
 import 'package:http/http.dart' as http;
 
 import '../src/rust/api.dart' as rust;
 import '../src/rust/frb_generated.dart';
+import 'desktop_media.dart' show desktopCoreLibraryPath;
 import 'secure_key_provider.dart';
 
 /// One backend response.
@@ -158,7 +164,24 @@ class RustBackendTransport implements BackendTransport {
   bool _coreRunning = false;
 
   /// Loads the bridge runtime once per process.
-  static Future<void> ensureRuntime() => _runtimeReady ??= RustLib.init();
+  static Future<void> ensureRuntime() => _runtimeReady ??= RustLib.init(
+    externalLibrary: _desktopExternalLibrary(),
+  );
+
+  /// Desktop hosts ship the core beside the executable (`fqapi_core.dll` on
+  /// Windows, `libfqapi_core.dylib` inside the macOS bundle). Windows resolves
+  /// that by accident of its DLL search order, but on macOS flutter_rust_bridge
+  /// falls back to a bare `dlopen("libfqapi_core.dylib")`, which does not look
+  /// inside the .app bundle - so point at the file explicitly. Android keeps
+  /// FRB's default `libfqapi_core.so` lookup.
+  static ExternalLibrary? _desktopExternalLibrary() {
+    if (!Platform.isWindows && !Platform.isMacOS) return null;
+    final path = desktopCoreLibraryPath();
+    // Missing library: fall back to FRB's own loader so its diagnostic (and the
+    // host-test skip path) stays exactly as before.
+    if (!File(path).existsSync()) return null;
+    return ExternalLibrary.open(path);
+  }
 
   /// Records that the runtime is already initialized, for hosts that load the
   /// shared library themselves (the host integration test opens an explicit

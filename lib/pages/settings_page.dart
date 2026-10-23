@@ -69,8 +69,8 @@ class SettingsPage extends StatelessWidget {
         subtitle: '播放',
         items: [
           _muteWhenColdStartItem(),
-          if (!isWindowsDesktop) _floatingWindowItem(),
-          if (!isWindowsDesktop) _videoDecoderItem(),
+          if (!isDesktopHost) _floatingWindowItem(),
+          if (!isDesktopHost) _videoDecoderItem(),
         ],
       ),
       SettingsCategory(
@@ -152,7 +152,7 @@ class SettingsPage extends StatelessWidget {
         surfaceTintColor: Colors.transparent,
         scrolledUnderElevation: 0,
       ),
-      body: isWindowsDesktop
+      body: isDesktopHost
           ? DesktopSettingsBody(categories: categories)
           : ListView(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),

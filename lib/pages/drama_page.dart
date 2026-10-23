@@ -263,7 +263,7 @@ class _DramaPageState extends ConsumerState<DramaPage>
   /// 不渲染搜索行——分区搜索入口收敛到频道条右端的搜索图标（壳层全局
   /// 搜索在短剧分区也隐藏），只占频道条一行，把垂直空间还给视频/网格。
   double get _topChromeHeight =>
-      (isWindowsDesktop ? 0.0 : _searchRowHeight) + _stripHeight;
+      (isDesktopHost ? 0.0 : _searchRowHeight) + _stripHeight;
 
   double _effectiveBottomInset(BuildContext context) {
     if (widget.bottomInset != null) return widget.bottomInset!;
@@ -392,7 +392,7 @@ class _DramaPageState extends ConsumerState<DramaPage>
   @override
   void initState() {
     super.initState();
-    if (isWindowsDesktop) {
+    if (isDesktopHost) {
       DesktopPlatform.fullscreen.addListener(_desktopFullscreenChanged);
     }
     WidgetsBinding.instance.addObserver(this);
@@ -448,7 +448,7 @@ class _DramaPageState extends ConsumerState<DramaPage>
 
   @override
   void dispose() {
-    if (isWindowsDesktop) {
+    if (isDesktopHost) {
       DesktopPlatform.fullscreen.removeListener(_desktopFullscreenChanged);
     }
     WidgetsBinding.instance.removeObserver(this);
@@ -594,7 +594,7 @@ class _DramaPageState extends ConsumerState<DramaPage>
         // 视频在焦点刚丢时就拉起来。所以桌面端只有可见性分支自己暂停过
         // 的那一次才许在这里恢复，手动暂停不许被焦点变化推翻。Android
         // 没有「可见但失焦」态，保持原有的回前台续播。
-        if (isWindowsDesktop && !_inlineVisibilityPaused) return;
+        if (isDesktopHost && !_inlineVisibilityPaused) return;
         _resumeInline();
         _scheduleInlineSync();
       }
@@ -1318,7 +1318,7 @@ class _DramaPageState extends ConsumerState<DramaPage>
                 ),
               ),
             if (!_recentEditing &&
-                !(isWindowsDesktop && DesktopPlatform.fullscreen.value))
+                !(isDesktopHost && DesktopPlatform.fullscreen.value))
               Positioned(
                 top: 0,
                 left: 0,
@@ -1337,7 +1337,7 @@ class _DramaPageState extends ConsumerState<DramaPage>
             // 底部 tab（50dp）是**悬浮压在 feed 上的**，所以 94dp 从 tab 底边算，
             // 提示悬在 tab 栏上方约 44dp。本页 feed 止步于 NavigationBar 顶边，
             // 同一视觉位置 = 94 - 官方 tab 高 50 = **44dp**。
-            if (_guideMounted && !isWindowsDesktop)
+            if (_guideMounted && !isDesktopHost)
               Positioned(
                 left: 16,
                 right: 16,
@@ -1376,7 +1376,7 @@ class _DramaPageState extends ConsumerState<DramaPage>
       }
       return _GridMessage(key: Key('$gridKey.empty'), message: '暂无内容');
     }
-    if (isWindowsDesktop) {
+    if (isDesktopHost) {
       columns = (MediaQuery.sizeOf(context).width / 190).floor().clamp(3, 9);
     }
     final bottomInset = _effectiveBottomInset(context);
@@ -1395,7 +1395,7 @@ class _DramaPageState extends ConsumerState<DramaPage>
           crossAxisSpacing: 8,
           mainAxisSpacing: 16,
           // 海报约 5:7 + 片名 + 「分类·集数」；两列格片名可占两行。
-          childAspectRatio: isWindowsDesktop
+          childAspectRatio: isDesktopHost
               ? .58
               : columns == 2
               ? 0.56
@@ -1456,7 +1456,7 @@ class _DramaPageState extends ConsumerState<DramaPage>
   }
 
   Widget _feed(HomeState state, List<MediaItem> items) {
-    if (isWindowsDesktop && state.error == null && items.isNotEmpty) {
+    if (isDesktopHost && state.error == null && items.isNotEmpty) {
       return _desktopFeed(items);
     }
     if (state.error != null) {
@@ -1952,7 +1952,7 @@ class _TopBar extends StatelessWidget {
           // uncompressed `ap3.xml`).
           // 桌面端不渲染这一行：分区搜索只留频道条右端的搜索图标一处
           // 入口（与 _DramaPageState._topChromeHeight 的桌面高度一致）。
-          if (!isWindowsDesktop)
+          if (!isDesktopHost)
             SizedBox(
               height: _DramaPageState._searchRowHeight,
               child: Padding(
@@ -3536,7 +3536,7 @@ class _InlineVideoLayer extends StatelessWidget {
               // Official display mode for a feed card: fill the frame unless
               // the source is wide enough to be pinned to its width. The
               // overflow is clipped by the ClipRRect above this layer.
-              fit: isWindowsDesktop ? VideoFit.contain : VideoFit.fillFrame,
+              fit: isDesktopHost ? VideoFit.contain : VideoFit.fillFrame,
             );
             return Stack(
               fit: StackFit.expand,
@@ -3548,7 +3548,7 @@ class _InlineVideoLayer extends StatelessWidget {
                     rect: layout.video,
                     child: RotatedBox(
                       quarterTurns: playback.rotation.value,
-                      child: isWindowsDesktop
+                      child: isDesktopHost
                           ? DesktopPlatform.instance.videoSurface(
                               textureId,
                               key: ValueKey('drama_inline_${item.id}'),
