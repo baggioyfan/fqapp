@@ -1,35 +1,19 @@
 name: Windows build and regression
 
 on:
+  # 本 fork 只发布 Android 与 macOS，Windows 产物一直没人用，而 push 命中
+  # lib/** 或 rust/** 就会自动起一个 windows-latest 运行（45 分钟额度）。
+  # 故去掉 push / pull_request 两个触发块，只留手动触发。
+  # 需要恢复自动触发时，把上游的这两个 paths 块贴回来即可：
+  #   pull_request: / push: branches: [master]，paths 为
+  #   lib/** test/** rust/** native/** windows/** third_party/** pubspec.*
+  #   scripts/*windows* .github/workflows/windows.yml
   workflow_dispatch:
     inputs:
       verify_player:
         description: 也跑 libmpv 播放验证（需要桌面会话，托管 runner 上不稳定）
         type: boolean
         default: false
-  pull_request:
-    paths:
-      - 'lib/**'
-      - 'test/**'
-      - 'rust/**'
-      - 'native/**'
-      - 'windows/**'
-      - 'third_party/**'
-      - 'pubspec.*'
-      - 'scripts/*windows*'
-      - '.github/workflows/windows.yml'
-  push:
-    branches: [master]
-    paths:
-      - 'lib/**'
-      - 'test/**'
-      - 'rust/**'
-      - 'native/**'
-      - 'windows/**'
-      - 'third_party/**'
-      - 'pubspec.*'
-      - 'scripts/*windows*'
-      - '.github/workflows/windows.yml'
 
 permissions:
   contents: read
