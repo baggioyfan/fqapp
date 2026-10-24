@@ -111,7 +111,10 @@ impl Source {
                 .send()
                 .map_err(|_| "媒体连接失败或超时")?;
             if response.status() != 206 {
-                return Err("媒体服务器不支持分段读取".into());
+                // 带上真实状态码：403/404 是地址或节点被拒，200 是服务端忽略
+                // Range，两者处理方式完全不同，只报「不支持分段读取」分不清。
+                let status = response.status().as_u16();
+                return Err(format!("取流失败 status={status}"));
             }
             let range = response
                 .headers()

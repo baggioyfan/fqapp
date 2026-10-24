@@ -102,6 +102,9 @@ class PlayerPage extends StatefulWidget {
 }
 
 class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
+  /// 建播放器失败（取流地址被拒）时自动换地址重来的上限，见 `_loadVideo`。
+  static const _maxAutoRetries = 2;
+
   late int _index;
   late String _historyKind = widget.kind;
   int? _activeIndex;
@@ -1077,6 +1080,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     bool refresh = false,
     bool autoplay = true,
     bool autoRetry = false,
+    int retryDepth = 0,
   }) async {
     if (!mounted || _switchingSeries || widget.eps.isEmpty) return;
     _loadTrace?.finish('superseded');
@@ -1171,15 +1175,23 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       try {
         await player.create(source.url, source.keyHex);
       } catch (_) {
-        // 取流地址是一次性凭证：复用/预取来的地址可能已被服务端拒绝，实测
-        // create 在 199–430 ms 就失败，而重取一份新地址后同样的参数必定成功。
-        // 这种失效不该变成用户眼前的一张失败页，所以自动换地址重来一次；
-        // 重试仍失败才走原来的失败路径。离线文件重试没有意义（文件本身没变），
-        // 手动重试（refresh）也不叠加，避免连环重试。
-        if (offline != null || refresh || !_current(generation)) rethrow;
+        // 取流地址是一次性凭证：复用/预取来的地址可能已被服务端拒绝——2026-10-24
+        // 12:45 的实测是探针拿到的不是 206（服务端拒了这次取流），换一份新地址
+        // 再建就有机会成功。这种失效不该变成用户眼前的一张失败页，所以自动换
+        // 地址重来；重试仍失败才走原来的失败路径。离线文件重试没有意义（文件
+        // 本身没变），用户手动重试（refresh）也不叠加，避免连环重试。
+        //
+        // 次数定为 2：那天同一集连续 4 次失败、第 5 次才起来，只兜 1 次不够。
+        if (offline != null || !autoRetry || !_current(generation)) rethrow;
+        if (retryDepth >= _maxAutoRetries) rethrow;
         trace.fail();
         unawaited(
-          _loadVideo(refresh: true, autoplay: autoplay, autoRetry: true),
+          _loadVideo(
+            refresh: true,
+            autoplay: autoplay,
+            autoRetry: true,
+            retryDepth: retryDepth + 1,
+          ),
         );
         return;
       }
