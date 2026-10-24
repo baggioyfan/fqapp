@@ -797,7 +797,7 @@ class _DesktopPlayer {
             'message': '媒体加载失败，请检查网络或重试',
             // 1 = 取流/解密失败（桌面端探针），2 = 播放器打不开媒体。
             'errorCode': stage == 'probe' ? 1 : 2,
-            if (status != null) 'httpStatusCode': status,
+            'httpStatusCode': ?status,
           },
         });
       }
