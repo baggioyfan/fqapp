@@ -882,12 +882,12 @@ Future<void> _mount(WidgetTester tester, _Session session) async {
 class _AudioPlayer extends ControlledNativePlayer {
   final keys = <String>[];
 
-  _AudioPlayer({
-    super.createGate,
-    super.releaseGate,
+  _AudioPlayer({super.createGate, super.releaseGate}) {
     // 听书用例按 2 分钟的已知片长跑（进度条与「播完自动下一章」都依赖它）。
-    super.duration = const Duration(minutes: 2),
-  });
+    // 放在构造函数体里而不是参数默认值：没有调用方传它，会触发
+    // `unused_element_parameter`。子类 `_BufferingAudioPlayer` 随后覆盖成 0。
+    totalDuration = const Duration(minutes: 2);
+  }
 
   @override
   Future<int> create(String cdnUrl, String keyHex) {
