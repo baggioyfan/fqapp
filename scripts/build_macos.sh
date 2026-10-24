@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# fqapp macOS 构建入口（Intel x86_64，可运行于 macOS 13 Ventura）。
+# fqapp macOS 构建入口（默认跟随宿主架构：Apple Silicon → arm64，Intel → x86_64）。
 #
 # 上游没有 macos/ 目录：本脚本首次运行时用 `flutter create --platforms=macos`
 # 生成平台壳，然后覆盖两份 entitlements。上游模板默认开启 App Sandbox，而本
@@ -7,8 +7,9 @@
 # 沙盒会把这三件事全部拦掉，所以这里显式关掉沙盒、关闭库校验。
 #
 # 用法：
-#   scripts/build_macos.sh                  # 完整构建 + 校验 + 打 zip
-#   FQAPP_MACOS_CODEGEN=1 scripts/build_macos.sh   # 先重跑 FRB codegen
+#   scripts/build_macos.sh                          # 完整构建（宿主架构）+ 校验 + 打 zip
+#   FQAPP_MACOS_ARCH=arm64 scripts/build_macos.sh   # 指定目标架构（arm64 / x86_64）
+#   FQAPP_MACOS_CODEGEN=1 scripts/build_macos.sh    # 先重跑 FRB codegen
 #   FQAPP_MACOS_SKIP_PACKAGE=1 scripts/build_macos.sh
 set -euo pipefail
 
@@ -16,11 +17,43 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
 PROJECT_NAME="fqapp"
-CORE_DYLIB="rust/target/release/libfqapi_core.dylib"
-APP="build/macos/Build/Products/Release/${PROJECT_NAME}.app"
-ZIP="fqapp-macos-x64.zip"
 
 die() { echo "错误：$*" >&2; exit 1; }
+
+# --- 目标架构 ---------------------------------------------------------------
+# arm64 与 x86_64 共用同一份源码，差异只有三处：Rust target triple、Xcode 的
+# ARCHS、产物名。Dart 侧不需要改：全仓库都用 Platform.isMacOS 判断平台。
+HOST_ARCH="$(uname -m)"
+TARGET_ARCH="${FQAPP_MACOS_ARCH:-$HOST_ARCH}"
+case "$TARGET_ARCH" in
+  arm64)
+    RUST_TRIPLE="aarch64-apple-darwin"
+    PKG_SUFFIX="arm64"
+    ;;
+  x86_64)
+    RUST_TRIPLE="x86_64-apple-darwin"
+    PKG_SUFFIX="x64"
+    ;;
+  *)
+    die "不支持的架构「${TARGET_ARCH}」，只支持 arm64 / x86_64"
+    ;;
+esac
+
+# 一律显式 --target，产物固定落在 rust/target/<triple>/release，避免宿主默认
+# target 目录和交叉编译目录互相串味。
+CORE_DYLIB="rust/target/${RUST_TRIPLE}/release/libfqapi_core.dylib"
+APP="build/macos/Build/Products/Release/${PROJECT_NAME}.app"
+ZIP="fqapp-macos-${PKG_SUFFIX}.zip"
+
+# 最低系统版本（单一可调点）。取 13.0 = Ventura：
+#   - 技术下限：arm64 要求 ≥ 11.0，低于这个 Xcode 直接报
+#     「range of supported deployment target versions is 11.0 to ...」；
+#   - 实际基线：本项目对外一直写「macOS 13 Ventura 可用」，Release 说明里也是
+#     「桌面版只有 macOS 13+」，取 13.0 让构建产物和这句话对齐；
+#   - 代价：Big Sur(11) / Monterey(12) 不再支持。要让老机器也能跑就改回 11.0，
+#     其余逻辑不用动。
+DEPLOY_MIN="13.0"
+DEPLOY_MAJOR="${DEPLOY_MIN%%.*}"
 
 [ "$(uname -s)" = "Darwin" ] || die "本脚本只能在 macOS 上运行。"
 command -v flutter >/dev/null 2>&1 || die "未找到 flutter。"
@@ -133,15 +166,48 @@ dependency_overrides:
   connectivity_plus: 7.0.0
 YAML
 
+echo "==> 2e/6 抬最低系统版本到 ${DEPLOY_MIN}（Ventura 基线）"
+# `flutter create` 生成的模板是 10.14，低于 arm64 的硬下限 11.0，也低于本项目
+# 对外宣称的 13；Xcode 对 arm64 会直接报「range of supported deployment target
+# versions is 11.0 to ...」。这里只抬不降 —— 匹配 0–12 的主版本号，已经 ≥ 13 的
+# 一律不动（模板哪天变成 14 也不会被这个脚本降回去）。
+/usr/bin/sed -i '' -E \
+  "s/^platform :osx, *'([0-9]|1[0-2])\.[0-9]+'/platform :osx, '${DEPLOY_MIN}'/" \
+  macos/Podfile
+/usr/bin/sed -i '' -E \
+  "s/MACOSX_DEPLOYMENT_TARGET = ([0-9]|1[0-2])\.[0-9]+;/MACOSX_DEPLOYMENT_TARGET = ${DEPLOY_MIN};/g" \
+  macos/Runner.xcodeproj/project.pbxproj
+
+POD_PLATFORM="$(/usr/bin/sed -n -E "s/^platform :osx, *'([0-9.]+)'.*/\1/p" macos/Podfile | head -1)"
+[ -n "$POD_PLATFORM" ] ||
+  die "macos/Podfile 里读不出 platform :osx（模板结构变了？）"
+awk -v p="$POD_PLATFORM" -v want="$DEPLOY_MAJOR" 'BEGIN {
+      split(p, a, "."); exit !(a[1] + 0 >= want + 0)
+    }' ||
+  die "macos/Podfile 的 platform :osx 仍是 ${POD_PLATFORM}，低于 ${DEPLOY_MIN}"
+echo "    Podfile platform :osx → ${POD_PLATFORM}"
+
 echo "==> 3/6 flutter pub get"
 flutter pub get
 
-echo "==> 4/6 编译 Rust 核心（host target = 当前架构）"
-cargo build --release --manifest-path rust/Cargo.toml
+echo "==> 4/6 编译 Rust 核心（${RUST_TRIPLE}）"
+cargo build --release --manifest-path rust/Cargo.toml --target "$RUST_TRIPLE"
 [ -s "$CORE_DYLIB" ] || die "Rust 未产出 $CORE_DYLIB"
 
-echo "==> 5/6 flutter build macos --release"
-flutter build macos --release --no-pub
+echo "==> 5/6 flutter build macos --release（ARCHS=${TARGET_ARCH}）"
+if [ "$TARGET_ARCH" = "$HOST_ARCH" ]; then
+  # 最常见路径：宿主与目标同架构，Flutter 直接按宿主出包。
+  flutter build macos --release --no-pub
+else
+  # 宿主 ≠ 目标（例如在 Apple Silicon 上要 x86_64）：`flutter build macos` 没有
+  # 架构开关，只会出宿主架构。先 --config-only 生成 xcconfig 与 pod 集成，再用
+  # xcodebuild 显式指定 ARCHS。产物仍落在 build/macos/Build/Products/Release。
+  flutter build macos --release --no-pub --config-only
+  xcodebuild -workspace macos/Runner.xcworkspace -scheme Runner \
+    -configuration Release \
+    ARCHS="$TARGET_ARCH" ONLY_ACTIVE_ARCH=NO \
+    build
+fi
 [ -d "$APP" ] || die "未产出 $APP"
 
 # FRB 在 macOS 上的兜底是裸名 dlopen("libfqapi_core.dylib")，不会搜索 .app 包内，
@@ -154,37 +220,105 @@ echo "==> 6/6 校验架构与最低系统版本"
 BIN="$APP/Contents/MacOS/$PROJECT_NAME"
 [ -f "$BIN" ] || die "找不到可执行文件 $BIN"
 
+# 新版 macOS 的 lipo 会把 arm64e / arm64e.x1 报成独立架构（系统二进制就是这样，
+# 已经没有裸 arm64 的 slice）。它们都属于 arm64 家族、能在 Apple Silicon 上跑，
+# 比对前统一折叠成 arm64，免得在 arm64 包上误报「缺少 slice」。
+archs_norm() {
+  printf '%s\n' "$1" |
+    tr ' ' '\n' |
+    /usr/bin/sed -E 's/^arm64e(\.[A-Za-z0-9_]+)?$/arm64/' |
+    tr '\n' ' ' |
+    /usr/bin/sed -E 's/ +$//'
+}
+
 assert_arch() {
   local file="$1" want="$2" got
-  got="$(lipo -archs "$file")"
+  got="$(archs_norm "$(lipo -archs "$file")")"
   case " $got " in
     *" $want "*) echo "    $(basename "$file") → $got" ;;
     *) die "$file 架构为「${got}」，缺少 $want" ;;
   esac
 }
 
-# 宿主机是 x86_64 runner 时，Flutter 原生产出 x86_64；若在 Apple Silicon 上跑，
-# 这里会直接失败，提示改用 x86_64 构建（见 PORTING-MACOS.md）。
-assert_arch "$BIN" "x86_64"
-assert_arch "$APP/Contents/MacOS/libfqapi_core.dylib" "x86_64"
+# 主可执行文件与 Rust 核心的架构必须与目标一致。宿主与目标不同架构时最容易在
+# 这里露馅（Flutter 会静默按宿主出包）。
+assert_arch "$BIN" "$TARGET_ARCH"
+assert_arch "$APP/Contents/MacOS/libfqapi_core.dylib" "$TARGET_ARCH"
+
+# 再扫一遍包内的二进制目录：第三方预编译产物（libmpv 等）如果缺目标 slice，症状
+# 是运行到播放页才崩，构建期先抓出来更省事。只看 Contents/MacOS 与
+# Contents/Frameworks —— flutter_assets 里上万个资源文件不是 Mach-O，
+# 对整个 .app 逐个 `file` 只是白等。
+assert_arch_tree() {
+  local root="$1" bad=0 f archs
+  [ -d "$root" ] || return 0
+  while IFS= read -r f; do
+    case "$(file -b "$f" 2>/dev/null)" in
+      *Mach-O*) ;;
+      *) continue ;;
+    esac
+    archs="$(archs_norm "$(lipo -archs "$f" 2>/dev/null || true)")"
+    case " $archs " in
+      *" $TARGET_ARCH "*) ;;
+      *)
+        echo "    缺少 ${TARGET_ARCH}：${f#"$APP"/}（${archs:-未知}）" >&2
+        bad=1
+        ;;
+    esac
+  done < <(find "$root" -type f)
+  [ "$bad" -eq 0 ] || die "包内存在缺少 ${TARGET_ARCH} slice 的 Mach-O"
+}
+assert_arch_tree "$APP/Contents/MacOS"
+assert_arch_tree "$APP/Contents/Frameworks"
+echo "    包内全部 Mach-O 均含 ${TARGET_ARCH}"
 
 min_os() {
   otool -l "$1" |
     awk '/LC_BUILD_VERSION|LC_VERSION_MIN_MACOSX/ {found=1}
          found && /minos|version/ {print $2; exit}'
 }
+# 主可执行文件的 minos 必须正好等于基线：低了说明 2e 步的改写没生效（模板结构
+# 变了或 sed 没匹配上），高了说明某个 pod 把下限顶起来了 —— 两种情况 Ventura 都不对。
 MINOS="$(min_os "$BIN")"
 [ -n "$MINOS" ] || die "读不出 $BIN 的最低系统版本"
-# Ventura = 13.0；比它高就意味着 Intel Ventura 跑不了。
-if ! awk -v m="$MINOS" 'BEGIN {
-      split(m, a, "."); major = a[1] + 0;
-      exit !(major <= 13)
+if ! awk -v m="$MINOS" -v want="$DEPLOY_MAJOR" 'BEGIN {
+      split(m, a, ".");
+      exit !(a[1] + 0 == want + 0)
     }'; then
-  die "最低系统版本 $MINOS 高于 macOS 13 Ventura"
+  die "最低系统版本 ${MINOS} 与基线 ${DEPLOY_MIN} 不一致（高于基线则 Ventura 跑不了，低于基线说明 2e 步没生效）"
 fi
 # 必须用 ${MINOS} 大括号：紧跟全角括号时，bash 在 UTF-8 locale 下会把
 # 「（」的首字节当成变量名的一部分，set -u 于是报 "MINOS?: unbound variable"。
-echo "    最低系统版本 → ${MINOS}（≤ 13 即 Ventura 可用）"
+echo "    最低系统版本 → ${MINOS}（基线 ${DEPLOY_MIN}，Ventura 可用）"
+
+# 随包 framework / dylib 各自带着自己的 minos。主可执行文件是 13.0 不代表
+# libmpv 之类也是 —— 某个 pod 若悄悄按 Sonoma 编，Ventura 上会在 dlopen 阶段
+# 直接失败，而且只在用户机器上才暴露。这里逐个核对上界。
+assert_minos_tree() {
+  local root="$1" bad=0 f m
+  [ -d "$root" ] || return 0
+  while IFS= read -r f; do
+    case "$(file -b "$f" 2>/dev/null)" in
+      *Mach-O*) ;;
+      *) continue ;;
+    esac
+    m="$(min_os "$f")"
+    [ -n "$m" ] || continue
+    # awk 用退出码表达「超标」：> 基线时退 1，配合下面的 || 分支记为失败。
+    # 注意不要写成 exit !(...) —— 那样正好反过来，正常库会被判成超标。
+    awk -v m="$m" -v want="$DEPLOY_MAJOR" 'BEGIN {
+          split(m, a, ".");
+          exit (a[1] + 0 > want + 0)
+        }' || {
+      echo "    minos ${m} 高于基线 ${DEPLOY_MIN}：${f#"$APP"/}" >&2
+      bad=1
+    }
+  done < <(find "$root" -type f)
+  [ "$bad" -eq 0 ] ||
+    die "包内存在最低系统版本高于 ${DEPLOY_MIN} 的 Mach-O，Ventura 上会加载失败"
+}
+assert_minos_tree "$APP/Contents/Frameworks"
+echo "    包内 framework 的 minos 均不高于 ${DEPLOY_MIN}"
 
 # 版本号必须和 Android 同源（pubspec.yaml 的 version）：Release 里两个包共用
 # 同一个 tag，版本对不上就说明装错了包，或者 Flutter 没读到 pubspec。

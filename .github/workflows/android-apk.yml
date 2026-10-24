@@ -616,6 +616,9 @@ jobs:
   macos:
     if: github.event_name == 'workflow_dispatch' && inputs.release_tag != ''
     uses: ./.github/workflows/macos.yml
+    with:
+      # 发布要两个架构都出：Apple Silicon 原生 arm64 + Intel x86_64。
+      arch: both
     permissions:
       contents: read
 
@@ -651,10 +654,13 @@ jobs:
           name: ${{ steps.ids.outputs.apk }}
           path: release
 
-      - name: Download the macOS artifact
+      - name: Download the macOS artifacts
         uses: actions/download-artifact@v4
         with:
-          name: fqapp-macos-x64
+          # 两个架构各一个 artifact（macos.yml 的 matrix）。用 pattern 一次拉全，
+          # 免得每加一个架构就在发布流程里补一段。
+          pattern: fqapp-macos-*
+          merge-multiple: true
           path: release
 
       - name: Publish the GitHub Release
@@ -675,20 +681,23 @@ jobs:
           fi
 
           # 资产名统一带 tag：Android 侧是 ARM64 单包（32 位已不再构建），
-          # 桌面侧是 .app 打的 zip（ad-hoc 签名，首次打开要清 quarantine）。
+          # 桌面侧是 .app 打的 zip（ad-hoc 签名，首次打开要清 quarantine），
+          # arm64 供 Apple Silicon，x64 供 Intel（Apple Silicon 上也能经 Rosetta 跑）。
           mkdir -p dist
           apk_src="$(find release -name 'app-arm64-v8a-release.apk' -print -quit)"
-          zip_src="$(find release -name 'fqapp-macos-x64.zip' -print -quit)"
+          arm_src="$(find release -name 'fqapp-macos-arm64.zip' -print -quit)"
+          x64_src="$(find release -name 'fqapp-macos-x64.zip' -print -quit)"
           info_src="$(find release -name 'build-info.txt' -print -quit)"
-          for f in "$apk_src" "$zip_src" "$info_src"; do
+          for f in "$apk_src" "$arm_src" "$x64_src" "$info_src"; do
             if [ -z "$f" ]; then
-              echo "::error::发布资产缺失（APK / macOS zip / build-info.txt）" >&2
+              echo "::error::发布资产缺失（APK / macOS arm64 / macOS x64 / build-info.txt）" >&2
               find release -maxdepth 3 -type f | head -50 >&2
               exit 1
             fi
           done
           cp "$apk_src" "dist/fqapp-$RELEASE_TAG-arm64-v8a.apk"
-          cp "$zip_src" "dist/fqapp-$RELEASE_TAG-macos-x64.zip"
+          cp "$arm_src" "dist/fqapp-$RELEASE_TAG-macos-arm64.zip"
+          cp "$x64_src" "dist/fqapp-$RELEASE_TAG-macos-x64.zip"
           cp "$info_src" dist/build-info.txt
           ls -l dist
 
@@ -697,9 +706,10 @@ jobs:
             --notes-file .github/release-notes.md \
             --target "$GITHUB_SHA" \
             "dist/fqapp-$RELEASE_TAG-arm64-v8a.apk" \
+            "dist/fqapp-$RELEASE_TAG-macos-arm64.zip" \
             "dist/fqapp-$RELEASE_TAG-macos-x64.zip" \
             dist/build-info.txt
-          printf 'Published %s with the APK and the macOS build\n' "$RELEASE_TAG"
+          printf 'Published %s with the APK and both macOS builds\n' "$RELEASE_TAG"
 
       - name: Summarise the release
         env:
@@ -708,6 +718,7 @@ jobs:
           {
             printf '## 已发布 %s\n\n' "$RELEASE_TAG"
             printf -- '- `fqapp-%s-arm64-v8a.apk` — Android arm64\n' "$RELEASE_TAG"
-            printf -- '- `fqapp-%s-macos-x64.zip` — macOS 13+（Intel），解压后是 .app\n' "$RELEASE_TAG"
+            printf -- '- `fqapp-%s-macos-arm64.zip` — macOS 13+（Apple Silicon 原生），解压后是 .app\n' "$RELEASE_TAG"
+            printf -- '- `fqapp-%s-macos-x64.zip` — macOS 13+（Intel；Apple Silicon 上经 Rosetta 运行），解压后是 .app\n' "$RELEASE_TAG"
             printf -- '- `build-info.txt` — Rust 核心与签名指纹\n'
           } >> "$GITHUB_STEP_SUMMARY"
