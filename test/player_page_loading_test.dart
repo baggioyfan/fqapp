@@ -160,6 +160,36 @@ void main() {
     },
   );
 
+  testWidgets('预取等到本集快结束才取，剩余还多时不动下一集地址', (tester) async {
+    final session = _Session();
+    await _mount(tester, session);
+    final player = session.players.single;
+
+    // 先报时长，再让首帧落地：`_onFirstFrame` 里就会判断一次预取窗口。
+    player.emitDuration(const Duration(minutes: 5));
+    await _flush(tester);
+    player.emitFirstFrame();
+    await _flush(tester);
+
+    // 还剩五分多钟：不进窗口。地址是带签名的临时凭证，早取等于白取。
+    await tester.pump(const Duration(seconds: 2));
+    await _flush(tester);
+    expect(session.requests, ['1']);
+
+    // 拖到只剩 15 秒，跨进 20 秒窗口 —— 进度定时器每 2 秒会重新判断。
+    player.emitPosition(
+      const Duration(minutes: 5) - const Duration(seconds: 15),
+    );
+    await tester.pump(const Duration(seconds: 2));
+    await _flush(tester);
+    // 750ms 防抖后才真正发请求。
+    await tester.pump(const Duration(milliseconds: 900));
+    await _flush(tester);
+    expect(session.requests, ['1', '2']);
+    // 只是取地址，不该顺手建播放器。
+    expect(session.players, hasLength(1));
+  });
+
   testWidgets(
     'a completed prefetch removes address wait from the next selection',
     (tester) async {
@@ -196,6 +226,9 @@ void main() {
       expect(sample.stagesMs['address'], 0);
       expect(sample.playToFirstFrameMs, 80);
       expect(sample.totalMs, 80);
+      // TEMP(prefetch-age)：命中预取时必须带上地址年龄，否则这次埋点白做。
+      // 关掉 `kPrefetchAgeProbe` 后这条断言要一起删。
+      expect(sample.prefetchAgeMs, isNotNull);
     },
   );
 

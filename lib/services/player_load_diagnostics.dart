@@ -4,6 +4,18 @@ import 'package:flutter/foundation.dart';
 
 import 'app_log.dart';
 
+/// TEMP(prefetch-age)：一次性诊断开关，2026-10-24 加。
+///
+/// 背景：Air 上 fq5 实测 `prefetchHit` 的地址有 63% 被 CDN 直接返 403，而当场
+/// 重取的地址几乎都成功。怀疑是「预取地址存活期」远短于缓存 TTL，但没有证据
+/// ——日志不记完整 URL，没法复现。这个字段记录「地址取到手 → 真正开播」的间隔，
+/// 用来把存活期的量级框出来。
+///
+/// 用完就撤：置为 `false` 即停止输出该字段（埋点链路其余部分不受影响，
+/// 日志回到今天之前的样子）；彻底删除时 `grep -rn 'TEMP(prefetch-age)'`
+/// 能找到所有相关位置。
+const bool kPrefetchAgeProbe = true;
+
 const _allowedStages = <String>{
   'address',
   'releaseWait',
@@ -66,6 +78,9 @@ class PlayerLoadSample {
   final int? errorCode;
   final int? httpStatusCode;
 
+  /// TEMP(prefetch-age)：地址从取到到开播的间隔，仅缓存命中时非空。
+  final int? prefetchAgeMs;
+
   PlayerLoadSample({
     required this.attempt,
     required this.episode,
@@ -80,6 +95,7 @@ class PlayerLoadSample {
     required String? failureStage,
     required int? errorCode,
     required int? httpStatusCode,
+    this.prefetchAgeMs,
   }) : trigger = _safeLabel(trigger, _allowedTriggers),
        outcome = _safeLabel(outcome, _allowedOutcomes),
        source = _safeLabel(source, _allowedSources),
@@ -108,6 +124,8 @@ class PlayerLoadSample {
     'failureStage': failureStage,
     'errorCode': errorCode,
     'httpStatusCode': httpStatusCode,
+    if (kPrefetchAgeProbe && prefetchAgeMs != null)
+      'prefetchAgeMs': prefetchAgeMs,
   };
 }
 
@@ -154,6 +172,7 @@ class PlayerLoadTrace {
   String? _failureStage;
   int? _errorCode;
   int? _httpStatusCode;
+  int? _prefetchAgeMs;
   bool _finished = false;
 
   PlayerLoadTrace._(
@@ -198,6 +217,17 @@ class PlayerLoadTrace {
     }
   }
 
+  /// TEMP(prefetch-age)：记录取到的地址放了多久才被拿去建播放器。
+  /// 这个值是「地址年龄」，不是本阶段的耗时，所以单独存、不占 stages。
+  void prefetchAge(Duration? age) {
+    if (_finished || !kPrefetchAgeProbe) return;
+    // 负值、以及超过一小时的都当作没测到：前者说明时钟用错了，后者是
+    // 命中了一条早就该过期的缓存，两种都别写进日志误导判断。
+    _prefetchAgeMs = age == null || age < Duration.zero || age.inHours >= 1
+        ? null
+        : age.inMilliseconds;
+  }
+
   /// Ends an unsuccessful attempt with a safe phase label and numeric codes.
   /// Error strings are intentionally not accepted by this API.
   void fail({int? errorCode, int? httpStatusCode}) {
@@ -232,6 +262,7 @@ class PlayerLoadTrace {
       failureStage: _failureStage,
       errorCode: _errorCode,
       httpStatusCode: _httpStatusCode,
+      prefetchAgeMs: _prefetchAgeMs,
     );
     // Diagnostics must never turn a successful load into a playback error.
     try {

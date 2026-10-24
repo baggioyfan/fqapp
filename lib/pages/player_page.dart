@@ -105,6 +105,14 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   /// 建播放器失败（取流地址被拒）时自动换地址重来的上限，见 `_loadVideo`。
   static const _maxAutoRetries = 2;
 
+  /// 下一集取流地址的预取提前量：本集**只剩这么多**时才去取。
+  ///
+  /// 2026-10-24 之前是「起播 750ms 后立刻取」。Air 上实测：预取来的地址在
+  /// 33–36 秒后被拿去开播，8 次里 5 次被 CDN 返 403；而当场重取的地址 6 次
+  /// 里 5 次一次就成。地址是带签名的临时凭证，提前太久等于白取。改成按剩余
+  /// 时长触发后，自动连播仍能提前拿到，手动切集则退回当场取（更可靠）。
+  static const _prefetchLeadTime = Duration(seconds: 20);
+
   late int _index;
   late String _historyKind = widget.kind;
   int? _activeIndex;
@@ -984,7 +992,18 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       player.firstFrameRendered &&
       player.playing &&
       !player.buffering &&
+      _prefetchDue(player) &&
       _index + 1 < widget.eps.length;
+
+  /// 是否已进入「该取下一集地址了」的窗口（见 [_prefetchLeadTime]）。
+  ///
+  /// 时长还没解析出来（`Duration.zero`，刚起播或取元信息失败）时按「到点」
+  /// 处理 —— 宁可早取一次，也别因为读不到时长就永远不预取。
+  bool _prefetchDue(NativePlayer player) {
+    final total = player.duration;
+    if (total <= Duration.zero) return true;
+    return total - player.position <= _prefetchLeadTime;
+  }
 
   void _updatePrefetch() {
     final generation = _loadGeneration;
@@ -1129,6 +1148,8 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       } else {
         final request = _sources.request(episode, refresh: refresh);
         trace.source = request.origin.name;
+        // TEMP(prefetch-age)：命中缓存时记下这个地址放了多久才被用上。
+        trace.prefetchAge(request.age);
         var online = await request.future;
         // 会话内记住的画质选择（官方=引擎当前档）：按画质名在本集自己
         // 的 variants 里找，找到就用，找不到回默认（#60：换下一集不
@@ -1298,6 +1319,9 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
           // 播放期间写入不会停，所以走节流而不是防抖（防抖永远等不到静默）。
           WebdavAutoSync.instance.markPlaybackWrite();
         }
+        // 预取窗口按「本集剩余时长」判定，只有播放过程推进才会跨进这个窗口，
+        // 而进度回调是唯一稳定推进的时钟 —— 光靠播放器事件可能一直等不到。
+        _updatePrefetch();
       });
     } catch (error) {
       if (_current(generation)) {

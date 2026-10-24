@@ -61,6 +61,25 @@ void main() {
     },
   );
 
+  test('命中缓存时报出地址出生了多久，当场取的没有这个数', () async {
+    var now = Duration.zero;
+    final cache = EpisodeSourceCache(
+      now: () => now,
+      loader: (_) => Future.value(_source('a')),
+    );
+    addTearDown(cache.dispose);
+
+    final fresh = cache.request(_chapter('1'));
+    // 当场发的请求没有「放了多久」这回事。
+    expect(fresh.age, isNull);
+    await fresh.future;
+
+    now = const Duration(seconds: 27);
+    final hit = cache.request(_chapter('1'));
+    expect(hit.origin, EpisodeSourceOrigin.cacheHit);
+    expect(hit.age, const Duration(seconds: 27));
+  });
+
   for (final synchronous in [false, true]) {
     test(
       'failed prefetch is silent and evicted (sync: $synchronous)',
