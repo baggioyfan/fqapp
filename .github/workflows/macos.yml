@@ -30,8 +30,8 @@ on:
         description: 先重跑 flutter_rust_bridge codegen（仅 Rust API 层变更后需要）
         type: boolean
         default: false
-  # 发布时由 android-apk.yml 复用：同一次 dispatch 里先出 APK 和两个 .app，
-  # 再合成一个 Release（见那边的 publish job）。单独触发时行为不变。
+  # 发布/交付时由 android-apk.yml 复用：同一次 dispatch 里先出 APK 和两个 .app，
+  # 带 release_tag 时再合成一个 Release（见那边的 publish job）。单独触发时行为不变。
   workflow_call:
     inputs:
       arch:

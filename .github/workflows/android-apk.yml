@@ -6,6 +6,9 @@ on:
   # 之前 `branches: [master]` 让每次改 lib/ 都白跑 15 分钟 APK + macOS，
   # 还会和 dispatch 的发布 run 抢同一个 concurrency 组（cancel-in-progress
   # 会让发布 run 被顶掉）。恢复自动构建就把 branches 那行贴回来。
+  #
+  # 交付面固定为三个包：APK + macOS arm64 + macOS x64。一次 dispatch 就能
+  # 全出（`macos` 输入默认勾选），Release 也固定挂这三个资产 + build-info。
   push:
     # 打 tag 仍出包：tag 推送不走 paths 过滤（native-crypto 在 v1.0.117
     # tag 推送时已跑过一次可作证），所以推 v* 会触发一次完整构建，APK 在
@@ -62,9 +65,17 @@ on:
       release_tag:
         description: >-
           Tag to publish as a GitHub Release, for example v1.0.122-fq1. Leave
-          empty to only build the APK and upload it as a workflow artifact.
+          empty to only build and upload the packages as workflow artifacts.
         required: false
         type: string
+      macos:
+        # 交付面固定为三个包：APK + macOS arm64 + macOS x64。留一个开关是为了
+        # 「只想快速拿个 APK」时不必额外烧两台 macOS runner（约 20 分钟）。
+        # 填了 release_tag 时本开关无效 —— 发布必须三件齐全。
+        description: 同时构建两个 macOS 包（arm64 / x64）
+        required: false
+        type: boolean
+        default: true
 
 permissions:
   # gh release create needs write access; every other step only reads.
@@ -611,10 +622,13 @@ jobs:
         if: always()
         run: rm -f -- "$RUNNER_TEMP/fqapp-release.jks"
 
-  # 桌面包与 APK 用同一次 dispatch 产出：macos.yml 是可复用工作流，只有带
-  # release_tag 的发布构建才拉起它，普通 push 仍然只跑 APK（这个 job 跳过）。
+  # 交付面是三个包：APK + macOS arm64 + macOS x64。桌面包与 APK 同一次 dispatch
+  # 产出（macos.yml 是可复用工作流），勾了 `macos` 就出两架构；填了 release_tag
+  # 则强制出 —— 发布只认三件齐全。tag 推送仍只跑 APK，不建 Release。
   macos:
-    if: github.event_name == 'workflow_dispatch' && inputs.release_tag != ''
+    if: >-
+      github.event_name == 'workflow_dispatch'
+      && (inputs.release_tag != '' || inputs.macos)
     uses: ./.github/workflows/macos.yml
     with:
       # 发布要两个架构都出：Apple Silicon 原生 arm64 + Intel x86_64。

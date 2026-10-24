@@ -2,7 +2,8 @@
 
 上游 [fqapp](https://github.com/ch6vip/fqapp) 的 Android 分支：原作者不做云同步，这里补上
 WebDAV 双向同步（书架 / 进度 / 已看 / 搜索历史 / 阅读时长），同时保留手动备份导入导出。
-桌面版（macOS Intel）同在本 Release 发布。
+桌面版同在本 Release 发布，两个架构各一个包：Apple Silicon 原生 arm64、Intel x64
+（arm64 包在 Intel 上跑不了；x64 包在 Apple Silicon 上经 Rosetta 运行）。
 
 ## 本版 `v1.0.131-fq6`（仍对应上游 `1.0.131+136`）
 
