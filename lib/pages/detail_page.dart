@@ -281,10 +281,13 @@ class _DetailPageState extends State<DetailPage> {
     final retries = _isVideo ? 1 : 0;
     for (var attempt = 0; ; attempt++) {
       try {
-        // 时间预算只加在真实请求上：注入的 loader 由调用方（测试/预览）自己
-        // 掌控，给它挂一个内部定时器只会让测试留下未完成的 timer。
+        // 时间预算只加在「短剧 + 真实请求」上：注入的 loader 由调用方（测试/
+        // 预览）自己掌控，给它挂一个内部定时器只会让测试留下未完成的 timer；
+        // 而小说目录没有这类几十秒的长尾。
         var pending = loader(id, tab: _tab);
-        if (injected == null) pending = pending.timeout(_directoryBudget);
+        if (injected == null && _isVideo) {
+          pending = pending.timeout(_directoryBudget);
+        }
         final volumes = await pending;
         if (volumes.isNotEmpty || attempt >= retries) return volumes;
         AppLog.w('detail-directory', 'empty attempt=$attempt id=$id');
