@@ -1179,10 +1179,19 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
         // 12:45 的实测是探针拿到的不是 206（服务端拒了这次取流），换一份新地址
         // 再建就有机会成功。这种失效不该变成用户眼前的一张失败页，所以自动换
         // 地址重来；重试仍失败才走原来的失败路径。离线文件重试没有意义（文件
-        // 本身没变），用户手动重试（refresh）也不叠加，避免连环重试。
+        // 本身没变），用户手动点重试也不叠加，避免连环重试。
         //
         // 次数定为 2：那天同一集连续 4 次失败、第 5 次才起来，只兜 1 次不够。
-        if (offline != null || !autoRetry || !_current(generation)) rethrow;
+        //
+        // 挡的是「用户手动点重试」：那时 refresh 为真、autoRetry 为假，不该再
+        // 叠一层自动重试。本方法自己发起的重试同样带 refresh（要重新取地址），
+        // 但 autoRetry 也为真，所以必须两个一起判——只看 autoRetry 会把首次
+        // 失败也挡在门外，等于这个功能不存在。
+        if (offline != null ||
+            (refresh && !autoRetry) ||
+            !_current(generation)) {
+          rethrow;
+        }
         if (retryDepth >= _maxAutoRetries) rethrow;
         trace.fail();
         unawaited(
