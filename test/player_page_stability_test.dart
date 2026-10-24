@@ -297,6 +297,23 @@ void main() {
     },
   );
 
+  testWidgets('建播放器失败时自动换地址重来一次，用户看不到失败页', (tester) async {
+    var created = 0;
+    final session = _Session(
+      factory: () =>
+          created++ == 0 ? _CreateFailsPlayer() : ControlledNativePlayer(),
+    );
+    await _mount(tester, session);
+    await _flush(tester);
+    // create 抛错（取流地址失效的典型表现）→ 丢掉缓存地址重取一份再建一次，
+    // 这一跳不该变成用户眼前的失败页。
+    expect(session.requests.where((id) => id == '1'), hasLength(2));
+    expect(session.players, hasLength(2));
+    expect(session.players.first.disposed, isTrue);
+    expect(session.players.last.isPlaying, true);
+    expect(find.text('播放失败'), findsNothing);
+  });
+
   testWidgets(
     'a retry superseded by a new selection cannot replace its player',
     (tester) async {
@@ -526,6 +543,15 @@ Future<void> _mount(WidgetTester tester, _Session session) async {
   });
   await tester.pumpWidget(session.app());
   await _flush(tester);
+}
+
+/// 建播放器必失败的假播放器：用来验证 create 失败后会换地址自动重来一次。
+class _CreateFailsPlayer extends ControlledNativePlayer {
+  @override
+  Future<int> create(String cdnUrl, String keyHex) async {
+    calls.add('create:$cdnUrl');
+    throw StateError('create failed');
+  }
 }
 
 class _Session {

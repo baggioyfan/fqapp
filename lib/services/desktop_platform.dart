@@ -725,7 +725,11 @@ class _DesktopPlayer {
       player.stream.width.listen((_) => _size()),
       player.stream.height.listen((_) => _size()),
       player.stream.error.listen(
-        (_) => event('error', {'message': '媒体播放失败，请重试或切换清晰度'}),
+        (_) => event('error', {
+          'message': '媒体播放失败，请重试或切换清晰度',
+          // 3 = 播放器在起播/解码阶段报错（创建已成功）。
+          'errorCode': 3,
+        }),
       ),
     ]);
     unawaited(
@@ -742,6 +746,10 @@ class _DesktopPlayer {
   bool disposed = false;
   Future<void> open(String url, String key) async {
     ready.future.ignore();
+    // 两段失败原因完全不同，分开记：探针阶段的消息来自 Rust 的固定字面量
+    // （连不上 / 不是 206 / 长度无效 / 密钥解不开），可以原样落盘；播放器
+    // 阶段抛的异常可能带着签名后的播放地址，只记类型。
+    var stage = 'probe';
     try {
       var playbackUrl = url;
       if (key.isNotEmpty) {
@@ -756,19 +764,30 @@ class _DesktopPlayer {
       // Plain audio/video follows the original URI player contract. Some
       // public audio origins return 200 only and must not require CENC Range I/O.
       if (disposed) return;
+      stage = 'player';
       await player.open(Media(playbackUrl), play: false);
       AppLog.d('desktop-player', 'id=$id opened paused');
       if (disposed) return;
       ready.complete();
       emit({'playerId': id, 'type': 'created', 'value': id});
       _size();
-    } catch (_) {
+    } catch (error) {
+      // 探针阶段的文案是 Rust 里的固定字面量，原样落盘正好区分「连不上」与
+      // 「不是 206」「密钥/首块解不开」；播放器阶段的异常只留类型。
+      final detail = stage == 'probe' && error is StateError
+          ? '${error.message}'
+          : '${error.runtimeType}';
+      AppLog.d('desktop-open', 'step=$stage error=$detail');
       if (!ready.isCompleted) ready.completeError(StateError('无法打开媒体'));
       if (!disposed) {
         emit({
           'playerId': id,
           'type': 'error',
-          'value': {'message': '媒体加载失败，请检查网络或重试'},
+          'value': {
+            'message': '媒体加载失败，请检查网络或重试',
+            // 1 = 取流/解密失败（桌面端探针），2 = 播放器打不开媒体。
+            'errorCode': stage == 'probe' ? 1 : 2,
+          },
         });
       }
       media?.close();

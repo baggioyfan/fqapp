@@ -1073,7 +1073,11 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     return _releases;
   }
 
-  Future<void> _loadVideo({bool refresh = false, bool autoplay = true}) async {
+  Future<void> _loadVideo({
+    bool refresh = false,
+    bool autoplay = true,
+    bool autoRetry = false,
+  }) async {
     if (!mounted || _switchingSeries || widget.eps.isEmpty) return;
     _loadTrace?.finish('superseded');
     final generation = ++_loadGeneration;
@@ -1082,7 +1086,9 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     final trace = _loadTrace = _diagnostics.begin(
       attempt: generation,
       episode: index + 1,
-      trigger: refresh
+      trigger: autoRetry
+          ? 'autoRetry'
+          : refresh
           ? 'retry'
           : generation == 1
           ? 'initial'
@@ -1162,7 +1168,21 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       trace.stage('create');
       final player = candidate = widget.playerFactory?.call() ?? NativePlayer();
       _player = player;
-      await player.create(source.url, source.keyHex);
+      try {
+        await player.create(source.url, source.keyHex);
+      } catch (_) {
+        // 取流地址是一次性凭证：复用/预取来的地址可能已被服务端拒绝，实测
+        // create 在 199–430 ms 就失败，而重取一份新地址后同样的参数必定成功。
+        // 这种失效不该变成用户眼前的一张失败页，所以自动换地址重来一次；
+        // 重试仍失败才走原来的失败路径。离线文件重试没有意义（文件本身没变），
+        // 手动重试（refresh）也不叠加，避免连环重试。
+        if (offline != null || refresh || !_current(generation)) rethrow;
+        trace.fail();
+        unawaited(
+          _loadVideo(refresh: true, autoplay: autoplay, autoRetry: true),
+        );
+        return;
+      }
       if (!_current(generation, player)) {
         await player.dispose();
         return;

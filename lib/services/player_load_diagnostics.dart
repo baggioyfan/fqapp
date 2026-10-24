@@ -16,7 +16,14 @@ const _allowedStages = <String>{
   'firstFrame',
   'other',
 };
-const _allowedTriggers = <String>{'initial', 'switch', 'retry'};
+const _allowedTriggers = <String>{
+  'initial',
+  'switch',
+  'retry',
+  // 建播放器失败后自动换地址重来一次（非用户点「重试」），单独标出来才能
+  // 从日志里分辨「用户看到的失败」和「我们自己吃掉的一次重试」。
+  'autoRetry',
+};
 const _allowedOutcomes = <String>{
   'firstFrame',
   'error',
