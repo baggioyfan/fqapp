@@ -775,7 +775,7 @@ class _DesktopPlayer {
       // 探针阶段的文案是 Rust 里的固定字面量，原样落盘正好区分「连不上」与
       // 「不是 206」「密钥/首块解不开」；播放器阶段的异常只留类型。
       final detail = stage == 'probe' && error is StateError
-          ? '${error.message}'
+          ? error.message
           : '${error.runtimeType}';
       AppLog.d('desktop-open', 'step=$stage error=$detail');
       if (!ready.isCompleted) ready.completeError(StateError('无法打开媒体'));
