@@ -33,24 +33,19 @@ on:
       - 'scripts/build_macos.sh'
       - 'scripts/generate_app_icons.py'
       - '.github/workflows/macos.yml'
-  push:
-    branches: [master]
-    paths:
-      - 'lib/**'
-      - 'rust/**'
-      - 'native/**'
-      - 'assets/**'
-      - 'pubspec.*'
-      - 'scripts/build_macos.sh'
-      - 'scripts/generate_app_icons.py'
-      - '.github/workflows/macos.yml'
+  # 去掉 push 自动触发（原为 branches: [master] + paths）。理由与 windows.yml
+  # 相同：日常推代码只想跑 Dart Check，macOS 全量构建留给发布——发布时由
+  # android-apk.yml 通过 workflow_call 复用本文件，不受影响。要恢复自动构建
+  # 就把下面几行贴回 push 块：branches: [master]，paths 为 lib/** rust/**
+  # native/** assets/** pubspec.* scripts/build_macos.sh
+  # scripts/generate_app_icons.py .github/workflows/macos.yml
 
 permissions:
   contents: read
 
 concurrency:
-  # 被复用时 github.workflow 是调用方的名字（Android APK），因此发布会和
-  # master push 触发的独立 macOS 构建分属不同 group，不会互相取消。
+  # 被 android-apk.yml 复用时 github.workflow 是调用方的名字（Android APK）；
+  # 单独 dispatch 时是本文件的名字。两者 group 不同，不会互相取消。
   group: macos-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
