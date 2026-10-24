@@ -32,7 +32,9 @@ void main() {
   testWidgets(
     'U01 last episode completion persists a seek beyond the last checkpoint',
     (tester) async {
-      final player = ControlledNativePlayer();
+      final player = ControlledNativePlayer(
+        duration: const Duration(minutes: 2),
+      );
       final store = MemoryReaderStore();
       await tester.binding.setSurfaceSize(const Size(400, 800));
       tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);

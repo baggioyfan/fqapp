@@ -592,7 +592,10 @@ class _Session {
         return loader?.call(chapter) ?? Future.value(_source(chapter.itemId));
       },
       playerFactory: () {
-        final player = factory?.call() ?? ControlledNativePlayer();
+        // 这份用例集假定「2 分钟的已知片长」（完成态续播要按它判是否播完）。
+        final player =
+            factory?.call() ??
+            ControlledNativePlayer(duration: const Duration(minutes: 2));
         players.add(player);
         return player;
       },

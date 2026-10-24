@@ -35,7 +35,10 @@ void main() {
     tester,
   ) async {
     final gate = Completer<void>();
-    final player = ControlledNativePlayer(seekGate: gate)..isPlaying = true;
+    final player = ControlledNativePlayer(
+      seekGate: gate,
+      duration: const Duration(minutes: 2),
+    )..isPlaying = true;
     await player.create('https://example.invalid/1.mp4', '');
     addTearDown(() async {
       if (!gate.isCompleted) gate.complete();

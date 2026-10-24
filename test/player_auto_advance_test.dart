@@ -244,7 +244,9 @@ class _Session {
         'video_url': 'https://example.invalid/${episode.itemId}.mp4',
       },
       playerFactory: () {
-        final player = ControlledNativePlayer();
+        final player = ControlledNativePlayer(
+          duration: const Duration(minutes: 2),
+        );
         players.add(player);
         return player;
       },

@@ -23,12 +23,15 @@ class ControlledNativePlayer extends FakeNativePlayer {
     this.rateGate,
     this.playGate,
     this.hasFirstFrame = true,
+    Duration duration = Duration.zero,
   }) {
     currentPosition = Duration.zero;
     // 与真实解码器一致：刚 create 出来还不知道片长，要等 durationStream
     // 报一次。播放页的预取按「本集剩余时长」触发，只有真拿到时长才判断，
     // 所以这里不能沿用基类那个「2 分钟」的假定值。
-    totalDuration = Duration.zero;
+    // 需要「已知片长」的用例（拖动、播完、完成态续播）自己传 `duration:`，
+    // 不要再依赖这个默认值。
+    totalDuration = duration;
   }
 
   @override

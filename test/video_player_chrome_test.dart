@@ -1168,8 +1168,10 @@ void main() {
         'seek then background preserves pause intent (playing: $playing, awaiting native: $pendingSeek)',
         (tester) async {
           final seek = Completer<void>();
-          final player = ControlledNativePlayer(seekGate: seek)
-            ..isPlaying = playing;
+          final player = ControlledNativePlayer(
+            seekGate: seek,
+            duration: const Duration(minutes: 2),
+          )..isPlaying = playing;
           await player.create('https://example.invalid/1.mp4', '');
           tester.binding.handleAppLifecycleStateChanged(
             AppLifecycleState.resumed,

@@ -355,7 +355,9 @@ class _Session {
       extrasLoader: extras,
       directoryLoader: directory,
       playerFactory: () {
-        final player = ControlledNativePlayer();
+        final player = ControlledNativePlayer(
+          duration: const Duration(minutes: 2),
+        );
         players.add(player);
         return player;
       },
