@@ -226,9 +226,6 @@ void main() {
       expect(sample.stagesMs['address'], 0);
       expect(sample.playToFirstFrameMs, 80);
       expect(sample.totalMs, 80);
-      // TEMP(prefetch-age)：命中预取时必须带上地址年龄，否则这次埋点白做。
-      // 关掉 `kPrefetchAgeProbe` 后这条断言要一起删。
-      expect(sample.prefetchAgeMs, isNotNull);
     },
   );
 

@@ -78,6 +78,30 @@ fn media_client(url: &str) -> Result<Client, String> {
         .map_err(|_| "无法初始化媒体连接".to_string())
 }
 
+/// TEMP(error-body)：一次性诊断开关。实测定点（2026-10-24，Air）里 CDN 对
+/// 35% 的取流请求返 403，且与地址来源、地址年龄都无关 —— 是每次请求独立被拒。
+/// 只有状态码看不出被拒的理由，这里把响应体前 128 个字符一起报上去。
+///
+/// 撤的方式：置 false 即回到「只有 status」；彻底删除时连同 `body_snippet`
+/// 和 `Source::open` 里引用它的那几行一起去掉。
+const CAPTURE_ERROR_BODY: bool = true;
+
+/// 错误响应体只留前 128 个字符，控制字符（含换行）换成空格 —— 日志是按行读的，
+/// 一段带换行的 HTML 会把后续记录冲散。
+fn body_snippet(body: &str) -> String {
+    let mut out = String::new();
+    for ch in body.chars().take(128) {
+        out.push(if ch.is_control() { ' ' } else { ch });
+    }
+    let trimmed = out.trim();
+    // 有些 CDN 会把请求的完整地址回显在错误页里，而签名就在 query 上。见到
+    // `http` 就只保留它之前的部分，不把带签名的地址写进日志。
+    match trimmed.find("http") {
+        Some(index) => trimmed[..index].trim_end().to_string(),
+        None => trimmed.to_string(),
+    }
+}
+
 struct Source {
     file: Option<File>,
     client: Client,
@@ -104,7 +128,7 @@ impl Source {
         let size = if let Some(file) = &file {
             file.metadata().map_err(|_| "无法读取文件长度")?.len()
         } else {
-            let response = client
+            let mut response = client
                 .get(&url)
                 .header(header::RANGE, "bytes=0-0")
                 .header(header::ACCEPT_ENCODING, "identity")
@@ -114,7 +138,25 @@ impl Source {
                 // 带上真实状态码：403/404 是地址或节点被拒，200 是服务端忽略
                 // Range，两者处理方式完全不同，只报「不支持分段读取」分不清。
                 let status = response.status().as_u16();
-                return Err(format!("取流失败 status={status}"));
+                // TEMP(error-body)：CDN 的 403 响应体通常写明拒绝原因（签名无效 /
+                // 防盗链 / 限流 / 回源失败），只有状态码只能靠猜。诊断完把
+                // `CAPTURE_ERROR_BODY` 置 false 即退回「只有状态码」。
+                let body = if CAPTURE_ERROR_BODY {
+                    // 只读前 256 字节：错误页可能是一整页 HTML，没必要为诊断把
+                    // 整个 body 拖下来。用 `&mut` 借出去，response 留在原地，
+                    // 正常路径后面还要读它的响应头。
+                    let mut buf = Vec::new();
+                    let _ = (&mut response).take(256).read_to_end(&mut buf);
+                    String::from_utf8_lossy(&buf).into_owned()
+                } else {
+                    String::new()
+                };
+                if body.is_empty() {
+                    return Err(format!("取流失败 status={status}"));
+                }
+                let snippet = body_snippet(&body);
+                let detail = format!("取流失败 status={status} body={snippet}");
+                return Err(detail);
             }
             let range = response
                 .headers()

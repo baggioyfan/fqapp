@@ -90,14 +90,7 @@ class EpisodeSourceRequest {
   final Future<EpisodeSource> future;
   final EpisodeSourceOrigin origin;
 
-  /// 从这次地址被取到，到它被拿去建播放器之间过了多久。只有命中缓存
-  /// （含预取）时才有值；当场发请求时为 null。
-  ///
-  /// TEMP(prefetch-age)：2026-10-24 加，只为测「预取地址活多久」。详见
-  /// `kPrefetchAgeProbe`。
-  final Duration? age;
-
-  const EpisodeSourceRequest(this.future, this.origin, {this.age});
+  const EpisodeSourceRequest(this.future, this.origin);
 }
 
 /// Page-local address metadata only. Never creates a player or downloads video.
@@ -143,7 +136,6 @@ class EpisodeSourceCache {
         ready.prefetched
             ? EpisodeSourceOrigin.prefetchHit
             : EpisodeSourceOrigin.cacheHit,
-        age: _now() - ready.started,
       );
     }
     final pending = _pending[id];
@@ -153,7 +145,6 @@ class EpisodeSourceCache {
         pending.prefetched
             ? EpisodeSourceOrigin.prefetchPending
             : EpisodeSourceOrigin.pending,
-        age: _now() - pending.started,
       );
     }
     final entry = _SourceEntry(_now(), prefetch);
