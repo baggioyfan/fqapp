@@ -1175,7 +1175,10 @@ class _ShelfEntry {
       badge: '',
       ep: history['ep']?.toString() ?? '',
       kind: history['kind']?.toString() ?? 'book',
-      seriesId: history['seriesId']?.toString(),
+      // 同步/换机来的记录可能没有 seriesId（早期版本只写 bookId），而 bookId
+      // 一直是剧集 id。缺了它，详情页会拿单集 id 去查目录：pseries 对单集 id
+      // 回 code=101104 + 空 item_list，页面就只剩「当前这一集」。
+      seriesId: (history['seriesId'] ?? history['bookId'])?.toString(),
       episodeId: history['episodeId']?.toString(),
     );
     final contentId = historyContentId(history);

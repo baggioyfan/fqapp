@@ -13,6 +13,7 @@ import '../models/media_item.dart';
 import '../models/media_description.dart';
 import '../models/series_detail.dart';
 import '../services/api_client.dart';
+import '../services/app_log.dart';
 import '../services/audio_history.dart';
 import '../services/book_open_preferences.dart';
 import '../services/chapter_cache_store.dart';
@@ -148,6 +149,16 @@ class DetailPage extends StatefulWidget {
 }
 
 class _DetailPageState extends State<DetailPage> {
+  /// 单次取目录的时间预算。
+  ///
+  /// 短剧目录要经一台设备签名打 pseries 上游，实测同一部剧正常是 1.6–12 秒；
+  /// 后端在设备失败时会换设备重试 3 次（每次 15 秒预算），全败才返回 500，
+  /// 所以一次请求最长能拖到 50 秒以上。页面不该陪着一起等。
+  static const _directoryBudget = Duration(seconds: 20);
+
+  /// 失败后重试的间隔。失败是间歇的，不需要长退避。
+  static const _directoryRetryDelay = Duration(milliseconds: 300);
+
   Map<String, dynamic>? _detail;
   BookDetail? _bookDetail;
   SeriesDetail _series = SeriesDetail.empty;
@@ -176,7 +187,11 @@ class _DetailPageState extends State<DetailPage> {
   bool get _isAudio => widget.item.kind == 'audio';
   bool get _isManga => widget.item.kind == 'manga';
   bool get _isBook => widget.item.kind == 'book';
-  String get _contentId => widget.item.seriesId ?? widget.item.id;
+  /// 详情与目录都按项目 id 走；seriesId 为空串时不能当成有效剧集 id。
+  String get _contentId {
+    final seriesId = widget.item.seriesId;
+    return seriesId != null && seriesId.isNotEmpty ? seriesId : widget.item.id;
+  }
   String get _chapterUnit => _isVideo
       ? '集'
       : _isManga
@@ -247,6 +262,44 @@ class _DetailPageState extends State<DetailPage> {
     super.dispose();
   }
 
+  /// 取目录；短剧失败或取到空目录时再来一次。
+  ///
+  /// 短剧目录不是本地数据：它要经一台设备签名打 pseries 上游。实测同一部剧
+  /// 连打三次的耗时分别是 36 秒、1.7 秒、2.0 秒，另有一次 53 秒后后端直接
+  /// 返回 `device request failed after 3 retries`（换设备重试 3 次仍失败）。
+  /// 也就是说失败是**间歇**的，而不是这部剧没有目录。
+  ///
+  /// 因此失败后再来一次往往就能拿到完整目录。这比把失败静默降级成「这部剧
+  /// 只有当前这一集」有用得多——后者正是同步/换机后点旧记录看到的样子：
+  /// 目录空了，兜底塞一条假单集，用户既看不出原因也没有重试入口。
+  ///
+  /// 小说不做重试：它的目录走另一条端点，没有这类间歇失败，空目录也可能是
+  /// 正常结果。
+  Future<List<List<Chapter>>> _directoryWithRetry(String id) async {
+    final injected = widget.directoryLoader;
+    final loader = injected ?? ApiClient.instance.directoryChapters;
+    final retries = _isVideo ? 1 : 0;
+    for (var attempt = 0; ; attempt++) {
+      try {
+        // 时间预算只加在真实请求上：注入的 loader 由调用方（测试/预览）自己
+        // 掌控，给它挂一个内部定时器只会让测试留下未完成的 timer。
+        var pending = loader(id, tab: _tab);
+        if (injected == null) pending = pending.timeout(_directoryBudget);
+        final volumes = await pending;
+        if (volumes.isNotEmpty || attempt >= retries) return volumes;
+        AppLog.w('detail-directory', 'empty attempt=$attempt id=$id');
+      } catch (error) {
+        if (attempt >= retries) rethrow;
+        AppLog.w(
+          'detail-directory',
+          'failed attempt=$attempt id=$id',
+          error: error,
+        );
+      }
+      await Future<void>.delayed(_directoryRetryDelay);
+    }
+  }
+
   Future<void> _load() async {
     final generation = ++_loadGeneration;
     ++_openGeneration;
@@ -284,12 +337,7 @@ class _DetailPageState extends State<DetailPage> {
     final detailFuture = _capture(
       (widget.detailLoader ?? ApiClient.instance.detail)(_contentId, tab: _tab),
     );
-    final directoryFuture = _capture(
-      (widget.directoryLoader ?? ApiClient.instance.directoryChapters)(
-        _contentId,
-        tab: _tab,
-      ),
-    );
+    final directoryFuture = _capture(_directoryWithRetry(_contentId));
     // Reviews are cosmetic: they load alongside and never gate the page.
     final extrasFuture = _capture(_loadExtras(_contentId));
     // Short-drama cast lives on a series endpoint the reading API does not
@@ -307,17 +355,41 @@ class _DetailPageState extends State<DetailPage> {
     // A search result can represent a single episode rather than a series.
     // Keep it playable even when the pseries directory endpoint rejects that
     // ID; the video endpoint accepts the episode ID directly.
+    //
+    // 但这条降级只在「确实不知道剧集 id」时成立：pseries 对单集 id 会回
+    // code=101104 + 空 item_list，目录因此为空，这不代表这部剧只有一集。
+    // 判据是「正在看的这一集不是这个 id 本身」——剧集条目里的 episodeId 是其
+    // 中一集、与剧集 id 不同；搜索单集条目的 id 与 episodeId 是同一个值。
+    // 明确是剧集却取不到目录时，宁可报错让用户重试，也不要把失败伪装成一张
+    // 「只有一集」的目录（同步/换机后拿旧记录点进去就是这样）。
+    final knownSeries =
+        widget.item.episodeId != null && widget.item.episodeId != _contentId;
     if (_isVideo && volumes.isEmpty && widget.item.episodeId != null) {
-      volumes = [
-        [
-          Chapter(
-            itemId: widget.item.episodeId!,
-            title: widget.item.title,
-            volumeName: '剧集',
-          ),
-        ],
-      ];
+      if (!knownSeries) {
+        volumes = [
+          [
+            Chapter(
+              itemId: widget.item.episodeId!,
+              title: widget.item.title,
+              volumeName: '剧集',
+            ),
+          ],
+        ];
+      } else {
+        AppLog.d(
+          'detail-directory',
+          'empty id=$_contentId episode=${widget.item.episodeId}',
+        );
+      }
     }
+
+    // 取目录失败时给一句能看懂的话，而不是把后端的设备重试错误原样抛给用户。
+    final videoDirectoryMissing = _isVideo && knownSeries && volumes.isEmpty;
+    final directoryErrorText = videoDirectoryMissing
+        ? '没取到这部短剧的目录，可能是数据暂时不全，稍后重试。'
+        : directoryResult.error == null
+        ? null
+        : userFacingError(directoryResult.error!);
 
     if (volumes.isEmpty && directoryResult.error != null) {
       // 联网取目录失败：先看本地有没有整本缓存。有就把「从缓存阅读」的入口
@@ -326,21 +398,24 @@ class _DetailPageState extends State<DetailPage> {
       if (!mounted || generation != _loadGeneration) return;
       setState(() {
         _cachedBook = cached;
-        _error = userFacingError(directoryResult.error!);
+        _error = directoryErrorText;
         _loading = false;
       });
       return;
     }
+    // A missing optional detail response should not hide a usable list.
+    final detailFailureText =
+        detail == null && detailResult.error != null && volumes.isEmpty
+        ? userFacingError(detailResult.error!)
+        : null;
     setState(() {
       _detail = detail;
       // The rich metadata rides on the same detail response the page already
       // fetches, so no extra request is needed for the masthead or stats row.
       _bookDetail = detail == null ? null : BookDetail.fromPayload(detail);
       _allChapters = volumes.expand((volume) => volume).toList(growable: false);
-      // A missing optional detail response should not hide a usable list.
-      _error = detail == null && detailResult.error != null && volumes.isEmpty
-          ? userFacingError(detailResult.error!)
-          : null;
+      // 明确是剧集却取不到目录时，给一句能看懂的话，而不是一张空目录。
+      _error = directoryErrorText ?? detailFailureText;
       _loading = false;
     });
     unawaited(_refreshResume());
@@ -605,9 +680,11 @@ class _DetailPageState extends State<DetailPage> {
                                 ? _stateCard(
                                     icon: LucideIcons.wifi_off,
                                     title: '暂时没能加载章节',
-                                    message: _cachedBook == null
-                                        ? '请检查网络连接，再试一次。'
-                                        : '网络不可用。这本书已经下载到本地，可以直接离线阅读。',
+                                    message:
+                                        _error ??
+                                        (_cachedBook == null
+                                            ? '请检查网络连接，再试一次。'
+                                            : '网络不可用。这本书已经下载到本地，可以直接离线阅读。'),
                                     retry: true,
                                     onReadCached: _cachedBook == null
                                         ? null
@@ -776,7 +853,8 @@ class _DetailPageState extends State<DetailPage> {
         ? _stateCard(
             icon: LucideIcons.wifi_off,
             title: '暂时没能加载章节',
-            message: '请检查网络连接后重试，已缓存内容可离线打开。',
+            message:
+                _error ?? '请检查网络连接后重试，已缓存内容可离线打开。',
             retry: true,
             onReadCached: _cachedBook == null ? null : _readCached,
           )

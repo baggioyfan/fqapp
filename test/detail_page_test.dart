@@ -75,6 +75,42 @@ void main() {
     );
   }
 
+  testWidgets('剧集条目的目录为空时不再降级成只有一集', (tester) async {
+    var calls = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: DetailPage(
+          item: MediaItem(
+            id: 'series',
+            seriesId: 'series',
+            episodeId: 'ep25',
+            title: '同步来的短剧',
+            cover: '',
+            author: '',
+            badge: '',
+            ep: '25',
+            kind: 'video',
+          ),
+          readerStore: MemoryReaderStore(),
+          detailLoader: (id, {String tab = '小说'}) async => {},
+          directoryLoader: (id, {String tab = '小说'}) async {
+            calls++;
+            return <List<Chapter>>[];
+          },
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    // 目录为空说明取目录失败（pseries 对单集 id 回 code=101104 + 空列表），
+    // 不能把它渲染成「这部剧只有正在看的这一集」：页面要给失败态和重试，
+    // 也不该摆出「观看」按钮把用户带进只有一集的播放器。
+    expect(find.textContaining('没取到这部短剧的目录'), findsOneWidget);
+    expect(find.byKey(const Key('detail_read_button')), findsNothing);
+    // 短剧的空目录会被当成一次失败重试（同一次地址连打两次都空才下结论）。
+    expect(calls, 2);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
   testWidgets('a long directory error can be scrolled to retry', (
     tester,
   ) async {
