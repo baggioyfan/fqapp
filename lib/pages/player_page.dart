@@ -104,7 +104,8 @@ class PlayerPage extends StatefulWidget {
 class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   /// 建播放器失败（取流地址被拒）时的自动重试上限，见 `_loadVideo`。
   ///
-  /// 3 次重试 = 最多 4 次尝试，全部原地重试同一地址，只有最后一跳才换新地址。
+  /// 3 次重试 = 最多 4 次尝试，**每次重试都换一份新地址**。Air 上两集
+  /// （ep1/ep18）都是第 4 次才起来，只兜 2 次不够。
   static const _maxAutoRetries = 3;
 
   /// 下一集取流地址的预取提前量：本集**只剩这么多**时才去取。
@@ -113,9 +114,9 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   /// 实测 10.6–12.5 秒的地址和刚取的全新地址被拒概率一样（37% vs 33%），没有
   /// 「放久了就失效」这回事。
   ///
-  /// 保留 20 秒是为了给重试留预算：预取来的地址一次没过要先原地重试（约
-  /// 0.3 秒），还不行得现取一份新地址（`videos/{id}` 高峰期 3–4 秒），这些
-  /// 都必须在用户切到下一集之前做完。
+  /// 保留 20 秒是为了给重试留预算：地址被拒后每次重试都要现取一份新地址
+  /// （`videos/{id}` 高峰期 3–4 秒），最多 3 次，这些都得在用户切到下一集
+  /// 之前做完。
   static const _prefetchLeadTime = Duration(seconds: 20);
 
   late int _index;
@@ -1199,18 +1200,19 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       try {
         await player.create(source.url, source.keyHex);
       } catch (_) {
-        // 建播放器失败基本是 CDN 拒了这次取流（`status=403`）。实测 28 次尝试
-        // 里 35% 被拒，且与地址来源无关：预取来的地址 37%、刚取的全新地址 33%
-        // —— 是**每次请求独立**被拒，不是这份地址失效。所以不必为了换新地址再
-        // 等一次 3–4 秒的取地址接口，拿同一个地址重来往往就过了。
+        // 建播放器失败基本是 CDN 拒了这次取流（`status=403`）。403 是**这份
+        // 地址**的问题，不是这次请求的问题：实测同一地址连打 3 次全被拒，每次
+        // 都在 231–334ms 内答完（边缘立刻裁决，不是超时），第 4 次换成新地址
+        // 187ms 就通；反过来，没被拒过的地址连打 30 次也 30 次全过。所以原地
+        // 重试只是白等，每次重试都得换一份新地址。
         //
-        // 因此前几跳原地重试（refresh 为假，直接命中缓存里那份地址），只有最后
-        // 一跳换新地址兜底。离线文件重试没有意义（文件本身没变），用户手动点
-        // 重试也不叠加，避免连环重试。
+        // 约 35% 的新地址一取到就是坏的（14:43–14:59 采样：预取地址 37%、全新
+        // 地址 33%），这是「兜几次」要覆盖的量。离线文件重试没有意义（文件本身
+        // 没变），用户手动点重试也不叠加，避免连环重试。
         //
         // 挡的是「用户手动点重试」：那时 refresh 为真、autoRetry 为假，不该再
-        // 叠一层自动重试。本方法自己发起的重试在最后一跳也带 refresh，所以必须
-        // 两个一起判——只看 autoRetry 会把首次失败也挡在门外，等于这个功能不存在。
+        // 叠一层自动重试。本方法自己发起的重试也带 refresh，所以必须两个一起
+        // 判——只看 autoRetry 会把首次失败也挡在门外，等于这个功能不存在。
         if (offline != null ||
             (refresh && !autoRetry) ||
             !_current(generation)) {
@@ -1218,15 +1220,12 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
         }
         if (retryDepth >= _maxAutoRetries) rethrow;
         trace.fail();
-        // 最后一跳才换地址：前面的原地重试已经覆盖「偶然被拒」，到这一步还失败
-        // 就说明大概是这份地址本身有问题。
-        final nextDepth = retryDepth + 1;
         unawaited(
           _loadVideo(
-            refresh: nextDepth >= _maxAutoRetries,
+            refresh: true,
             autoplay: autoplay,
             autoRetry: true,
-            retryDepth: nextDepth,
+            retryDepth: retryDepth + 1,
           ),
         );
         return;

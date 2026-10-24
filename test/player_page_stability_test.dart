@@ -297,7 +297,7 @@ void main() {
     },
   );
 
-  testWidgets('建播放器连续失败两次仍自动重试，用户看不到失败页', (tester) async {
+  testWidgets('建播放器连续失败两次仍自动换地址，用户看不到失败页', (tester) async {
     var created = 0;
     final session = _Session(
       factory: () =>
@@ -308,26 +308,24 @@ void main() {
     for (var i = 0; i < 8 && session.players.length < 3; i++) {
       await _flush(tester);
     }
-    // create 抛错（CDN 拒了这次取流的典型表现）后先原地重试：403 是每次请求
-    // 独立被拒（实测 35%），换地址并不提高命中率，却要多等一次 3–4 秒的取地址
-    // 接口。所以三次尝试只应发一次地址请求。
-    expect(session.requests.where((id) => id == '1'), hasLength(1));
+    // create 抛错（CDN 拒了这次取流的典型表现）后必须换地址：403 是这份地址
+    // 本身被拒，同一地址重来多少次都是同一个结果。三次尝试 = 三次地址请求。
+    expect(session.requests.where((id) => id == '1'), hasLength(3));
     expect(session.players, hasLength(3));
     expect(session.players.first.disposed, isTrue);
     expect(session.players.last.isPlaying, true);
     expect(find.text('播放失败'), findsNothing);
   });
 
-  testWidgets('四次尝试全失败才展示失败页，只有最后一跳换地址', (tester) async {
+  testWidgets('四次尝试全失败才展示失败页', (tester) async {
     final session = _Session(factory: () => _CreateFailsPlayer());
     await _mount(tester, session);
     for (var i = 0; i < 16 && find.text('播放失败').evaluate().isEmpty; i++) {
       await _flush(tester);
     }
-    // 4 次 create = 首次 + 3 次重试；前三次用同一份地址，只有最后一跳换新的，
-    // 所以地址请求总共 2 次。
+    // 4 次 create = 首次 + 3 次重试，每跳都换一份新地址，所以地址请求 4 次。
     expect(session.players, hasLength(4));
-    expect(session.requests.where((id) => id == '1'), hasLength(2));
+    expect(session.requests.where((id) => id == '1'), hasLength(4));
     expect(find.text('播放失败'), findsOneWidget);
   });
 
@@ -562,8 +560,8 @@ Future<void> _mount(WidgetTester tester, _Session session) async {
   await _flush(tester);
 }
 
-/// 建播放器必失败的假播放器：用来验证 create 失败后会原地重试、并最终兜到
-/// 失败页。
+/// 建播放器必失败的假播放器：用来验证 create 失败后会换地址自动重来、并最终
+/// 兜到失败页。
 class _CreateFailsPlayer extends ControlledNativePlayer {
   @override
   Future<int> create(String cdnUrl, String keyHex) async {
