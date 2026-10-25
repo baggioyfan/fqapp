@@ -245,10 +245,9 @@ class _HomePageState extends ConsumerState<HomePage> {
                               selectedIndex: state.tabIndex,
                               onSelect: notifier.selectTab,
                               categories: _categoriesOf(state),
-                              extent:
-                                  HomeTabBarDelegate.barHeight +
-                                  HomeTabBarDelegate.bottomPadding +
-                                  (textScale - 1).clamp(0, 2) * 16,
+                              // 桌面/手机两套高度都在 extentFor 里，这里
+                              // 不要再拼常量——手机 38+4、桌面 46+8。
+                              extent: HomeTabBarDelegate.extentFor(textScale),
                               dark: palette.dark,
                               eink: palette.eink,
                               oled: palette.oled,
@@ -359,25 +358,54 @@ class _HomePageState extends ConsumerState<HomePage> {
         // 时 feed 侧 top inset 就是 0（k1.java h3() → i(0)）。
         final entries = homeCellEntries(cell);
         slivers.add(
-          SliverPadding(
-            padding: const EdgeInsets.fromLTRB(12, 0, 12, 0),
-            // 交错网格（官方 StaggeredFeedLayout）：无摘要/无标签的卡更短，
-            // 不再按最坏情况预留统一格高。
-            sliver: homeBookMasonry(
-              context,
-              childCount: entries.length,
-              itemBuilder: (context, index) {
-                final item = entries[index];
-                // 挂 key：续播裁剪（snapshot sublist 丢前段卡）会让所有下标
-                // 移位，没有 key 时整屏卡片按位置错位重建。
-                return HomeBookCard(
-                  key: ValueKey('${item.kind}:${item.id}'),
-                  item: item,
-                  onTap: () => _openItem(item),
-                );
-              },
-            ),
-          ),
+          isDesktopHost
+              // 桌面：书架宫格同款（16 边距、目标 170dp 一颗、封面 1.4、
+              // 两行标题 + 一行副信息）。官方那套在桌面恒 2 列，1280 窗口
+              // 下两张卡就吃掉一整屏，密度与书架完全接不上。
+              //
+              // availableWidth 要传**含左右 16 边距**的整宽：
+              // shelfGridCellWidth 自己会减去 screenPadding*2，而调用方
+              // 给的 gridWidth 已经先扣掉了 _gridPadding*2，所以加回来。
+              ? SliverPadding(
+                  padding: const EdgeInsets.fromLTRB(
+                    homeShelfSidePadding,
+                    0,
+                    homeShelfSidePadding,
+                    0,
+                  ),
+                  sliver: homeBookShelfGrid(
+                    context,
+                    availableWidth: gridWidth + _gridPadding * 2,
+                    childCount: entries.length,
+                    itemBuilder: (context, index) {
+                      final item = entries[index];
+                      // 挂 key：续播裁剪会让所有下标移位，没有 key 时整屏
+                      // 卡片按位置错位重建。
+                      return homeShelfCard(
+                        item,
+                        key: ValueKey('${item.kind}:${item.id}'),
+                        onTap: () => _openItem(item),
+                      );
+                    },
+                  ),
+                )
+              : SliverPadding(
+                  padding: const EdgeInsets.fromLTRB(12, 0, 12, 0),
+                  // 交错网格（官方 StaggeredFeedLayout）：无摘要/无标签的卡
+                  // 更短，不再按最坏情况预留统一格高。
+                  sliver: homeBookMasonry(
+                    context,
+                    childCount: entries.length,
+                    itemBuilder: (context, index) {
+                      final item = entries[index];
+                      return HomeBookCard(
+                        key: ValueKey('${item.kind}:${item.id}'),
+                        item: item,
+                        onTap: () => _openItem(item),
+                      );
+                    },
+                  ),
+                ),
         );
         rendered = true;
       }

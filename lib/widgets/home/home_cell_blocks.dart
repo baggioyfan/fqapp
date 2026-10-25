@@ -7,7 +7,10 @@ import 'package:flutter_staggered_grid_view/flutter_staggered_grid_view.dart';
 
 import '../../models/home_cell.dart';
 import '../../models/media_item.dart';
+import '../../services/desktop_platform.dart';
 import '../../services/poster_cache.dart';
+import '../bookshelf_card.dart';
+import '../shelf/shelf_design.dart';
 import 'home_cell_renderers.dart';
 import 'home_design.dart';
 
@@ -61,6 +64,14 @@ const double _rankStripIdleAlpha = 0.4;
 /// 榜名条到预览首行的间距（`asb.xml` 为 8dp）。2026-10-24 用户拍板不对齐
 /// 官方：标题贴近内容，8 → 2（见 [_rankStripTopMargin] 的节奏说明）。
 const double _rankStripContentGap = 2;
+
+/// 桌面榜名条（我们的适配，不对齐官方）：等字号 13sp + 选中项中性浅底小
+/// 方块。官方那套 16/14sp 全粗体是为手机顶栏的 24sp 巨字做陪衬的，桌面顶栏
+/// 换成等字号胶囊后，它必须降一档层级，否则比一级 tab 还响。
+const double _rankStripDesktopSize = 13;
+const double _rankStripDesktopGap = 4;
+const double _rankStripDesktopPaddingH = 9;
+const double _rankStripDesktopPaddingV = 5;
 
 /// `o.getPages()` returns 4 (3 only for the oversized-font path).
 const int _rankRowsPerPage = 4;
@@ -205,6 +216,90 @@ int homeColumnCount(BuildContext context, {bool padAdapt = false}) {
   return 2;
 }
 
+// ── 桌面书卡流（书架宫格同款）──────────────────────────────────────────────
+
+/// 桌面每颗的目标宽度，与书架宫格同一个口径（`library_page` 的
+/// `(maxWidth / 170).floor().clamp(3, 10)`）。
+const double _shelfTargetCellWidth = 170;
+
+/// 桌面书卡流的左右外边距，与书架宫格同一条左线（16）。上方搜索行、排行榜
+/// 区块也都是 16，三层对齐；官方的卡片流是 12，桌面按这条线收敛。
+const double homeShelfSidePadding = ShelfTokens.screenPadding;
+
+/// 桌面书卡流的列数与格高。
+///
+/// 直接把书架那套几何搬过来（`shelf_design.dart` 的
+/// [shelfGridChildAspectRatio]），所以封面比例、标题两行、副信息一行的高度
+/// 两页完全一致，不会出现「首页卡片比书架胖一圈」。
+///
+/// [availableWidth] 是**含左右外边距**的整宽（`shelfGridCellWidth` 自己会
+/// 减掉 `ShelfTokens.screenPadding * 2` 和列间距）。
+({int columns, double aspectRatio}) homeShelfGridMetrics(
+  BuildContext context, {
+  required double availableWidth,
+}) {
+  final columns = (availableWidth / _shelfTargetCellWidth).floor().clamp(3, 10);
+  return (
+    columns: columns,
+    aspectRatio: shelfGridChildAspectRatio(
+      context,
+      availableWidth: availableWidth,
+      columns: columns,
+    ),
+  );
+}
+
+/// 桌面书卡流：等宽宫格。外层 `SliverPadding` 用
+/// `ShelfTokens.screenPadding`（16），与 [availableWidth] 的口径对应。
+///
+/// 官方 `us3.a.q()` 里除手机分支外全被平板适配开关 `b()` 挡住，桌面恒返回
+/// **2 列**——1280 窗口下每张卡 570 宽、封面 1.4 高，两张卡就吃掉一整屏，
+/// 和书架宫格的密度完全不是一回事。
+SliverGrid homeBookShelfGrid(
+  BuildContext context, {
+  required double availableWidth,
+  required int childCount,
+  required IndexedWidgetBuilder itemBuilder,
+}) {
+  final metrics = homeShelfGridMetrics(context, availableWidth: availableWidth);
+  return SliverGrid(
+    gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+      crossAxisCount: metrics.columns,
+      crossAxisSpacing: ShelfTokens.gridSpacing,
+      mainAxisSpacing: ShelfTokens.gridRunSpacing,
+      childAspectRatio: metrics.aspectRatio,
+    ),
+    delegate: SliverChildBuilderDelegate(itemBuilder, childCount: childCount),
+  );
+}
+
+/// 桌面书卡：直接复用书架宫格卡，所以「猜你喜欢」和「书架」是同一种卡。
+///
+/// 封面 1.4 + 角标位 + 两行标题 + 一行副信息。角标位在书架里放阅读进度，
+/// 这里放评分（无评分则不出角标）；副信息取作者，缺作者退成类型名。
+Widget homeShelfCard(
+  MediaItem item, {
+  Key? key,
+  required VoidCallback onTap,
+}) => BookshelfGridCard(
+  key: key,
+  item: item,
+  badgeText: _scoreBadge(item.score),
+  infoText: _shelfInfo(item),
+  onTap: onTap,
+);
+
+String? _scoreBadge(double? score) => switch (score) {
+  null => null,
+  final s when s == s.roundToDouble() => '${s.toStringAsFixed(0)}分',
+  final s => '${s.toStringAsFixed(1)}分',
+};
+
+String? _shelfInfo(MediaItem item) {
+  final author = item.author.trim();
+  return author.isEmpty ? bookshelfKindLabel(item.kind) : author;
+}
+
 /// 「更多」 on a block header: 14sp label plus the 4×7 arrow (`asb.xml`).
 class HomeBlockMore extends StatelessWidget {
   const HomeBlockMore({super.key, required this.onTap, this.label = '更多'});
@@ -262,6 +357,7 @@ class HomeRankStrip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = HomePalette.of(context);
+    if (isDesktopHost) return _desktopStrip(context, palette);
     return SizedBox(
       height: _rankStripHeight,
       child: SingleChildScrollView(
@@ -303,6 +399,69 @@ class HomeRankStrip extends StatelessWidget {
                   ),
                 ),
               ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// 桌面：13sp 等字号 + 选中项浅底小方块。
+  ///
+  /// 官方这套是被顶栏 24sp/16sp 的巨字衬出来的二级条；桌面顶栏换成等字号
+  /// 胶囊之后，若榜名条还是 16/14sp 全粗体黑字，它会比一级 tab 还响。这里
+  /// 压到 13sp、选中项用中性浅底（不用品牌色，避免和顶栏胶囊撞脸），读起来
+  /// 就是「这一块的筛选项」。
+  Widget _desktopStrip(BuildContext context, HomePalette palette) {
+    final duration = MediaQuery.disableAnimationsOf(context)
+        ? Duration.zero
+        : const Duration(milliseconds: 140);
+    return SizedBox(
+      height: _rankStripHeight,
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(
+          children: [
+            for (var i = 0; i < names.length; i++) ...[
+              if (i > 0) const SizedBox(width: _rankStripDesktopGap),
+              Center(
+                child: MouseRegion(
+                  cursor: SystemMouseCursors.click,
+                  child: GestureDetector(
+                    onTap: onSelect == null ? null : () => onSelect!(i),
+                    behavior: HitTestBehavior.opaque,
+                    child: AnimatedContainer(
+                      duration: duration,
+                      curve: Curves.easeOutCubic,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: _rankStripDesktopPaddingH,
+                        vertical: _rankStripDesktopPaddingV,
+                      ),
+                      decoration: BoxDecoration(
+                        color: i == selectedIndex
+                            ? palette.soft
+                            : Colors.transparent,
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: Text(
+                        names[i],
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: _rankStripDesktopSize,
+                          height: 1.1,
+                          fontWeight: i == selectedIndex
+                              ? FontWeight.w600
+                              : FontWeight.w500,
+                          color: i == selectedIndex
+                              ? palette.ink
+                              : palette.muted,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ],
           ],
         ),
       ),
