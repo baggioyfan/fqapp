@@ -17,7 +17,12 @@ const SERIES_FEED_PATH: &str = "/reading/bookapi/bookmall/cell/change/v";
 const SERIES_RELATED_PATH: &str = "/reading/bookapi/plan/v";
 
 /// Go's `reading724Params` (content_util.go).
-fn reading724_params() -> Params {
+///
+/// `pub(crate)` 是为了 search.rs 里的 search_cue：它复用这套 724 参数，
+/// 只覆盖 cue_type / bookstore_tab / user_is_login。上游是在 d889a50
+/// 里提的可见性，我们摘 c46aa3a（补 hot_search 路由）时那条依赖没跟进来，
+/// 于是 search.rs 引用 private 函数，cargo clippy 报 E0603。
+pub(crate) fn reading724_params() -> Params {
     let mut p = Params::new();
     p.set("iid", "{install_id}");
     p.set("device_id", "{device_id}");
