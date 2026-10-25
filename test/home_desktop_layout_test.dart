@@ -13,6 +13,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/pages/home_page.dart';
 import 'package:fqapp/pages/home_provider.dart';
+import 'package:fqapp/services/api_client.dart';
 import 'package:fqapp/widgets/bookshelf_card.dart';
 import 'package:fqapp/widgets/home/home_cell_blocks.dart';
 import 'package:fqapp/widgets/home/home_design.dart';
