@@ -532,10 +532,6 @@ class _RootShellState extends State<RootShell> with WidgetsBindingObserver {
     if (mounted) setState(() {});
   }
 
-  void _onDramaChromeChanged() {
-    if (mounted) setState(() {});
-  }
-
   Future<void> _startBackend() async {
     setState(() {
       _backendError = null;
