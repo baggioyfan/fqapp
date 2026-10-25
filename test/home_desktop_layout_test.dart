@@ -196,56 +196,65 @@ void main() {
       // 旧管线（这个分类没下发区块）也要走书架几何——官方 `us3.a.q()` 在
       // 桌面恒 2 列，只有区块管线自己改还不够，换个 tab 就会退回去。
       debugDefaultTargetPlatformOverride = TargetPlatform.windows;
-      addTearDown(() => debugDefaultTargetPlatformOverride = null);
       await tester.binding.setSurfaceSize(const Size(1280, 900));
       addTearDown(() => tester.binding.setSurfaceSize(null));
       addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
-
-      await tester.pumpWidget(
-        ProviderScope(
-          overrides: [
-            homeProvider.overrideWith(
-              () => HomeNotifier(
-                homepageLoader:
-                    ({
-                      int tabType = 2,
-                      int offset = 0,
-                      String? sessionId,
-                    }) async => HomepagePage(
-                      items: [
-                        for (var i = 0; i < 24; i++)
-                          MediaItem(
-                            id: 'i$i',
-                            title: '作品 $i',
-                            cover: '',
-                            author: '作者',
-                            badge: '',
-                            ep: '',
-                            kind: 'book',
-                          ),
-                      ],
-                      nextOffset: null,
-                      sessionId: null,
-                    ),
-                searchLoader: (query, {int page = 1}) async => [],
-              ),
-            ),
-          ],
-          child: const MaterialApp(home: HomePage()),
-        ),
-      );
-      await tester.pumpAndSettle();
-
-      // 旧管线的 HomeMediaCard 不该再出现在桌面；卡片统一是书架宫格卡。
-      expect(find.byType(HomeMediaCard), findsNothing);
-      final cards = find.byType(BookshelfGridCard);
-      expect(cards, findsWidgets);
-      final first = tester.getRect(cards.first);
-      final second = tester.getRect(cards.at(1));
-      // 1280 整宽 → 7 列、每颗 (1280-32-72)/7 = 168。
-      expect(first.width, closeTo(168, 1));
-      expect(second.left - first.right, closeTo(12, 1));
-      expect(second.top, closeTo(first.top, 0.5));
+      // foundation 的 debug 变量在测试体结束前必须复位，否则触发
+      // debugAssertAllFoundationVarsUnset（addTearDown 来不及）。
+      try {
+        await _pumpDesktopHome(tester);
+      } finally {
+        debugDefaultTargetPlatformOverride = null;
+      }
     });
   });
+}
+
+/// 桌面平台下渲染一版首页（无区块数据 → 旧管线），并断言书卡流是书架宫格。
+Future<void> _pumpDesktopHome(WidgetTester tester) async {
+  await tester.pumpWidget(
+    ProviderScope(
+      overrides: [
+        homeProvider.overrideWith(
+          () => HomeNotifier(
+            homepageLoader:
+                ({
+                  int tabType = 2,
+                  int offset = 0,
+                  String? sessionId,
+                }) async => HomepagePage(
+                  items: [
+                    for (var i = 0; i < 24; i++)
+                      MediaItem(
+                        id: 'i$i',
+                        title: '作品 $i',
+                        cover: '',
+                        author: '作者',
+                        badge: '',
+                        ep: '',
+                        kind: 'book',
+                      ),
+                  ],
+                  nextOffset: null,
+                  sessionId: null,
+                ),
+            searchLoader: (query, {int page = 1}) async => [],
+          ),
+        ),
+      ],
+      child: const MaterialApp(home: HomePage()),
+    ),
+  );
+  await tester.pumpAndSettle();
+
+  // 旧管线的 HomeMediaCard 不该再出现在桌面；卡片统一是书架宫格卡。
+  expect(find.byType(HomeMediaCard), findsNothing);
+  final cards = find.byType(BookshelfGridCard);
+  expect(cards, findsWidgets);
+  final first = tester.getRect(cards.first);
+  final second = tester.getRect(cards.at(1));
+  // 1280 整宽 → 7 列、每颗 (1280-32-72)/7 = 168。
+  expect(first.width, closeTo(168, 1));
+  expect(second.left - first.right, closeTo(12, 1));
+  expect(second.top, closeTo(first.top, 0.5));
 }
