@@ -1,3 +1,4 @@
+import 'services/api_client.dart';
 import 'services/audio_downloader.dart';
 import 'widgets/desktop_app_frame.dart';
 import 'services/native_player.dart';
@@ -396,6 +397,7 @@ class _RootShellState extends State<RootShell> with WidgetsBindingObserver {
     // 官方是瞬间跳转（scrollToPosition(0)），没有动画。
     _homeScroll.jumpTo(_homeScroll.position.minScrollExtent);
   }
+
   String? _backendError;
 
   /// 检查云端是否有更新时置位：回到前台可能连续触发几次，别把弹窗叠起来。
@@ -530,6 +532,10 @@ class _RootShellState extends State<RootShell> with WidgetsBindingObserver {
     if (mounted) setState(() {});
   }
 
+  void _onDramaChromeChanged() {
+    if (mounted) setState(() {});
+  }
+
   Future<void> _startBackend() async {
     setState(() {
       _backendError = null;
@@ -607,7 +613,7 @@ class _RootShellState extends State<RootShell> with WidgetsBindingObserver {
         builder: (context, index, _) => LazyIndexedStack(
           index: index,
           children: [
-            const HomePage(),
+            HomePage(cueLoader: () => ApiClient.instance.searchCue()),
             const DramaPage(),
             LibraryPage(onBrowse: () => desktopTab.value = 0),
             const MinePage(),
@@ -752,7 +758,10 @@ class _RootShellState extends State<RootShell> with WidgetsBindingObserver {
         child: LazyIndexedStack(
           index: _index,
           children: [
-            HomePage(scrollController: _homeScroll),
+            HomePage(
+              scrollController: _homeScroll,
+              cueLoader: () => ApiClient.instance.searchCue(),
+            ),
             const DramaPage(),
             // 空书架上的「去书城找书」切回首页 tab。
             LibraryPage(onBrowse: () => setState(() => _index = 0)),
