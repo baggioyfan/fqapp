@@ -191,7 +191,7 @@ class LibraryBackup {
     if (raw['format'] != _format ||
         version is! int ||
         !_supportedVersions.contains(version)) {
-      throw const FormatException('不是受支持的番茄小铺备份，请使用兼容版本导出的文件');
+      throw const FormatException('不是受支持的什锦铺备份，请使用兼容版本导出的文件');
     }
     final createdAt = _integer(raw['createdAt'], '备份时间', 8640000000000000);
     final shelf = <ShelfRecord>[];

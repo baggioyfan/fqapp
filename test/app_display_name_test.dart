@@ -11,7 +11,7 @@ import 'package:flutter_test/flutter_test.dart';
 /// manifest wiring and the shipped value here is what makes the next rename a
 /// deliberate edit instead of a silent regression.
 void main() {
-  const displayName = '番茄小铺';
+  const displayName = '什锦铺';
 
   test('manifest resolves the launcher label from app_name', () {
     final manifest = File(

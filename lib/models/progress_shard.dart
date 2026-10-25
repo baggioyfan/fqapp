@@ -50,7 +50,7 @@ class ProgressShard {
       throw const FormatException('进度文件格式无效');
     }
     if (raw['format'] != format) {
-      throw const FormatException('不是番茄小铺的进度文件');
+      throw const FormatException('不是什锦铺的进度文件');
     }
     if (raw['version'] != version) {
       throw const FormatException('不支持的进度文件版本');

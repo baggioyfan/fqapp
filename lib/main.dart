@@ -215,7 +215,7 @@ class _FqAppState extends State<FqApp> {
                     ? DesktopAppFrame(child: child ?? const SizedBox.shrink())
                     : child ?? const SizedBox.shrink(),
               ),
-              title: '番茄小铺',
+              title: '什锦铺',
               debugShowCheckedModeBanner: false,
               theme: _theme(Brightness.light, eink: eink),
               darkTheme: _theme(Brightness.dark, eink: eink),
