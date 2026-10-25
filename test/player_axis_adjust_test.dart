@@ -38,8 +38,6 @@ void main() {
   });
 
   tearDown(() {
-    // 平台覆盖必须在测试体之外复位：组件测试的模拟时钟不会再 pump，
-    // 留在测试体里复位等于没复位（同类坑见 app_bootstrap 那条）。
     debugDefaultTargetPlatformOverride = null;
     PlatformChannels.invoke = null;
     PlayerStyleConfig.instance = PlayerStyleConfig.defaults;
@@ -60,10 +58,13 @@ void main() {
     );
 
     // 左半屏、向上 150px：0.4 + 150/400 = 0.775
-    await tester.dragFrom(const Offset(120, 320), const Offset(0, -150));
-    await tester.pump();
+    await _slide(tester, const Offset(120, 300), -150);
     expect(brightnessWrites, isNotEmpty);
-    expect(brightnessWrites.last, closeTo(0.775, 0.02));
+    expect(brightnessWrites.last, closeTo(0.775, 0.01));
+    // 「满屏高 = 满量程」：位移到终点就停在上限，不会越过 1。
+    expect(brightnessWrites.every((value) => value <= 1 && value >= 0.02), isTrue);
+
+    await _teardown(tester);
   });
 
   testWidgets('全屏右半屏向下滑降音量', (tester) async {
@@ -84,10 +85,11 @@ void main() {
     await tester.pumpAndSettle();
 
     // 右半屏、向下 100px：0.5 - 100/400 = 0.25
-    await tester.dragFrom(const Offset(680, 100), const Offset(0, 100));
-    await tester.pump();
+    await _slide(tester, const Offset(680, 150), 100);
     expect(volume, isNotNull);
-    expect(volume, closeTo(0.25, 0.02));
+    expect(volume, closeTo(0.25, 0.01));
+
+    await _teardown(tester);
   });
 
   testWidgets('非全屏时竖滑不碰亮度，也不报音量', (tester) async {
@@ -102,11 +104,37 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.dragFrom(const Offset(100, 600), const Offset(0, -200));
-    await tester.pump();
+    await _slide(tester, const Offset(100, 600), -200);
     expect(brightnessWrites, isEmpty);
     expect(volume, isNull);
+    // 没进全屏就不该开亮度会话（那会把窗口亮度从系统值接管过来）。
+    expect(channelCalls, isEmpty);
+
+    await _teardown(tester);
   });
+}
+
+/// 竖直滑动 [dy] 像素。
+///
+/// 先用一次 25px 的位移吃掉 touch slop（drag start 记录的是越过 slop 之后的
+/// 位置），之后的 [dy] 才完整计入，这样「满屏高 = 100%」的换算才能精确断言。
+Future<void> _slide(WidgetTester tester, Offset start, double dy) async {
+  final gesture = await tester.startGesture(start);
+  await gesture.moveBy(Offset(0, dy.sign * 25));
+  await tester.pump();
+  await gesture.moveBy(Offset(0, dy));
+  await tester.pump();
+  await gesture.up();
+  await tester.pump(const Duration(milliseconds: 700));
+}
+
+/// 测完拆掉组件树，让 chrome 的提示条/收起计时器随 dispose 一起取消；
+/// 顺手把平台覆盖复位——组件测试在**测试体结束时**校验 foundation 的 debug
+/// 变量，tearDown 在断言之后，来不及。
+Future<void> _teardown(WidgetTester tester) async {
+  await tester.pumpWidget(const SizedBox.shrink());
+  await tester.pump(const Duration(milliseconds: 700));
+  debugDefaultTargetPlatformOverride = null;
 }
 
 Widget _app(

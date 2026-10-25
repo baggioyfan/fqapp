@@ -212,23 +212,26 @@ void main() {
   });
 
   testWidgets(
-    'landscape vertical swipes leave device settings, episode and playback untouched',
+    'landscape vertical swipes only adjust volume, leaving episode and playback untouched',
     (tester) async {
       final player = FakeNativePlayer()..isPlaying = true;
       final selected = <int>[];
       await _mount(tester, player, landscape: true, selected: selected);
       final video = tester.element(find.byKey(const ValueKey('video-frame')));
       player.calls.clear();
+      // 左半屏是亮度：这个用例没有 mock 亮度通道，原生侧不存在 ⇒ 不接管。
       await _slide(tester, const Offset(200, 200), const Offset(0, -50));
+      // 右半屏是音量：向下 60px，满屏高 450 ⇒ 1 - 60/450 = 0.867。
       await _slide(tester, const Offset(600, 200), const Offset(0, 60));
       expect(nativeCalls, isEmpty);
-      expect(find.textContaining('亮度'), findsNothing);
-      expect(find.textContaining('音量'), findsNothing);
+      // 提示条只显示百分比，不写「亮度 / 音量」字样。
+      expect(find.text('87%'), findsOneWidget);
       expect(
         tester.element(find.byKey(const ValueKey('video-frame'))),
         same(video),
       );
-      expect(player.calls, isEmpty);
+      expect(player.calls, hasLength(1));
+      expect(player.calls.single, 'volume:$kLandscapeVolume');
       expect(player.isPlaying, isTrue);
       expect(selected, isEmpty);
     },
@@ -265,6 +268,9 @@ void _expectClearScreen() {
   );
   expect(find.text('恢复').hitTestable(), findsOneWidget);
 }
+
+/// 横屏竖滑用例的音量期望值：满屏高 450px，向下 60px ⇒ 1 − 60/450。
+const double kLandscapeVolume = 1 - 60 / 450;
 
 Future<void> _slide(WidgetTester tester, Offset start, Offset delta) async {
   final gesture = await tester.startGesture(start);

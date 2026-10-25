@@ -1657,6 +1657,14 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
   Future<void> _applySystemUi() async {
     _systemUiTouched = true;
     final fullScreen = _fullScreen;
+    // 亮度会话不排在系统 UI 那条链里：`setPreferredOrientations` 在设备拒绝
+    // 转向或平台通道没响应时可能长期不返回（issue #59 的老问题），排进去等于
+    // 竖滑亮度跟着一起失效。两者本来就互不依赖。
+    if (fullScreen) {
+      unawaited(_openBrightnessSession());
+    } else {
+      unawaited(_closeBrightnessSession());
+    }
     final operation = _systemUiUpdates.then((_) async {
       if (!mounted || _fullScreen != fullScreen) return;
       if (fullScreen) {
@@ -1666,11 +1674,8 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
         // 是横版还是竖版无关，视频尺寸未知时也一样。不再按尺寸猜方向，也就
         // 不会再有「未知尺寸被当成竖屏」的连播回弹问题（issue #59）。
         await SystemChrome.setPreferredOrientations(_fullScreenOrientations);
-        // 竖滑调亮度需要一个起点：进全屏时读一次系统亮度，退出时还原。
-        unawaited(_openBrightnessSession());
       } else {
         await _restoreSystemUi();
-        unawaited(_closeBrightnessSession());
       }
     });
     _systemUiUpdates = operation.catchError((Object _) {});
