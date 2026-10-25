@@ -13,6 +13,7 @@ import '../models/media_item.dart';
 import '../services/episode_source_cache.dart';
 import '../services/native_player.dart';
 import '../services/playback_format.dart';
+import '../services/player_display.dart';
 import '../services/player_preferences.dart';
 import '../services/player_style_config.dart';
 import '../services/short_series_font_scale.dart';
@@ -111,6 +112,11 @@ class VideoPlayerChrome extends StatefulWidget {
   final ValueChanged<bool>? onFillScreenChanged;
   final bool defaultMute;
   final ValueChanged<bool>? onDefaultMuteChanged;
+
+  /// 播放器当前音量（0..1），由持有播放器的页面维护。全屏竖滑调音量从这个
+  /// 值起算，改完经 [onPlaybackVolumeChanged] 回写；换集重建播放器时页面用
+  /// 自己记的值恢复，不回落到「默认静音」的二元开关。
+  final double volume;
 
   /// 选集面板头部的剧信息（官方 \`aa8.xml:7-15\`）。
   final String seriesTitle;
@@ -220,6 +226,7 @@ class VideoPlayerChrome extends StatefulWidget {
     this.onFillScreenChanged,
     this.defaultMute = true,
     this.onDefaultMuteChanged,
+    this.volume = 1,
     this.danmaku = const [],
     this.danmakuEnabled = true,
     this.onToggleDanmaku,
@@ -283,6 +290,25 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
   bool _panelHeaderDragging = false;
   bool _fullScreen = false;
   Size _viewportSize = Size.zero;
+
+  /// 全屏竖滑调节（左半屏亮度、右半屏音量）。[_axisZone] 非空即「手指正按在
+  /// 画面上滑动」，[_axisHintVisible] 多留一段余辉再淡出，免得松手瞬间闪没。
+  /// 竖滑翻集只在非横屏可用（见 `canPage` 的 `!landscape`），所以全屏时这条
+  /// 手势不会和 PageView 抢。
+  _AxisZone? _axisZone;
+  _AxisZone? _axisShownZone;
+  double _axisStartY = 0;
+  double _axisStartValue = 0;
+  double _axisValue = 0;
+  bool _axisHintVisible = false;
+  Timer? _axisHintTimer;
+
+  /// 屏幕亮度（0..1）。null = 这个宿主没有亮度手势（桌面/测试）或原生侧还没
+  /// 应答，此时左半屏不响应，右半屏音量照常。
+  double? _brightness;
+
+  /// 当前音量。拖音量手势从这里累加，改完回写播放页。
+  double _volume = 1;
 
   /// 清屏独立于控件自动收起，暂停、切集与旋转均保留本次会话的选择。
   /// Note: 新底栏文字/图标两分支与手势取舍 — 见
@@ -360,6 +386,7 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
   @override
   void initState() {
     super.initState();
+    _volume = widget.volume.clamp(0.0, 1.0).toDouble();
     _pages = PageController(initialPage: widget.currentIndex);
     _panel.addListener(_panelChanged);
     _listenToPosition();
@@ -410,6 +437,12 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
   @override
   void didUpdateWidget(VideoPlayerChrome oldWidget) {
     super.didUpdateWidget(oldWidget);
+    // 音量以父级为准：手势滑动时两边同值（回调先回写再重建），只有「默认
+    // 静音」这类外部改动才会让它不同，这时必须跟上，否则下一次竖滑还会从
+    // 旧值起算。
+    if (widget.volume != oldWidget.volume) {
+      _volume = widget.volume.clamp(0.0, 1.0).toDouble();
+    }
     if (oldWidget.player != widget.player) {
       _listenToPosition();
       // 换播放器等于换 holder：官方 `d.release()` 会摘掉锁监听，本地等价是
@@ -480,6 +513,9 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
     _doubleTapGuard?.cancel();
     _lockHideTimer?.cancel();
     _panelDrawerTimer?.cancel();
+    _axisHintTimer?.cancel();
+    // 离开播放页时窗口亮度必须还原：`dispose` 之后没人再替这个会话收尾。
+    if (_brightness != null) unawaited(PlayerDisplay.end());
     _lockController.dispose();
     _pages.dispose();
     _panel.dispose();
@@ -718,6 +754,140 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
       _visible = true;
     });
     if (!clear) _scheduleHide();
+  }
+
+  /// 全屏竖滑：左半屏亮度、右半屏音量。
+  ///
+  /// 只在横屏全屏、没锁屏、没开面板、没在横滑 seek 时接管。竖屏下这条竖直
+  /// 手势属于翻集（`PageView` 竖直），`canPage` 里的 `!landscape` 已经在全屏
+  /// 时把它关掉，所以两者不会抢。
+  void _startAxisAdjust(DragStartDetails details) {
+    if (!_fullScreen ||
+        _locked ||
+        _panelOpen ||
+        _overlayOpen ||
+        _seeking ||
+        _viewportSize.height <= 0) {
+      return;
+    }
+    final width = _viewportSize.width > 0
+        ? _viewportSize.width
+        : MediaQuery.sizeOf(context).width;
+    final zone = details.localPosition.dx < width / 2
+        ? _AxisZone.brightness
+        : _AxisZone.volume;
+    // 这个宿主没有亮度手势（桌面/测试，或原生侧还没应答）时，左半屏不接管。
+    if (zone == _AxisZone.brightness && _brightness == null) return;
+    _endBoost();
+    ++_interaction;
+    _hideTimer?.cancel();
+    _axisZone = zone;
+    _axisShownZone = zone;
+    _axisStartY = details.localPosition.dy;
+    _axisStartValue = zone == _AxisZone.brightness
+        ? (_brightness ?? 1)
+        : _volume;
+    _axisValue = _axisStartValue;
+    _axisHintTimer?.cancel();
+    setState(() => _axisHintVisible = true);
+  }
+
+  void _updateAxisAdjust(DragUpdateDetails details) {
+    final zone = _axisZone;
+    if (zone == null) return;
+    final height = _viewportSize.height > 0
+        ? _viewportSize.height
+        : MediaQuery.sizeOf(context).height;
+    if (height <= 0) return;
+    // 划完整个屏高走完 100%：手指走多少给多少，不做加速，和主流播放器一致。
+    final delta = (_axisStartY - details.localPosition.dy) / height;
+    if (zone == _AxisZone.brightness) {
+      // 下限与原生侧对齐：2% 以下整块画面看不见，等于关了屏幕。
+      final value = (_axisStartValue + delta).clamp(0.02, 1.0).toDouble();
+      if ((value - _axisValue).abs() < 0.001) return;
+      _axisValue = value;
+      _brightness = value;
+      unawaited(PlayerDisplay.setBrightness(value));
+      setState(() {});
+      return;
+    }
+    final value = (_axisStartValue + delta).clamp(0.0, 1.0).toDouble();
+    if ((value - _axisValue).abs() < 0.001) return;
+    _axisValue = value;
+    _volume = value;
+    final changed = widget.onPlaybackVolumeChanged;
+    if (changed != null) {
+      unawaited(changed(value));
+    } else {
+      unawaited(_control((player) => player.setVolume(value)));
+    }
+    setState(() {});
+  }
+
+  void _endAxisAdjust() {
+    if (_axisZone == null) return;
+    _axisZone = null;
+    _axisHintTimer?.cancel();
+    // 松手后再留 600ms，让用户看清最后落在哪个值上。
+    _axisHintTimer = Timer(const Duration(milliseconds: 600), () {
+      if (!mounted) return;
+      setState(() {
+        _axisHintVisible = false;
+        _axisShownZone = null;
+      });
+    });
+    setState(() {});
+    _scheduleHide();
+  }
+
+  /// 竖滑提示条：亮度与音量共用一个形态，只换图标和数值。
+  Widget _axisHint(_AxisZone zone) {
+    final value = _axisValue.clamp(0.0, 1.0).toDouble();
+    final isBrightness = zone == _AxisZone.brightness;
+    final icon = isBrightness
+        ? (value < 0.34
+              ? Icons.brightness_low
+              : value < 0.67
+              ? Icons.brightness_medium
+              : Icons.brightness_high)
+        : (value <= 0
+              ? Icons.volume_off
+              : value < 0.5
+              ? Icons.volume_down
+              : Icons.volume_up);
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: Colors.black.withValues(alpha: 0.72),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, color: Colors.white, size: 22),
+            const SizedBox(width: 12),
+            SizedBox(
+              width: 96,
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(2),
+                child: LinearProgressIndicator(
+                  value: value,
+                  minHeight: 4,
+                  backgroundColor: Colors.white.withValues(alpha: 0.24),
+                  valueColor: const AlwaysStoppedAnimation<Color>(Colors.white),
+                ),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Text(
+              '${(value * 100).round()}%',
+              style: const TextStyle(color: Colors.white, fontSize: 13),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   /// 横滑调进度：与 feed 卡同一条官方规则——把横向拖动位置映射到整集
@@ -1496,8 +1666,11 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
         // 是横版还是竖版无关，视频尺寸未知时也一样。不再按尺寸猜方向，也就
         // 不会再有「未知尺寸被当成竖屏」的连播回弹问题（issue #59）。
         await SystemChrome.setPreferredOrientations(_fullScreenOrientations);
+        // 竖滑调亮度需要一个起点：进全屏时读一次系统亮度，退出时还原。
+        unawaited(_openBrightnessSession());
       } else {
         await _restoreSystemUi();
+        unawaited(_closeBrightnessSession());
       }
     });
     _systemUiUpdates = operation.catchError((Object _) {});
@@ -1508,6 +1681,24 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
   /// 画面是否处于横屏全屏态。锁只在横屏有效，退出横屏即解锁。
   bool get _isLandscape {
     return _fullScreen && _viewportSize.width > _viewportSize.height;
+  }
+
+  /// 进全屏时开一次亮度会话：拿到系统当前亮度作为竖滑起点。拿不到（桌面、
+  /// 测试、原生未就绪）就保持 null，左半屏手势自行不响应。
+  Future<void> _openBrightnessSession() async {
+    // 已经有会话就别重开：全屏期间 `_applySystemUi` 可能被再次触发，
+    // 重开会把用户刚调好的亮度拉回系统值。
+    if (_brightness != null) return;
+    final value = await PlayerDisplay.begin();
+    if (!mounted || value == null) return;
+    setState(() => _brightness = value);
+  }
+
+  /// 退出全屏时还原窗口亮度，并把起点清掉，下次进全屏重新读。
+  Future<void> _closeBrightnessSession() async {
+    if (_brightness == null) return;
+    if (mounted) setState(() => _brightness = null);
+    await PlayerDisplay.end();
   }
 
   Future<void> _restoreSystemUi() async {
@@ -1679,6 +1870,12 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
                 onHorizontalDragStart: _startDragSeek,
                 onHorizontalDragUpdate: _updateDragSeek,
                 onHorizontalDragEnd: _endDragSeek,
+                // 全屏竖滑：左半屏亮度、右半屏音量。与上面横滑 seek 靠方向
+                // 区分，横竖互不干扰。
+                onVerticalDragStart: _startAxisAdjust,
+                onVerticalDragUpdate: _updateAxisAdjust,
+                onVerticalDragEnd: (_) => _endAxisAdjust(),
+                onVerticalDragCancel: _endAxisAdjust,
                 // 官方长按分两支（jq3/x.java:2250-2252）：横向中心带
                 // （K6():2690-2711，竖屏 50%/横屏 33% 宽，Y 不限）命中且
                 // y7() 处理成功 → 打开「show_more_panel_from_long_click」
@@ -1973,6 +2170,13 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
                   right: 0,
                   child: const Center(
                     child: IgnorePointer(child: Chip(label: Text('2× 加速中'))),
+                  ),
+                ),
+              // 全屏竖滑的亮度/音量提示：跟手实时刷新，松手后留 600ms 余辉。
+              if (_axisHintVisible && _axisShownZone != null)
+                Positioned.fill(
+                  child: IgnorePointer(
+                    child: Center(child: _axisHint(_axisShownZone!)),
                   ),
                 ),
               if (_panelOpen && _panelDrawer) ...[
@@ -3092,6 +3296,9 @@ class _LegacyRatePainter extends CustomPainter {
 }
 
 enum _PortraitSlot { information, fullscreen, comments }
+
+/// 全屏竖滑的调节目标：左半屏亮度、右半屏音量。
+enum _AxisZone { brightness, volume }
 
 class _PortraitControlsLayout extends MultiChildLayoutDelegate {
   _PortraitControlsLayout({required this.insets, required this.videoBottom});

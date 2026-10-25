@@ -190,6 +190,10 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   /// 官方「默认静音」：**不落盘**，只在进程内（`tm3/b.java:17-20`）。
   bool _defaultMute = PlayerPanelPreferences.defaultMute;
 
+  /// 当前播放器音量（0..1）。「默认静音」只是起播时的二元初值；全屏竖滑调过
+  /// 音量之后以这里为准，换集重建播放器也沿用它，不会再被默认静音打回 0/1。
+  double _volume = PlayerPanelPreferences.defaultMute ? 0 : 1;
+
   PlayerHistory get _history =>
       PlayerHistory(widget.historyStore ?? LibraryStore.instance);
   Duration _duration = Duration.zero;
@@ -607,14 +611,19 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   }
 
   void _setDefaultMute(bool enabled) {
-    setState(() => _defaultMute = enabled);
+    setState(() {
+      _defaultMute = enabled;
+      // 默认静音是「起播音量」：开启即静音、关闭即满音量，这就是官方的即时
+      // 反馈。手势调过的音量从这里被覆盖，回到二元语义。
+      _volume = enabled ? 0 : 1;
+    });
     PlayerPanelPreferences.setDefaultMute(enabled);
     // 官方默认静音是「起播时的音量」，切换时立刻作用到当前播放器，
     // 与官方「开启时默认静音/关闭默认静音」的即时反馈一致。
     final player = _player;
     if (player != null) {
       unawaited(
-        player.setVolume(enabled ? 0 : 1).catchError((Object _) {
+        player.setVolume(_volume).catchError((Object _) {
           // 音量设置失败不影响播放，也不该冒泡到 onError。
         }),
       );
@@ -1251,7 +1260,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       // 每次新建播放器都要重新套一遍。音量失败不能拖垮播放：
       // 官方音量只是表现层，起播照旧。
       try {
-        await player.setVolume(_defaultMute ? 0 : 1);
+        await player.setVolume(_volume);
       } catch (_) {
         // 忽略：默认音量不成立时保持播放器的默认音量。
       }
@@ -1428,7 +1437,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       await fresh.setRate(rate);
       if (!_current(generation, fresh)) return;
       try {
-        await fresh.setVolume(_defaultMute ? 0 : 1);
+        await fresh.setVolume(_volume);
       } catch (_) {}
       if (!_current(generation, fresh)) return;
       if (resumeMs > 0) {
@@ -1621,6 +1630,20 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     final style = PlayerStyleConfig.instance;
     return VideoPlayerChrome(
       player: _player,
+      volume: _volume,
+      // 全屏竖滑调音量：先记在本页（换集重建播放器要靠它恢复），再落到当前
+      // 播放器上。失败不影响播放，和「默认静音」那条约定一致。
+      onPlaybackVolumeChanged: (value) async {
+        final clamped = value.clamp(0.0, 1.0).toDouble();
+        if (mounted && _volume != clamped) {
+          setState(() => _volume = clamped);
+        }
+        final player = _player;
+        if (player == null) return;
+        try {
+          await player.setVolume(clamped);
+        } catch (_) {}
+      },
       title: widget.title,
       episodes: widget.eps,
       currentIndex: _index,

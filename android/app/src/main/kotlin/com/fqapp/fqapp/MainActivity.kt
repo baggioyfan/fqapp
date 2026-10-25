@@ -40,6 +40,8 @@ class MainActivity : FlutterActivity() {
         flutterEngine.plugins.add(EinkRefreshPlugin())
         // 小米澎湃 OS 公平运行内存：收 TRIM/KILL 广播，转发 Dart 处理后回系统。
         flutterEngine.plugins.add(FairMemoryPlugin())
+        // 全屏播放左半屏竖滑调亮度：只改窗口亮度，退出自动还原，见 PlayerDisplayPlugin。
+        flutterEngine.plugins.add(PlayerDisplayPlugin())
 
         // 音量键翻页通道：Dart -> 原生 setEnabled 控制是否拦截；原生 -> Dart
         // volumeKey 回调翻页方向（+1 下一页 / -1 上一页）。
