@@ -705,9 +705,11 @@ class _DetailPageState extends State<DetailPage> {
                                       ? _stateCard(
                                           icon: LucideIcons.wifi_off,
                                           title: '暂时没能加载章节',
-                                          message: _cachedBook == null
-                                              ? '请检查网络连接，再试一次。'
-                                              : '网络不可用。这本书已经下载到本地，可以直接离线阅读。',
+                                          message:
+                                              _error ??
+                                              (_cachedBook == null
+                                                  ? '请检查网络连接，再试一次。'
+                                                  : '网络不可用。这本书已经下载到本地，可以直接离线阅读。'),
                                           retry: true,
                                           onReadCached: _cachedBook == null
                                               ? null
@@ -720,43 +722,6 @@ class _DetailPageState extends State<DetailPage> {
                           ),
                         ),
                       ),
-                      slivers: [
-                        SliverToBoxAdapter(
-                          child: DetailHero(
-                            item: widget.item,
-                            scroll: _scroll,
-                            detail: _bookDetail,
-                          ),
-                        ),
-                        SliverPadding(
-                          padding: const EdgeInsets.fromLTRB(20, 0, 20, 28),
-                          sliver: SliverToBoxAdapter(
-                            child: !_supported
-                                ? _stateCard(
-                                    icon: LucideIcons.file_question_mark,
-                                    title: '暂不支持此内容类型',
-                                    message: '可以返回继续发现其他故事。',
-                                  )
-                                : _loading
-                                ? _loadingView(palette)
-                                : _error != null
-                                ? _stateCard(
-                                    icon: LucideIcons.wifi_off,
-                                    title: '暂时没能加载章节',
-                                    message:
-                                        _error ??
-                                        (_cachedBook == null
-                                            ? '请检查网络连接，再试一次。'
-                                            : '网络不可用。这本书已经下载到本地，可以直接离线阅读。'),
-                                    retry: true,
-                                    onReadCached: _cachedBook == null
-                                        ? null
-                                        : _readCached,
-                                  )
-                                : _content(palette),
-                          ),
-                        ),
-                      ],
                     ),
                   ),
                 ],
