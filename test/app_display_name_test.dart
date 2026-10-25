@@ -43,10 +43,14 @@ void main() {
     // header silently went back to the placeholder `fqapp` with no conflict
     // marker to notice. No check read that header, so only a hand comparison of
     // the diff against upstream showed it was gone.
+    // 上游 1995d74 把首页顶栏（home_hero）的品牌标题整块换成了搜索行，那里
+    // 已经没有应用名，继续断言会让每次合并都红一次、然后被人顺手删掉整组。
+    // 换成 desktop_app_frame：左侧导航栏顶部那块是 macOS 上用户实际看到的
+    // 品牌位，比首页顶栏更该被守住。
     for (final path in const [
       'lib/main.dart',
       'lib/pages/about_page.dart',
-      'lib/widgets/home/home_hero.dart',
+      'lib/widgets/desktop_app_frame.dart',
     ]) {
       expect(
         File(path).readAsStringSync(),
