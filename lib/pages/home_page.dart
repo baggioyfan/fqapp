@@ -362,33 +362,7 @@ class _HomePageState extends ConsumerState<HomePage> {
               // 桌面：书架宫格同款（16 边距、目标 170dp 一颗、封面 1.4、
               // 两行标题 + 一行副信息）。官方那套在桌面恒 2 列，1280 窗口
               // 下两张卡就吃掉一整屏，密度与书架完全接不上。
-              //
-              // availableWidth 要传**含左右 16 边距**的整宽：
-              // shelfGridCellWidth 自己会减去 screenPadding*2，而调用方
-              // 给的 gridWidth 已经先扣掉了 _gridPadding*2，所以加回来。
-              ? SliverPadding(
-                  padding: const EdgeInsets.fromLTRB(
-                    homeShelfSidePadding,
-                    0,
-                    homeShelfSidePadding,
-                    0,
-                  ),
-                  sliver: homeBookShelfGrid(
-                    context,
-                    availableWidth: gridWidth + _gridPadding * 2,
-                    childCount: entries.length,
-                    itemBuilder: (context, index) {
-                      final item = entries[index];
-                      // 挂 key：续播裁剪会让所有下标移位，没有 key 时整屏
-                      // 卡片按位置错位重建。
-                      return homeShelfCard(
-                        item,
-                        key: ValueKey('${item.kind}:${item.id}'),
-                        onTap: () => _openItem(item),
-                      );
-                    },
-                  ),
-                )
+              ? _desktopBookStream(entries, gridWidth)
               : SliverPadding(
                   padding: const EdgeInsets.fromLTRB(12, 0, 12, 0),
                   // 交错网格（官方 StaggeredFeedLayout）：无摘要/无标签的卡
@@ -526,6 +500,7 @@ class _HomePageState extends ConsumerState<HomePage> {
     _gridWidth = gridWidth;
     _gridTitleScale = titleScale;
     _gridMetaScale = metaScale;
+    if (isDesktopHost) return _gridSliver = _desktopBookStream(rest, gridWidth);
     final cardWidth = homeCardWidth(context, gridWidth);
     return _gridSliver = SliverPadding(
       padding: const EdgeInsets.symmetric(horizontal: _gridPadding),
@@ -546,6 +521,36 @@ class _HomePageState extends ConsumerState<HomePage> {
             ),
           );
         }, childCount: rest.length),
+      ),
+    );
+  }
+
+  /// 桌面书卡流：所有分类 tab 共用同一套「书架宫格」几何。
+  ///
+  /// 官方 `us3.a.q()` 的列数在桌面恒为 2（其余分支都被平板适配开关挡住），
+  /// 所以区块管线（`isHomeGridBlock`）和旧管线（没下发区块的分类）都必须走
+  /// 这里——否则「推荐」是 7 列、换个 tab 就退回 2 列。
+  ///
+  /// [gridWidth] 是调用方已扣掉 `_gridPadding*2`(40) 的内宽；而
+  /// `homeBookShelfGrid` 要的是**含左右 16 边距的整宽**（`shelfGridCellWidth`
+  /// 自己会减去 `screenPadding*2` 和列间距），所以这里加回 40。
+  Widget _desktopBookStream(List<MediaItem> items, double gridWidth) {
+    return SliverPadding(
+      padding: const EdgeInsets.symmetric(horizontal: homeShelfSidePadding),
+      sliver: homeBookShelfGrid(
+        context,
+        availableWidth: gridWidth + _gridPadding * 2,
+        childCount: items.length,
+        itemBuilder: (context, index) {
+          final item = items[index];
+          // 挂 key：续播裁剪会让所有下标移位，没有 key 时整屏卡片按位置
+          // 错位重建。
+          return homeShelfCard(
+            item,
+            key: ValueKey('${item.kind}:${item.id}'),
+            onTap: () => _openItem(item),
+          );
+        },
       ),
     );
   }

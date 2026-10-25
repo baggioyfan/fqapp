@@ -4,12 +4,19 @@
 // 2. 「猜你喜欢」书卡流在桌面按书架宫格几何排（官方 `us3.a.q()` 桌面恒 2 列，
 //    1280 窗口下两张卡吃掉一整屏）。
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:fqapp/models/media_item.dart';
+import 'package:fqapp/pages/home_page.dart';
+import 'package:fqapp/pages/home_provider.dart';
+import 'package:fqapp/widgets/bookshelf_card.dart';
 import 'package:fqapp/widgets/home/home_cell_blocks.dart';
 import 'package:fqapp/widgets/home/home_design.dart';
+import 'package:fqapp/widgets/home/home_media_card.dart';
 import 'package:fqapp/widgets/home/home_tab_bar.dart';
 
 Widget _host(Widget child) => MaterialApp(home: Scaffold(body: child));
@@ -182,6 +189,62 @@ void main() {
       expect(eighth.top - first.bottom, closeTo(20, 0.5));
       // 格高 = 封面 1.4 + 两行标题 + 一行副信息（书架那套公式）。
       expect(first.height, closeTo(168 * 1.4 + 2 + 32.5 + 4 + 14.95 + 4, 1));
+    });
+
+    testWidgets('每个分类 tab 的卡片流在桌面都是同一套书架宫格', (tester) async {
+      // 旧管线（这个分类没下发区块）也要走书架几何——官方 `us3.a.q()` 在
+      // 桌面恒 2 列，只有区块管线自己改还不够，换个 tab 就会退回去。
+      debugDefaultTargetPlatformOverride = TargetPlatform.windows;
+      addTearDown(() => debugDefaultTargetPlatformOverride = null);
+      await tester.binding.setSurfaceSize(const Size(1280, 900));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            homeProvider.overrideWith(
+              () => HomeNotifier(
+                homepageLoader:
+                    ({
+                      int tabType = 2,
+                      int offset = 0,
+                      String? sessionId,
+                    }) async => HomepagePage(
+                      items: [
+                        for (var i = 0; i < 24; i++)
+                          MediaItem(
+                            id: 'i$i',
+                            title: '作品 $i',
+                            cover: '',
+                            author: '作者',
+                            badge: '',
+                            ep: '',
+                            kind: 'book',
+                          ),
+                      ],
+                      nextOffset: null,
+                      sessionId: null,
+                    ),
+                searchLoader: (query, {int page = 1}) async => [],
+              ),
+            ),
+          ],
+          child: const MaterialApp(home: HomePage()),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // 旧管线的 HomeMediaCard 不该再出现在桌面；卡片统一是书架宫格卡。
+      expect(find.byType(HomeMediaCard), findsNothing);
+      final cards = find.byType(BookshelfGridCard);
+      expect(cards, findsWidgets);
+      final first = tester.getRect(cards.first);
+      final second = tester.getRect(cards.at(1));
+      // 1280 整宽 → 7 列、每颗 (1280-32-72)/7 = 168。
+      expect(first.width, closeTo(168, 1));
+      expect(second.left - first.right, closeTo(12, 1));
+      expect(second.top, closeTo(first.top, 0.5));
     });
   });
 }
