@@ -1017,28 +1017,6 @@ class InlineVideoPlayback {
   ///
   /// This is the destructive path: [release] parks a player instead, and only
   /// this method (via [disposePlayer], [dispose] and [_fail]) actually frees one.
-  /// Queue [player]'s **destructive** release behind every earlier one, keeping
-  /// the chain in [_releases] so the next `create` waits for it.
-  ///
-  /// Same contract as [_teardown], minus the session-state reset: the caller is
-  /// mid-`activate` and is about to install its own state, so only the native
-  /// side is touched here. Pausing first keeps a decoder that has a surface-less
-  /// audio track from being audible until the release lands.
-  void _retire(NativePlayer player) {
-    final release = () async {
-      try {
-        if (player.isCreated) await player.pause();
-      } catch (_) {
-        // A decoder that refuses pause still has to be released.
-      }
-      await player.dispose();
-    }();
-    _releases = Future.wait([
-      _releases,
-      release,
-    ]).then<void>((_) {}).catchError((Object _) {});
-  }
-
   Future<void> _teardown() {
     final old = _player;
     _player = null;
