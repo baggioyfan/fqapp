@@ -258,8 +258,8 @@ void main() {
         tester.element(find.byKey(const ValueKey('video-frame'))),
         same(video),
       );
-      expect(player.calls, hasLength(1));
-      expect(player.calls.single, 'volume:$kLandscapeVolume');
+      // 竖滑只动设备档位（系统媒体音量），不碰播放器自身的音量。
+      expect(player.calls, isEmpty);
       expect(player.isPlaying, isTrue);
       expect(selected, isEmpty);
     },
@@ -296,9 +296,6 @@ void _expectClearScreen() {
   );
   expect(find.text('恢复').hitTestable(), findsOneWidget);
 }
-
-/// 横屏竖滑用例的音量期望值：满屏高 450px，向下 60px ⇒ 1 − 60/450。
-const double kLandscapeVolume = 1 - 60 / 450;
 
 Future<void> _slide(WidgetTester tester, Offset start, Offset delta) async {
   final gesture = await tester.startGesture(start);
