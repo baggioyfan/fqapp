@@ -315,6 +315,10 @@ class _TabSwipeAreaState extends State<TabSwipeArea>
         final width = constraints.maxWidth;
         if (width.isFinite && width > 0) _width = width;
         return RawGestureDetector(
+          // translucent：内容没接住指针的地方（卡片间隙、留白、边缘带）也要
+          // 能起手。默认的 deferToChild 要求子节点命中，空白处整片滑不动。
+          // 不加 opaque：内容自己的手势仍然先收到事件、先在竞技场里赢。
+          behavior: HitTestBehavior.translucent,
           gestures: enabled
               ? <Type, GestureRecognizerFactory>{
                   GatedHorizontalDragGestureRecognizer:
