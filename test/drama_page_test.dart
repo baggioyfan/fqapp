@@ -1901,6 +1901,12 @@ void main() {
       find.byKey(const Key('drama_feed')),
       const Offset(-260, 0),
     );
+    // 送出 110ms → 换频道 → 迎入 190ms：`_flush` 只推进 16ms，动画跑完之前
+    // onSelect 还没发出，频道不会变。逐帧推过这段（fake async 里 pump 一次
+    // 大步长也可能错过 endOfFrame 那一轮的重建）。
+    for (var i = 0; i < 24; i++) {
+      await tester.pump(const Duration(milliseconds: 16));
+    }
     await _flush(tester);
     // 看剧频道换成浅色海报瀑布格。
     expect(find.byKey(const Key('drama_episode_grid')), findsOneWidget);
