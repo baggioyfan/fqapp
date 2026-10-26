@@ -3773,6 +3773,23 @@ class _InlineVideoLayer extends StatelessWidget {
 
   const _InlineVideoLayer({required this.item, required this.playback});
 
+  /// 未起播 / 首帧未到时铺在这张卡上的封面。
+  ///
+  /// 封面是 9:16 的竖图，而这张卡在桌面端拿到的是横向窗口：`cover` 会按宽度
+  /// 铺满、高度溢出三四倍，看起来只剩海报最上面一截。桌面端改用 `contain`
+  /// 完整显示，并垫黑底（与视频的 `VideoFit.contain` 同一套观感）；手机上卡片
+  /// 本身就是竖的，保持铺满。
+  Widget _cover(MediaItem item, int cacheWidth) => ColoredBox(
+    color: Colors.black,
+    child: StoryCover(
+      key: ValueKey('drama_inline_cover_${item.kind}_${item.id}'),
+      item: item,
+      cacheWidth: cacheWidth,
+      alignment: Alignment.topCenter,
+      fit: isDesktopHost ? BoxFit.contain : BoxFit.cover,
+    ),
+  );
+
   @override
   Widget build(BuildContext context) {
     // The video box is measured from this card's own constraints, not from
@@ -3794,12 +3811,7 @@ class _InlineVideoLayer extends StatelessWidget {
             playback.videoSize,
           ]),
           builder: (context, _) {
-            final cover = StoryCover(
-              key: ValueKey('drama_inline_cover_${item.kind}_${item.id}'),
-              item: item,
-              cacheWidth: cacheWidth,
-              alignment: Alignment.topCenter,
-            );
+            final cover = _cover(item, cacheWidth);
             // A card the session is not playing (yet) shows its cover only.
             if (playback.activeId.value != item.id) return cover;
             final textureId = playback.textureId.value;

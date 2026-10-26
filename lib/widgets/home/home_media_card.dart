@@ -74,11 +74,20 @@ class StoryCover extends StatelessWidget {
   final int cacheWidth;
   final Alignment alignment;
 
+  /// How the poster fills its box.
+  ///
+  /// `cover` 是手机上的默认值：格子本身就是 5:7 的竖版，裁掉一点无所谓。
+  /// 桌面端的播放区是横向窗口，同一张 9:16 海报按宽度铺满后高度会溢出好几倍，
+  /// 只剩最上面一截 —— 那里要传 `BoxFit.contain`，让整张封面完整落在中间
+  /// （两侧留黑，与桌面端视频的 `VideoFit.contain` 一致）。
+  final BoxFit fit;
+
   const StoryCover({
     super.key,
     required this.item,
     required this.cacheWidth,
     this.alignment = Alignment.center,
+    this.fit = BoxFit.cover,
   });
 
   @override
@@ -97,7 +106,7 @@ class StoryCover extends StatelessWidget {
     return CachedNetworkImage(
       cacheManager: PosterCache.instance,
       imageUrl: item.cover,
-      fit: BoxFit.cover,
+      fit: fit,
       alignment: alignment,
       memCacheWidth: cacheWidth.clamp(1, 1200),
       fadeInDuration: MediaQuery.disableAnimationsOf(context)
