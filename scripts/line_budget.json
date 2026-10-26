@@ -36,7 +36,7 @@
     "lib/services/system_tts.dart": 650,
     "lib/services/webdav_client.dart": 781,
     "lib/services/webdav_sync_service.dart": 955,
-    "lib/widgets/audio/audio_sections.dart": 1686,
+    "lib/widgets/audio/audio_sections.dart": 1690,
     "lib/widgets/bookshelf_card.dart": 1003,
     "lib/widgets/desktop_video_chrome.dart": 885,
     "lib/widgets/detail/detail_hero.dart": 514,
@@ -261,12 +261,12 @@
       "symbol": "Widget build(BuildContext context) {"
     },
     "lib/widgets/audio/audio_sections.dart::AudioToneSection.build": {
-      "line": 1009,
+      "line": 1013,
       "lines": 175,
       "symbol": "Widget build(BuildContext context) {"
     },
     "lib/widgets/audio/audio_sections.dart::_AudioIntroCardState.build": {
-      "line": 1509,
+      "line": 1513,
       "lines": 176,
       "symbol": "Widget build(BuildContext context) {"
     },

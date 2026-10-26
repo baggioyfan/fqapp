@@ -776,7 +776,11 @@ class _AudioSubtitleListState extends State<AudioSubtitleList> {
         itemBuilder: (context, index) {
           final cue = cues[index];
           final active = index == widget.active;
-          return Container(
+          // 高亮底色与左侧细线用 `Ink` 而不是 `Container`：ListTile 的点按
+          // 涟漪画在最近的 Material 上，中间夹一层带底色的 DecoratedBox 会把
+          // 涟漪整个挡住，框架断言直接拦下（CI 实测过）。`Ink` 把装饰画进
+          // Material 层，涟漪照常浮在上面。
+          return Ink(
             key: _rowKeys.putIfAbsent(index, GlobalKey.new),
             decoration: BoxDecoration(
               color: active
