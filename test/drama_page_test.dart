@@ -1894,23 +1894,42 @@ void main() {
       _scope(perTab: 1, child: MaterialApp(home: _Seams().page())),
     );
     await _flush(tester);
-    // 推荐频道是竖滑播放流：横向手势不归它，归频道切换。
+    // 推荐频道是竖滑播放流。
     expect(find.byKey(const Key('drama_feed')), findsOneWidget);
 
+    /// 送出 110ms → onSelect → 迎入 190ms：`_flush` 只推进 16ms，动画跑完
+    /// 之前频道还没换。逐帧推过这一段（fake async 里 pump 一次大步长也可能
+    /// 错过 endOfFrame 那一轮的重建）。
+    Future<void> settleSwipe() async {
+      for (var i = 0; i < 24; i++) {
+        await tester.pump(const Duration(milliseconds: 16));
+      }
+      await _flush(tester);
+    }
+
+    // 推荐频道卡片上那层手势先把横滑当进度吃掉（官方 `K6` 的左右滑 seek），
+    // 所以横滑切频道从海报格频道开始验。
+    await tester.ensureVisible(find.text('看剧'));
+    await tester.tap(find.text('看剧'));
+    await settleSwipe();
+    expect(find.byKey(const Key('drama_episode_grid')), findsOneWidget);
+
+    // 往左：看剧 → 漫剧。
     await tester.drag(
-      find.byKey(const Key('drama_feed')),
+      find.byKey(const Key('drama_episode_grid')),
       const Offset(-260, 0),
     );
-    // 送出 110ms → 换频道 → 迎入 190ms：`_flush` 只推进 16ms，动画跑完之前
-    // onSelect 还没发出，频道不会变。逐帧推过这段（fake async 里 pump 一次
-    // 大步长也可能错过 endOfFrame 那一轮的重建）。
-    for (var i = 0; i < 24; i++) {
-      await tester.pump(const Duration(milliseconds: 16));
-    }
-    await _flush(tester);
-    // 看剧频道换成浅色海报瀑布格。
+    await settleSwipe();
+    expect(find.byKey(const Key('drama_manju_grid')), findsOneWidget);
+    expect(find.byKey(const Key('drama_episode_grid')), findsNothing);
+
+    // 往右：漫剧 → 看剧。
+    await tester.drag(
+      find.byKey(const Key('drama_manju_grid')),
+      const Offset(260, 0),
+    );
+    await settleSwipe();
     expect(find.byKey(const Key('drama_episode_grid')), findsOneWidget);
-    expect(find.byKey(const Key('drama_feed')), findsNothing);
 
     await tester.pumpWidget(const SizedBox.shrink());
     await _flush(tester);
