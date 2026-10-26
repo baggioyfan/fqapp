@@ -2842,8 +2842,8 @@ class _CardGestures extends StatelessWidget {
           return dx >= center - half && dx <= center + half;
         }
 
-        // 左右边缘带归外层切频道（[TabSwipeArea.edgeOnly]）：两个横向识别器
-        // 必须互斥，否则内层这个总是先收到事件、先赢，边缘也切不了台。
+        // 左右边缘带归外层切频道：两边必须互斥（见 Gated…），否则内层这个
+        // 总是先收到事件、先赢，边缘也切不了台。
         bool inEdgeBand(double dx) {
           final width = constraints.maxWidth;
           if (width <= TabSwipeArea.edgeWidth * 2) return false;
@@ -2863,15 +2863,18 @@ class _CardGestures extends StatelessWidget {
                         () => GatedHorizontalDragGestureRecognizer(
                           accepts: (dx) => !inEdgeBand(dx),
                         ),
-                        (recognizer) => recognizer
-                          ..onStart = (details) =>
-                              seekTo(details.localPosition.dx)
-                          ..onUpdate = (details) =>
-                              seekTo(details.localPosition.dx),
+                        // block body：箭头体里 `seekTo(...)` 后面的 `..` 会被
+                        // 解析成级联到 void 返回值上。
+                        (recognizer) {
+                          recognizer
+                            ..onStart = (details) =>
+                                seekTo(details.localPosition.dx)
+                            ..onUpdate = (details) =>
+                                seekTo(details.localPosition.dx);
+                        },
                       ),
                 },
-          // opaque：整块手势区必须自己吃指针，否则下方没有别的接收者，
-          // 上滑翻页仍由外层 `PageView` 的竖直拖动竞技场接管。
+          // opaque：整块手势区自己吃指针，上滑翻页仍归外层 PageView 的竖直拖动。
           behavior: HitTestBehavior.opaque,
           child: GestureDetector(
             key: const Key('drama_card_gestures'),

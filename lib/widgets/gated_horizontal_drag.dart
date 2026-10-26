@@ -17,7 +17,9 @@ class GatedHorizontalDragGestureRecognizer
   /// 按下点（本识别器所在 render box 的局部横坐标）是否归它管。
   final bool Function(double localDx) accepts;
 
+  // 基类签名是 `PointerEvent`，这里只关心按下那一刻，用 covariant 收窄到
+  // `PointerDownEvent`（`addAllowedPointer` 只会拿 down 事件进来）。
   @override
-  bool isPointerAllowed(PointerDownEvent event) =>
+  bool isPointerAllowed(covariant PointerDownEvent event) =>
       super.isPointerAllowed(event) && accepts(event.localPosition.dx);
 }
