@@ -44,6 +44,7 @@ import '../widgets/player/playlet_option_sheet.dart';
 import '../widgets/player/playlet_quick_catalog_sheet.dart';
 import '../widgets/player/player_toast.dart';
 import '../widgets/player/player_video_layout.dart';
+import '../widgets/tab_swipe_area.dart';
 import 'detail_page.dart';
 import 'drama_download_sheet.dart';
 import 'home_provider.dart';
@@ -1394,41 +1395,16 @@ class _DramaPageState extends ConsumerState<DramaPage>
               // from the account, so neither is a video feed here either.
               // 看剧/漫剧是浅色海报瀑布格（官方 StaggeredFeedTab，
               // `client_template` 12/13），只有推荐走全屏竖滑播放流。
-              child: switch (channel) {
-                DramaChannel(source: DramaChannelSource.feed, kind: 'manju') =>
-                  _browseGrid(
-                    state,
-                    items,
-                    columns: 3,
-                    gridKey: 'drama_manju_grid',
-                    titleMaxLines: 1,
-                  ),
-                DramaChannel(
-                  source: DramaChannelSource.feed,
-                  serverType: kChannelVideoEpisode,
-                ) =>
-                  _browseGrid(
-                    state,
-                    items,
-                    columns: 2,
-                    gridKey: 'drama_episode_grid',
-                    titleMaxLines: 2,
-                  ),
-                DramaChannel(source: DramaChannelSource.feed) => _feed(
-                  state,
-                  items,
-                ),
-                _ => _LocalList(
-                  channel: channel,
-                  // 官方最近/收藏卡点击都直接进播放页续播，不经过详情页。
-                  onOpen: _openDetail,
-                  onPlay: _openPlayer,
-                  onFind: () => _selectChannel(0),
-                  onEditingChanged: (editing) {
-                    if (mounted) setState(() => _recentEditing = editing);
-                  },
-                ),
-              },
+              child: TabSwipeArea(
+                index: _channel,
+                count: _channels.length,
+                onSelect: _selectChannel,
+                // 播放器打开、弹窗、最近频道编辑时都不该被横滑打断。
+                enabled: !_modalOpen && _openingId == null && !_recentEditing,
+                // 只让内容跟手横移：频道条固定在顶部，切换后立刻显示新的
+                // 选中项，不被动画拖着走。
+                child: _channelBody(state, channel, items),
+              ),
             ),
             if (_pullDistance > 0)
               Positioned(
@@ -1518,6 +1494,50 @@ class _DramaPageState extends ConsumerState<DramaPage>
       ),
     );
   }
+
+  /// 频道正文：竖滑播放流 / 浅色瀑布格 / 本地列表。
+  ///
+  /// 抽成方法而不是留在 build 里：build 已经顶在尺寸棘轮的函数预算上，
+  /// 而且这里是「频道 → 形态」的唯一一处映射，单独放更好找。
+  Widget _channelBody(
+    HomeState state,
+    DramaChannel channel,
+    List<MediaItem> items,
+  ) => switch (channel) {
+    DramaChannel(source: DramaChannelSource.feed, kind: 'manju') =>
+      _browseGrid(
+        state,
+        items,
+        columns: 3,
+        gridKey: 'drama_manju_grid',
+        titleMaxLines: 1,
+      ),
+    DramaChannel(
+      source: DramaChannelSource.feed,
+      serverType: kChannelVideoEpisode,
+    ) =>
+      _browseGrid(
+        state,
+        items,
+        columns: 2,
+        gridKey: 'drama_episode_grid',
+        titleMaxLines: 2,
+      ),
+    DramaChannel(source: DramaChannelSource.feed) => _feed(
+      state,
+      items,
+    ),
+    _ => _LocalList(
+      channel: channel,
+      // 官方最近/收藏卡点击都直接进播放页续播，不经过详情页。
+      onOpen: _openDetail,
+      onPlay: _openPlayer,
+      onFind: () => _selectChannel(0),
+      onEditingChanged: (editing) {
+        if (mounted) setState(() => _recentEditing = editing);
+      },
+    ),
+  };
 
   /// 官方瀑布格频道（StaggeredFeedTab）：漫剧 = `client_template` 13
   /// CommonThreeRow 三列；看剧 = 12 CommonDoubleRow 两列。浅色页，卡 =

@@ -21,6 +21,7 @@ import '../widgets/home/home_skeleton.dart';
 import '../widgets/home/home_resume_card.dart';
 import '../widgets/home/home_spotlight.dart';
 import '../widgets/home/home_tab_bar.dart';
+import '../widgets/tab_swipe_area.dart';
 import 'category_page.dart';
 import 'detail_page.dart';
 import 'cached_book_reader.dart';
@@ -196,6 +197,7 @@ class _HomePageState extends ConsumerState<HomePage> {
     final state = ref.watch(homeProvider);
     final notifier = ref.read(homeProvider.notifier);
     final palette = HomePalette.of(context);
+    final categories = _categoriesOf(state);
     final textScale = MediaQuery.textScalerOf(context).scale(16) / 16;
     return Scaffold(
       backgroundColor: palette.canvas,
@@ -225,39 +227,44 @@ class _HomePageState extends ConsumerState<HomePage> {
                     // Measuring once here keeps the grid out of the scroll
                     // path completely.
                     child: LayoutBuilder(
-                      builder: (context, constraints) => CustomScrollView(
-                        key: const Key('home_feed'),
-                        controller: _scroll,
-                        physics: const BouncingScrollPhysics(
-                          parent: AlwaysScrollableScrollPhysics(),
+                      builder: (context, constraints) => TabSwipeArea(
+                        index: state.tabIndex,
+                        count: categories.length,
+                        onSelect: notifier.selectTab,
+                        child: CustomScrollView(
+                          key: const Key('home_feed'),
+                          controller: _scroll,
+                          physics: const BouncingScrollPhysics(
+                            parent: AlwaysScrollableScrollPhysics(),
+                          ),
+                          slivers: [
+                            SliverToBoxAdapter(
+                              child: HomeHero(
+                                onSearch: _openSearch,
+                                onCategory: _openCategory,
+                                cueLoader: widget.cueLoader,
+                              ),
+                            ),
+                            SliverPersistentHeader(
+                              pinned: true,
+                              delegate: HomeTabBarDelegate(
+                                selectedIndex: state.tabIndex,
+                                onSelect: notifier.selectTab,
+                                categories: categories,
+                                // 桌面/手机两套高度都在 extentFor 里，这里
+                                // 不要再拼常量——手机 38+4、桌面 46+8。
+                                extent: HomeTabBarDelegate.extentFor(textScale),
+                                dark: palette.dark,
+                                eink: palette.eink,
+                                oled: palette.oled,
+                              ),
+                            ),
+                            ..._contentSlivers(
+                              state,
+                              constraints.maxWidth - _gridPadding * 2,
+                            ),
+                          ],
                         ),
-                        slivers: [
-                          SliverToBoxAdapter(
-                            child: HomeHero(
-                              onSearch: _openSearch,
-                              onCategory: _openCategory,
-                              cueLoader: widget.cueLoader,
-                            ),
-                          ),
-                          SliverPersistentHeader(
-                            pinned: true,
-                            delegate: HomeTabBarDelegate(
-                              selectedIndex: state.tabIndex,
-                              onSelect: notifier.selectTab,
-                              categories: _categoriesOf(state),
-                              // 桌面/手机两套高度都在 extentFor 里，这里
-                              // 不要再拼常量——手机 38+4、桌面 46+8。
-                              extent: HomeTabBarDelegate.extentFor(textScale),
-                              dark: palette.dark,
-                              eink: palette.eink,
-                              oled: palette.oled,
-                            ),
-                          ),
-                          ..._contentSlivers(
-                            state,
-                            constraints.maxWidth - _gridPadding * 2,
-                          ),
-                        ],
                       ),
                     ),
                   ),

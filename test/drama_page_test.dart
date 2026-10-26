@@ -1878,4 +1878,35 @@ void main() {
     await _flush(tester);
     debugDefaultTargetPlatformOverride = null;
   });
+
+  testWidgets('横向手势在短剧频道之间切换', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(400, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
+
+    // 频道选择的单例跨用例存活：先清掉上一个用例写回的频道，否则起手就
+    // 不是「推荐」。
+    SharedPreferences.setMockInitialValues({});
+    DramaChannelPreferences.reset();
+    DramaChannelPreferences.load(await SharedPreferences.getInstance());
+
+    await tester.pumpWidget(
+      _scope(perTab: 1, child: MaterialApp(home: _Seams().page())),
+    );
+    await _flush(tester);
+    // 推荐频道是竖滑播放流：横向手势不归它，归频道切换。
+    expect(find.byKey(const Key('drama_feed')), findsOneWidget);
+
+    await tester.drag(
+      find.byKey(const Key('drama_feed')),
+      const Offset(-260, 0),
+    );
+    await _flush(tester);
+    // 看剧频道换成浅色海报瀑布格。
+    expect(find.byKey(const Key('drama_episode_grid')), findsOneWidget);
+    expect(find.byKey(const Key('drama_feed')), findsNothing);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await _flush(tester);
+  });
 }
