@@ -2863,14 +2863,13 @@ class _CardGestures extends StatelessWidget {
                         () => GatedHorizontalDragGestureRecognizer(
                           accepts: (dx) => !inEdgeBand(dx),
                         ),
-                        // block body：箭头体里 `seekTo(...)` 后面的 `..` 会被
-                        // 解析成级联到 void 返回值上。
+                        // 两句分开写：级联里 `seekTo(...) => 箭头体` 后面的
+                        // `..` 会被解析成级联到 void 返回值上。
                         (recognizer) {
-                          recognizer
-                            ..onStart = (details) =>
-                                seekTo(details.localPosition.dx)
-                            ..onUpdate = (details) =>
-                                seekTo(details.localPosition.dx);
+                          recognizer.onStart = (details) =>
+                              seekTo(details.localPosition.dx);
+                          recognizer.onUpdate = (details) =>
+                              seekTo(details.localPosition.dx);
                         },
                       ),
                 },
