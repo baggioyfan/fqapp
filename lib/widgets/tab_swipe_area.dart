@@ -4,6 +4,8 @@ import 'dart:math' as math;
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 
+import 'gated_horizontal_drag.dart';
+
 /// 横向手势切顶栏标签的外壳：首页书城分类、短剧频道、书架一级 tab 共用。
 ///
 /// **为什么不是横向 `PageView`。** 三页的「标签」都不是独立页面：
@@ -33,6 +35,7 @@ class TabSwipeArea extends StatefulWidget {
     required this.onSelect,
     required this.child,
     this.enabled = true,
+    this.edgeOnly = false,
   });
 
   /// 当前标签下标，由页面自己的状态驱动（页面是唯一事实来源）。
@@ -51,6 +54,17 @@ class TabSwipeArea extends StatefulWidget {
 
   /// 门禁。编辑态、全屏播放器打开、弹窗等场景由页面关掉手势。
   final bool enabled;
+
+  /// 只在左右边缘带起手才认横滑。
+  ///
+  /// 内容自己占用了横向拖动时打开：短剧竖滑播放流的卡片上，左右滑是官方的
+  /// 调进度（`o.java:K6`），中间必须留给它，边缘带仍然切频道。两边是**互斥**
+  /// 的——被拒的识别器根本不进手势竞技场，不靠「谁先越过 slop」（内层总是先
+  /// 收到事件、总是先赢）。见 [GatedHorizontalDragGestureRecognizer]。
+  final bool edgeOnly;
+
+  /// [edgeOnly] 时左右边缘带的宽度（逻辑像素）。
+  static const double edgeWidth = 24;
 
   /// 位移超过屏宽的这个比例就认这次切换（不甩也能滑过去）。
   static const double commitFraction = 0.18;
@@ -153,6 +167,16 @@ class _TabSwipeAreaState extends State<TabSwipeArea>
     final size = context.size;
     if (size != null && size.width > 0) return size.width;
     return MediaQuery.sizeOf(context).width;
+  }
+
+  /// 按下点归不归这个外壳管。宽度还没量到时先放行：宁可中间也滑一下，也别
+  /// 让首帧的手势整个失效。
+  bool _acceptsDrag(double dx) {
+    if (!widget.edgeOnly) return true;
+    final width = _width;
+    if (!width.isFinite || width <= TabSwipeArea.edgeWidth * 2) return true;
+    return dx <= TabSwipeArea.edgeWidth ||
+        dx >= width - TabSwipeArea.edgeWidth;
   }
 
   int _ms(int milliseconds) =>
@@ -290,14 +314,28 @@ class _TabSwipeAreaState extends State<TabSwipeArea>
       builder: (context, constraints) {
         final width = constraints.maxWidth;
         if (width.isFinite && width > 0) _width = width;
-        return GestureDetector(
-          // 从按下点算起。默认的 start 行为会吃掉前 kTouchSlop 像素，跟手会晚
-          // 半拍（阅读页竖滑踩过同一个坑）。
-          dragStartBehavior: DragStartBehavior.down,
-          onHorizontalDragStart: enabled ? _onDragStart : null,
-          onHorizontalDragUpdate: enabled ? _onDragUpdate : null,
-          onHorizontalDragEnd: enabled ? _onDragEnd : null,
-          onHorizontalDragCancel: enabled ? _onDragCancel : null,
+        return RawGestureDetector(
+          gestures: enabled
+              ? <Type, GestureRecognizerFactory>{
+                  GatedHorizontalDragGestureRecognizer:
+                      GestureRecognizerFactoryWithHandlers<
+                        GatedHorizontalDragGestureRecognizer
+                      >(
+                        () => GatedHorizontalDragGestureRecognizer(
+                          accepts: _acceptsDrag,
+                        ),
+                        (recognizer) => recognizer
+                          // 从按下点算起。默认的 start 行为会吃掉前
+                          // kTouchSlop 像素，跟手会晚半拍（阅读页竖滑踩过
+                          // 同一个坑）。
+                          ..dragStartBehavior = DragStartBehavior.down
+                          ..onStart = _onDragStart
+                          ..onUpdate = _onDragUpdate
+                          ..onEnd = _onDragEnd
+                          ..onCancel = _onDragCancel,
+                      ),
+                }
+              : const <Type, GestureRecognizerFactory>{},
           child: ValueListenableBuilder<double>(
             valueListenable: _offset,
             // child 传进来就不再随位移重建，只有那层 Transform 会重建。

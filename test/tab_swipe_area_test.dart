@@ -14,6 +14,7 @@ class SwipeHost extends StatefulWidget {
     this.initial = 0,
     this.accept = true,
     this.enabled = true,
+    this.edgeOnly = false,
   });
 
   final List<int> requests;
@@ -21,6 +22,7 @@ class SwipeHost extends StatefulWidget {
   final int initial;
   final bool accept;
   final bool enabled;
+  final bool edgeOnly;
 
   @override
   State<SwipeHost> createState() => SwipeHostState();
@@ -40,6 +42,7 @@ class SwipeHostState extends State<SwipeHost> {
           index: index,
           count: widget.count,
           enabled: widget.enabled,
+          edgeOnly: widget.edgeOnly,
           onSelect: (next) {
             widget.requests.add(next);
             if (widget.accept) setState(() => index = next);
@@ -76,6 +79,7 @@ Future<void> _pumpHost(
   int initial = 0,
   bool accept = true,
   bool enabled = true,
+  bool edgeOnly = false,
   GlobalKey<SwipeHostState>? key,
 }) async {
   await tester.binding.setSurfaceSize(const Size(400, 800));
@@ -89,6 +93,7 @@ Future<void> _pumpHost(
       initial: initial,
       accept: accept,
       enabled: enabled,
+      edgeOnly: edgeOnly,
     ),
   );
   await tester.pumpAndSettle();
@@ -240,6 +245,25 @@ void main() {
     await tester.pumpAndSettle();
     expect(_offsetX(tester), 0);
     expect(find.text('tab 1'), findsOneWidget);
+  });
+
+  testWidgets('edgeOnly：中间起手不切，边缘起手才切', (tester) async {
+    final requests = <int>[];
+    await _pumpHost(tester, requests: requests, edgeOnly: true);
+
+    // 屏幕中间留给内容自己（短剧卡片上的左右滑调进度）：外壳的识别器在
+    // 按下这一刻就被拒，压根不进竞技场。
+    await tester.dragFrom(const Offset(200, 400), const Offset(-260, 0));
+    await tester.pumpAndSettle();
+    expect(requests, isEmpty);
+    expect(_offsetX(tester), 0);
+
+    // 左边缘带（24px）起手：归外壳。
+    await tester.dragFrom(const Offset(8, 400), const Offset(-260, 0));
+    await tester.pumpAndSettle();
+    expect(requests, [1]);
+    expect(find.text('tab 1'), findsOneWidget);
+    expect(_offsetX(tester), 0);
   });
 
   testWidgets('标签只有一个时手势不启用', (tester) async {

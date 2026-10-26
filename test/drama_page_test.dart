@@ -179,6 +179,18 @@ Future<void> _flush(WidgetTester tester) async {
   await tester.pump(const Duration(milliseconds: 16));
 }
 
+/// 横滑切标签的三段动画：送出 110ms → onSelect → 迎入 190ms。
+///
+/// `_flush` 只推进 16ms，动画跑完之前 `onSelect` 还没发出、频道不会换，所以
+/// 凡断言切换结果的地方都要先推过这一整段。逐帧推而不是 `pump` 一次大步长：
+/// 大步长会错过 `endOfFrame` 那一轮的重建。
+Future<void> _settleSwipe(WidgetTester tester) async {
+  for (var i = 0; i < 24; i++) {
+    await tester.pump(const Duration(milliseconds: 16));
+  }
+  await _flush(tester);
+}
+
 late Directory _hiveDir;
 
 void main() {
@@ -1897,21 +1909,11 @@ void main() {
     // 推荐频道是竖滑播放流。
     expect(find.byKey(const Key('drama_feed')), findsOneWidget);
 
-    /// 送出 110ms → onSelect → 迎入 190ms：`_flush` 只推进 16ms，动画跑完
-    /// 之前频道还没换。逐帧推过这一段（fake async 里 pump 一次大步长也可能
-    /// 错过 endOfFrame 那一轮的重建）。
-    Future<void> settleSwipe() async {
-      for (var i = 0; i < 24; i++) {
-        await tester.pump(const Duration(milliseconds: 16));
-      }
-      await _flush(tester);
-    }
-
     // 推荐频道卡片上那层手势先把横滑当进度吃掉（官方 `K6` 的左右滑 seek），
-    // 所以横滑切频道从海报格频道开始验。
+    // 所以海报格的横滑从看剧频道开始验。
     await tester.ensureVisible(find.text('看剧'));
     await tester.tap(find.text('看剧'));
-    await settleSwipe();
+    await _settleSwipe(tester);
     expect(find.byKey(const Key('drama_episode_grid')), findsOneWidget);
 
     // 往左：看剧 → 漫剧。
@@ -1919,7 +1921,7 @@ void main() {
       find.byKey(const Key('drama_episode_grid')),
       const Offset(-260, 0),
     );
-    await settleSwipe();
+    await _settleSwipe(tester);
     expect(find.byKey(const Key('drama_manju_grid')), findsOneWidget);
     expect(find.byKey(const Key('drama_episode_grid')), findsNothing);
 
@@ -1928,8 +1930,41 @@ void main() {
       find.byKey(const Key('drama_manju_grid')),
       const Offset(260, 0),
     );
-    await settleSwipe();
+    await _settleSwipe(tester);
     expect(find.byKey(const Key('drama_episode_grid')), findsOneWidget);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await _flush(tester);
+  });
+
+  testWidgets('竖滑播放流里只有左右边缘能切频道', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(400, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
+
+    SharedPreferences.setMockInitialValues({});
+    DramaChannelPreferences.reset();
+    DramaChannelPreferences.load(await SharedPreferences.getInstance());
+
+    await tester.pumpWidget(
+      _scope(perTab: 1, child: MaterialApp(home: _Seams().page())),
+    );
+    await _flush(tester);
+    expect(find.byKey(const Key('drama_feed')), findsOneWidget);
+
+    // 屏幕中间横滑归卡片的调进度（官方 `K6`），频道不动。
+    await tester.drag(
+      find.byKey(const Key('drama_feed')),
+      const Offset(-260, 0),
+    );
+    await _settleSwipe(tester);
+    expect(find.byKey(const Key('drama_feed')), findsOneWidget);
+
+    // 左边缘带起手（24px 以内）：这次归切频道，落到看剧。
+    await tester.dragFrom(const Offset(6, 300), const Offset(-260, 0));
+    await _settleSwipe(tester);
+    expect(find.byKey(const Key('drama_episode_grid')), findsOneWidget);
+    expect(find.byKey(const Key('drama_feed')), findsNothing);
 
     await tester.pumpWidget(const SizedBox.shrink());
     await _flush(tester);

@@ -30,6 +30,7 @@ import '../services/short_series_font_scale.dart';
 import '../services/swipe_guide_store.dart';
 import '../services/user_facing_error.dart';
 import '../services/media_history_store.dart';
+import '../widgets/gated_horizontal_drag.dart';
 import '../widgets/home/home_design.dart';
 import '../widgets/home/home_media_card.dart';
 import '../widgets/player/playlet_comment_panel.dart';
@@ -1401,6 +1402,9 @@ class _DramaPageState extends ConsumerState<DramaPage>
                 onSelect: _selectChannel,
                 // 播放器打开、弹窗、最近频道编辑时都不该被横滑打断。
                 enabled: !_modalOpen && _openingId == null && !_recentEditing,
+                // 竖滑播放流的卡片上横滑是官方 `K6` 调进度（内层、先赢），
+                // 这里只吃左右边缘带；海报格频道整片都能滑。
+                edgeOnly: channel.playsInline,
                 // 只让内容跟手横移：频道条固定在顶部，切换后立刻显示新的
                 // 选中项，不被动画拖着走。
                 child: _channelBody(state, channel, items),
@@ -2838,32 +2842,56 @@ class _CardGestures extends StatelessWidget {
           return dx >= center - half && dx <= center + half;
         }
 
-        return GestureDetector(
-          key: const Key('drama_card_gestures'),
+        // 左右边缘带归外层切频道（[TabSwipeArea.edgeOnly]）：两个横向识别器
+        // 必须互斥，否则内层这个总是先收到事件、先赢，边缘也切不了台。
+        bool inEdgeBand(double dx) {
+          final width = constraints.maxWidth;
+          if (width <= TabSwipeArea.edgeWidth * 2) return false;
+          return dx <= TabSwipeArea.edgeWidth ||
+              dx >= width - TabSwipeArea.edgeWidth;
+        }
+
+        return RawGestureDetector(
+          // 左右滑调进度（官方 `jq3/x.K6`，`bottomMargin=138dp`）。
+          gestures: onHorizontalDrag == null
+              ? const <Type, GestureRecognizerFactory>{}
+              : <Type, GestureRecognizerFactory>{
+                  GatedHorizontalDragGestureRecognizer:
+                      GestureRecognizerFactoryWithHandlers<
+                        GatedHorizontalDragGestureRecognizer
+                      >(
+                        () => GatedHorizontalDragGestureRecognizer(
+                          accepts: (dx) => !inEdgeBand(dx),
+                        ),
+                        (recognizer) => recognizer
+                          ..onStart = (details) =>
+                              seekTo(details.localPosition.dx)
+                          ..onUpdate = (details) =>
+                              seekTo(details.localPosition.dx),
+                      ),
+                },
           // opaque：整块手势区必须自己吃指针，否则下方没有别的接收者，
           // 上滑翻页仍由外层 `PageView` 的竖直拖动竞技场接管。
           behavior: HitTestBehavior.opaque,
-          // 没有双击手势了，单击立即派发（不再等双击窗口）。
-          onTap: onTap,
-          onLongPressStart: (details) {
-            if (inBand(details.localPosition.dx)) {
-              onPanelLongPress();
-            } else {
-              HapticFeedback.lightImpact();
-              onBoostLongPressStart();
-            }
-          },
-          // 带外快进的收尾由 endBoost 的 _boosting 门挡住：中带开面板的
-          // 那支从未 startBoost，松手不能动速率。
-          onLongPressEnd: (_) => onBoostLongPressEnd(),
-          onLongPressCancel: onBoostLongPressEnd,
-          onHorizontalDragStart: onHorizontalDrag == null
-              ? null
-              : (details) => seekTo(details.localPosition.dx),
-          onHorizontalDragUpdate: onHorizontalDrag == null
-              ? null
-              : (details) => seekTo(details.localPosition.dx),
-          child: const SizedBox.expand(),
+          child: GestureDetector(
+            key: const Key('drama_card_gestures'),
+            behavior: HitTestBehavior.opaque,
+            // 没有双击手势了，单击立即派发（不再等双击窗口）。
+            onTap: onTap,
+            onLongPressStart: (details) {
+              if (inBand(details.localPosition.dx)) {
+                onPanelLongPress();
+              } else {
+                HapticFeedback.lightImpact();
+                onBoostLongPressStart();
+              }
+            },
+            // 带外快进的收尾由 endBoost 的 _boosting 门挡住：中带开面板的
+            // 那支从未 startBoost，松手不能动速率。
+            onLongPressEnd: (_) => onBoostLongPressEnd(),
+            onLongPressCancel: onBoostLongPressEnd,
+            child: const SizedBox.expand(),
+          ),
         );
       },
     );
