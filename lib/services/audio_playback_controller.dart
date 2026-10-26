@@ -875,6 +875,9 @@ class _AudioPlaybackController extends ChangeNotifier
       'chapterId': _chapters[index].itemId,
       'episodeId': _chapters[index].itemId,
       'episode': index,
+      // 总章数随进度走：只听过没读过的书，书架也要能显示「第 N/M 章」，
+      // 镜像到看书线时还得靠它换算书级百分比。
+      'chapterCount': _chapters.length,
       'position': position.inMilliseconds / 1000,
       'duration': duration.inMilliseconds / 1000,
       'maxScroll': duration.inMilliseconds / 1000,

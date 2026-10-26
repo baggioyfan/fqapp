@@ -396,12 +396,21 @@ class LibraryStore implements ReaderStore {
           if (incomingTime <= existingTime) continue;
           if (!_advancesProgress(entry, existing)) continue;
         }
-        await _histBox.put(key, {
+        final stored = {
           ...entry,
           'id': key,
           if (scoped) 'contentId': id,
-        });
+        };
+        await _histBox.put(key, stored);
         writtenHistory++;
+        // 云端合入的进度同样把另一条线前带：设备 A 听到 50 章、设备 B 还在
+        // 读 30 章时，B 的文字进度在合并这一刻就该跟上，而不是等 B 自己
+        // 再写一次进度。兄弟记录不计入 merged 计数 —— 它是本次合并的
+        // 伴生结果，不是一条新进度。
+        final sibling = _mirrorChapterSibling(stored);
+        if (sibling != null) {
+          await _histBox.put(sibling['id'] as String, sibling);
+        }
       }
       var addedEpisodes = 0;
       for (final entry in watched.entries) {
@@ -556,6 +565,14 @@ class LibraryStore implements ReaderStore {
     }
     await _histBox.put(id, record);
 
+    // 同一本书的另一条进度线（听 ↔ 读）跟着章节指针走，见
+    // [_mirrorChapterSibling]。兄弟记录与本次写入共用一次会话，
+    // 清理时随本次记录一起豁免。
+    final sibling = _mirrorChapterSibling(record);
+    if (sibling != null) {
+      await _histBox.put(sibling['id'] as String, sibling);
+    }
+
     // Trim history to 50 entries once it grows past 100 (leaves headroom so
     // we don't prune on every single write).
     if (_histBox.length > 100) {
@@ -563,6 +580,7 @@ class LibraryStore implements ReaderStore {
       final retained = historySnapshot().take(50).map(_historyIdentity).toSet()
         // Never trim the record this write just inserted, even without a time.
         ..add(_historyIdentity(record));
+      if (sibling != null) retained.add(_historyIdentity(sibling));
       final oldestKeys = <dynamic>[];
       for (final key in _histBox.keys) {
         final record = _historyRecord(_histBox.get(key), id: key.toString());
@@ -596,6 +614,87 @@ class LibraryStore implements ReaderStore {
       }
       await _histBox.deleteAll(oldestKeys);
     }
+  }
+
+  /// 同一本书的「听」与「读」是两条进度线：`audio:<id>` 与裸 `<id>`。
+  /// 它们必须共享章节指针 —— 听书本来就是同一本书的另一种翻页方式，
+  /// 听到 50 章再打开正文，不该从上次读的 12 章开始。
+  ///
+  /// 章节身份（`episode` / `chapterId`）是两条线唯一的公共锚点：文字偏移
+  /// 对听书没有意义，播放秒数对看书也没有意义，能互相延续的只有
+  /// 「到哪一章」。因此镜像只搬章节指针，兄弟记录的章内锚点（文字偏移 /
+  /// 播放秒数）随之归零 —— 换了章，章内位置本来就不成立。
+  ///
+  /// **只进不退**：刻意回头重听/重读旧章，不该把另一条线往回拽；同一章
+  /// 也不动 —— 兄弟线自己的章内进度更准。**只更新已存在的兄弟记录，
+  /// 绝不凭空创建**：保存一条进度不得多出一条历史（清理屏障的契约），
+  /// 只听过没读过的书也没有「上次读到哪」可造 —— 用户自己在正文里翻到
+  /// 某一章后，两条线才从这里开始互相跟随。
+  ///
+  /// 云端合并口径不用改：两条记录仍然各自按 `time` + `_advancesProgress`
+  /// 合并，指针的传播靠每次本机写入 / 云端合入时顺带重写兄弟记录。
+  ///
+  /// 返回写入的兄弟记录（没动就返回 null），调用方用于豁免清理。
+  Map<String, dynamic>? _mirrorChapterSibling(Map<String, dynamic> source) {
+    final kind = (source['kind'] ?? 'book').toString();
+    // 只有一本书同时拥有「读」和「听」两条线；漫画 / 短剧不参与。
+    if (kind != 'audio' && kind != 'book') return null;
+    final contentId = (source['contentId'] ?? source['bookId'] ?? source['id'])
+        ?.toString();
+    final episode = source['episode'];
+    // 裸键内容（书 / 视频）不带作用域；带 `:` 的 id 是已经作用域化的键，
+    // 不该再被包一层。缺 `episode` 就没有可搬的锚点。
+    if (contentId == null ||
+        contentId.isEmpty ||
+        contentId.contains(':') ||
+        episode is! num) {
+      return null;
+    }
+    final siblingKey = kind == 'audio' ? contentId : 'audio:$contentId';
+    final siblingKind = kind == 'audio' ? 'book' : 'audio';
+    final existing = _historyRecord(_histBox.get(siblingKey), id: siblingKey);
+    // 只更新已存在的兄弟记录，不凭空创建（见方法注释）；裸键可能被别的
+    // 媒体类型占着（老版本的视频 / 短剧记录不带作用域）：不是同一种媒体
+    // 就绕开，绝不覆盖。
+    if (existing == null ||
+        (existing['kind']?.toString() ?? 'book') != siblingKind) {
+      return null;
+    }
+    final existingEpisode = existing['episode'];
+    if (existingEpisode is num && existingEpisode >= episode) return null;
+
+    final chapterId = source['chapterId'];
+    final chapterCount = source['chapterCount'];
+    final mirrored = <String, dynamic>{
+      ...existing,
+      'id': siblingKey,
+      'kind': siblingKind,
+      'bookId': contentId,
+      'episode': episode.toInt(),
+      if (chapterId is String && chapterId.isNotEmpty)
+        'chapterId': chapterId,
+      if (chapterCount is num && chapterCount > 0) 'chapterCount': chapterCount,
+      if (siblingKind == 'audio') ...{
+        'contentId': contentId,
+        if (chapterId is String && chapterId.isNotEmpty)
+          'episodeId': chapterId,
+        'position': 0.0,
+        'progress': 0.0,
+      } else ...{
+        'position': 0.0,
+        'maxScroll': 0.0,
+        'textOffset': 0,
+        'positionVersion': 2,
+        if (chapterCount is num && chapterCount > 0)
+          'progress': (episode / chapterCount).clamp(0.0, 1.0).toDouble(),
+      },
+      // 时间戳跟源记录走：书确实在被使用，清理与「最近」排序都按它来，
+      // 云端合并的时间闸门（`incomingTime <= existingTime`）也随之成立。
+      'time': source['time'] is num
+          ? source['time']
+          : DateTime.now().millisecondsSinceEpoch,
+    };
+    return _historyRecord(mirrored, id: siblingKey);
   }
 
   @override
