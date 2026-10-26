@@ -1909,8 +1909,7 @@ void main() {
     // 推荐频道是竖滑播放流。
     expect(find.byKey(const Key('drama_feed')), findsOneWidget);
 
-    // 推荐频道卡片上那层手势先把横滑当进度吃掉（官方 `K6` 的左右滑 seek），
-    // 所以海报格的横滑从看剧频道开始验。
+    // 海报格频道之间横滑；播放流的横滑单独有一条用例（进度条是唯一例外）。
     await tester.ensureVisible(find.text('看剧'));
     await tester.tap(find.text('看剧'));
     await _settleSwipe(tester);
@@ -1937,7 +1936,7 @@ void main() {
     await _flush(tester);
   });
 
-  testWidgets('竖滑播放流里只有左右边缘能切频道', (tester) async {
+  testWidgets('竖滑播放流里整片横滑都切频道，只剩进度条那一行调进度', (tester) async {
     await tester.binding.setSurfaceSize(const Size(400, 800));
     addTearDown(() => tester.binding.setSurfaceSize(null));
     addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
@@ -1952,19 +1951,23 @@ void main() {
     await _flush(tester);
     expect(find.byKey(const Key('drama_feed')), findsOneWidget);
 
-    // 屏幕中间横滑归卡片的调进度（官方 `K6`），频道不动。
+    // 卡片中间横滑现在归切频道（以前这里是官方 `K6` 的整屏调进度，
+    // 与切频道抢同一个操作 ⇒ 同一手势在不同区域语义相反）。
     await tester.drag(
       find.byKey(const Key('drama_feed')),
       const Offset(-260, 0),
     );
     await _settleSwipe(tester);
-    expect(find.byKey(const Key('drama_feed')), findsOneWidget);
-
-    // 左边缘带起手（24px 以内）：这次归切频道，落到看剧。
-    await tester.dragFrom(const Offset(6, 300), const Offset(-260, 0));
-    await _settleSwipe(tester);
     expect(find.byKey(const Key('drama_episode_grid')), findsOneWidget);
     expect(find.byKey(const Key('drama_feed')), findsNothing);
+
+    // 往右滑回去：看剧 → 推荐，双向一致。
+    await tester.drag(
+      find.byKey(const Key('drama_episode_grid')),
+      const Offset(260, 0),
+    );
+    await _settleSwipe(tester);
+    expect(find.byKey(const Key('drama_feed')), findsOneWidget);
 
     await tester.pumpWidget(const SizedBox.shrink());
     await _flush(tester);

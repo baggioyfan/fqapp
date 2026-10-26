@@ -4,8 +4,6 @@ import 'dart:math' as math;
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 
-import 'gated_horizontal_drag.dart';
-
 /// 横向手势切顶栏标签的外壳：首页书城分类、短剧频道、书架一级 tab 共用。
 ///
 /// **为什么不是横向 `PageView`。** 三页的「标签」都不是独立页面：
@@ -24,6 +22,12 @@ import 'gated_horizontal_drag.dart';
 /// 内容区本来就有横向滚动列表时（首页顶栏条、卡片横排、短剧频道条），那些
 /// 列表会先赢——在它们身上左右滑是滚列表，这样才对。
 ///
+/// **谁能抢走横滑：** 只有比本组件更内层、且自己注册了横向拖动的手势能赢
+/// （竞技场里事件从内层往外发，内层先收到、先越过 slop 就先 accept）。短剧
+/// 竖滑播放流就是靠这条规则，把「调进度」收在底部进度条那一条里：进度条
+/// 自己带横向拖动，所以只有它那 24dp 归它，card 上的其余部分一概归这里切
+/// 频道。不需要按坐标做互斥——两边的**作用范围本来就是靠命中测试分开的**。
+///
 /// **边界。** 首尾不环绕：越界方向只给一段阻尼位移（[edgeDamping] /
 /// [edgeLimit]），松手弹回原位，且切换请求在 [_stepFor] 里就被挡掉，不会
 /// 出现「从最后一个跳回第一个」。
@@ -35,7 +39,6 @@ class TabSwipeArea extends StatefulWidget {
     required this.onSelect,
     required this.child,
     this.enabled = true,
-    this.edgeOnly = false,
   });
 
   /// 当前标签下标，由页面自己的状态驱动（页面是唯一事实来源）。
@@ -54,17 +57,6 @@ class TabSwipeArea extends StatefulWidget {
 
   /// 门禁。编辑态、全屏播放器打开、弹窗等场景由页面关掉手势。
   final bool enabled;
-
-  /// 只在左右边缘带起手才认横滑。
-  ///
-  /// 内容自己占用了横向拖动时打开：短剧竖滑播放流的卡片上，左右滑是官方的
-  /// 调进度（`o.java:K6`），中间必须留给它，边缘带仍然切频道。两边是**互斥**
-  /// 的——被拒的识别器根本不进手势竞技场，不靠「谁先越过 slop」（内层总是先
-  /// 收到事件、总是先赢）。见 [GatedHorizontalDragGestureRecognizer]。
-  final bool edgeOnly;
-
-  /// [edgeOnly] 时左右边缘带的宽度（逻辑像素）。
-  static const double edgeWidth = 24;
 
   /// 位移超过屏宽的这个比例就认这次切换（不甩也能滑过去）。
   static const double commitFraction = 0.18;
@@ -167,16 +159,6 @@ class _TabSwipeAreaState extends State<TabSwipeArea>
     final size = context.size;
     if (size != null && size.width > 0) return size.width;
     return MediaQuery.sizeOf(context).width;
-  }
-
-  /// 按下点归不归这个外壳管。宽度还没量到时先放行：宁可中间也滑一下，也别
-  /// 让首帧的手势整个失效。
-  bool _acceptsDrag(double dx) {
-    if (!widget.edgeOnly) return true;
-    final width = _width;
-    if (!width.isFinite || width <= TabSwipeArea.edgeWidth * 2) return true;
-    return dx <= TabSwipeArea.edgeWidth ||
-        dx >= width - TabSwipeArea.edgeWidth;
   }
 
   int _ms(int milliseconds) =>
@@ -315,19 +297,17 @@ class _TabSwipeAreaState extends State<TabSwipeArea>
         final width = constraints.maxWidth;
         if (width.isFinite && width > 0) _width = width;
         return RawGestureDetector(
-          // translucent：内容没接住指针的地方（卡片间隙、留白、边缘带）也要
-          // 能起手。默认的 deferToChild 要求子节点命中，空白处整片滑不动。
+          // translucent：内容没接住指针的地方（卡片间隙、留白）也要能起手。
+          // 默认的 deferToChild 要求子节点命中，空白处整片滑不动。
           // 不加 opaque：内容自己的手势仍然先收到事件、先在竞技场里赢。
           behavior: HitTestBehavior.translucent,
           gestures: enabled
               ? <Type, GestureRecognizerFactory>{
-                  GatedHorizontalDragGestureRecognizer:
+                  HorizontalDragGestureRecognizer:
                       GestureRecognizerFactoryWithHandlers<
-                        GatedHorizontalDragGestureRecognizer
+                        HorizontalDragGestureRecognizer
                       >(
-                        () => GatedHorizontalDragGestureRecognizer(
-                          accepts: _acceptsDrag,
-                        ),
+                        HorizontalDragGestureRecognizer.new,
                         (recognizer) => recognizer
                           // 从按下点算起。默认的 start 行为会吃掉前
                           // kTouchSlop 像素，跟手会晚半拍（阅读页竖滑踩过

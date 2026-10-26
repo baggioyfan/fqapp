@@ -30,7 +30,6 @@ import '../services/short_series_font_scale.dart';
 import '../services/swipe_guide_store.dart';
 import '../services/user_facing_error.dart';
 import '../services/media_history_store.dart';
-import '../widgets/gated_horizontal_drag.dart';
 import '../widgets/home/home_design.dart';
 import '../widgets/home/home_media_card.dart';
 import '../widgets/player/playlet_comment_panel.dart';
@@ -1402,9 +1401,9 @@ class _DramaPageState extends ConsumerState<DramaPage>
                 onSelect: _selectChannel,
                 // 播放器打开、弹窗、最近频道编辑时都不该被横滑打断。
                 enabled: !_modalOpen && _openingId == null && !_recentEditing,
-                // 竖滑播放流的卡片上横滑是官方 `K6` 调进度（内层、先赢），
-                // 这里只吃左右边缘带；海报格频道整片都能滑。
-                edgeOnly: channel.playsInline,
+                // 整片横滑都切频道，播放流也一样。唯一的例外是底部进度条：
+                // 它自己带横向拖动、又比这里内层，所以只有那 24dp 归调进度，
+                // 其余区域一律切频道（见 TabSwipeArea 的类文档）。
                 // 只让内容跟手横移：频道条固定在顶部，切换后立刻显示新的
                 // 选中项，不被动画拖着走。
                 child: _channelBody(state, channel, items),
@@ -2552,7 +2551,8 @@ class _DramaFeedCard extends StatelessWidget {
             ),
           ),
         // 官方 `VideoGestureDetectLayout`（`cjc.xml:7`，`marginTop=70dp` /
-        // `marginBottom=180dp`）：单击、长按、左右滑动由同一个层转发。
+        // `marginBottom=180dp`）：单击、长按由这一层转发。左右滑原本也挂在这里
+        // （整屏调进度），现在只留在底部进度条上，其余横滑归频道切换。
         //
         // **单击 = 播放/暂停当前视频，不跳任何页面。**
         // 官方唯一的单击监听器是 `jq3/x.java` 的内部类 `q`（`fp3.f` 子类），
@@ -2573,21 +2573,6 @@ class _DramaFeedCard extends StatelessWidget {
             onPanelLongPress: onOpenMorePanel,
             onBoostLongPressStart: () => unawaited(playback?.startBoost()),
             onBoostLongPressEnd: () => unawaited(playback?.endBoost()),
-            onHorizontalDrag: playback == null
-                ? null
-                : (fraction) {
-                    final total = playback!.duration.value;
-                    if (total <= Duration.zero) return;
-                    unawaited(
-                      playback!.seek(
-                        Duration(
-                          milliseconds: (total.inMilliseconds * fraction)
-                              .round()
-                              .clamp(0, total.inMilliseconds),
-                        ),
-                      ),
-                    );
-                  },
           ),
         ),
         // Above the card's tap target, so the retry button wins its own taps.
@@ -2787,7 +2772,7 @@ class _PlayPauseFeedback extends StatelessWidget {
   }
 }
 
-/// The official card's tap / long-press / horizontal-seek plane.
+/// The official card's tap / long-press plane.
 ///
 /// 单击 = 播放/暂停。官方卡上**没有双击手势**：`jq3/x` 注册的监听器
 /// （`fp3.f` 子类 `q`）继承了 `SimpleOnGestureListener.onDoubleTap` 的默认实现，
@@ -2797,15 +2782,19 @@ class _PlayPauseFeedback extends StatelessWidget {
 /// Long-press is the official two-branch gesture (`jq3/x$q.onLongPress`
 /// `:2228-2262`）：命中横向中带（`K6()` `:2690-2711`，竖屏 50% / 横屏 33% 宽、
 /// 居中、Y 不限）且 `y7()` 处理成功 → 打开更多面板；带外才是速度层的 2×
-/// 快进，按住期间生效（`@string/ec6`=「2倍速快进中」，`cjx.xml`）。Horizontal
-/// drag seeks (`o.java:K6` mounts the drag helper with `bottomMargin=138dp`).
+/// 快进，按住期间生效（`@string/ec6`=「2倍速快进中」，`cjx.xml`）。
+///
+/// **这里不再挂横向拖动。** 官方那张卡上左右滑是整屏调进度（`o.java:K6`，
+/// `bottomMargin=138dp`），但这条手势和「横滑切频道」是同一个操作的两套语义，
+/// 落在不同区域会互相打架。本 fork 把它收窄到底部进度条（`_SeekTrack` 自己
+/// 带横向拖动）：卡片其余区域一律归外层 [TabSwipeArea] 切频道，左边滑是
+/// 上一个频道、右边滑是下一个，不再随按下点在「调进度 / 切频道」之间跳。
 class _CardGestures extends StatelessWidget {
   final bool enabled;
   final VoidCallback onTap;
   final VoidCallback onPanelLongPress;
   final VoidCallback onBoostLongPressStart;
   final VoidCallback onBoostLongPressEnd;
-  final ValueChanged<double>? onHorizontalDrag;
 
   const _CardGestures({
     super.key,
@@ -2814,7 +2803,6 @@ class _CardGestures extends StatelessWidget {
     required this.onPanelLongPress,
     required this.onBoostLongPressStart,
     required this.onBoostLongPressEnd,
-    this.onHorizontalDrag,
   });
 
   @override
@@ -2822,12 +2810,6 @@ class _CardGestures extends StatelessWidget {
     if (!enabled) return const SizedBox.expand();
     return LayoutBuilder(
       builder: (context, constraints) {
-        void seekTo(double dx) {
-          final width = constraints.maxWidth;
-          if (width <= 0 || onHorizontalDrag == null) return;
-          onHorizontalDrag!((dx / width).clamp(0.0, 1.0));
-        }
-
         // 官方 `jq3/x.K6()`：中带宽 = 视图宽 ×（竖屏 0.5 / 横屏 0.33），
         // 居中放置，Y 不限。横竖屏分档来自官方 `J6()`。
         final bandFraction =
@@ -2842,58 +2824,27 @@ class _CardGestures extends StatelessWidget {
           return dx >= center - half && dx <= center + half;
         }
 
-        // 左右边缘带归外层切频道：两边必须互斥（见 Gated…），否则内层这个
-        // 总是先收到事件、先赢，边缘也切不了台。
-        bool inEdgeBand(double dx) {
-          final width = constraints.maxWidth;
-          if (width <= TabSwipeArea.edgeWidth * 2) return false;
-          return dx <= TabSwipeArea.edgeWidth ||
-              dx >= width - TabSwipeArea.edgeWidth;
-        }
-
-        return RawGestureDetector(
-          // 左右滑调进度（官方 `jq3/x.K6`，`bottomMargin=138dp`）。
-          gestures: onHorizontalDrag == null
-              ? const <Type, GestureRecognizerFactory>{}
-              : <Type, GestureRecognizerFactory>{
-                  GatedHorizontalDragGestureRecognizer:
-                      GestureRecognizerFactoryWithHandlers<
-                        GatedHorizontalDragGestureRecognizer
-                      >(
-                        () => GatedHorizontalDragGestureRecognizer(
-                          accepts: (dx) => !inEdgeBand(dx),
-                        ),
-                        // 两句分开写：级联里 `seekTo(...) => 箭头体` 后面的
-                        // `..` 会被解析成级联到 void 返回值上。
-                        (recognizer) {
-                          recognizer.onStart = (details) =>
-                              seekTo(details.localPosition.dx);
-                          recognizer.onUpdate = (details) =>
-                              seekTo(details.localPosition.dx);
-                        },
-                      ),
-                },
-          // opaque：整块手势区自己吃指针，上滑翻页仍归外层 PageView 的竖直拖动。
+        return GestureDetector(
+          key: const Key('drama_card_gestures'),
+          // opaque：整块手势区自己吃指针，上滑翻页仍归外层 PageView 的竖直
+          // 拖动；横向则留给更外层的 TabSwipeArea（这里没有横向识别器，
+          // 竞技场里只剩它一个）。
           behavior: HitTestBehavior.opaque,
-          child: GestureDetector(
-            key: const Key('drama_card_gestures'),
-            behavior: HitTestBehavior.opaque,
-            // 没有双击手势了，单击立即派发（不再等双击窗口）。
-            onTap: onTap,
-            onLongPressStart: (details) {
-              if (inBand(details.localPosition.dx)) {
-                onPanelLongPress();
-              } else {
-                HapticFeedback.lightImpact();
-                onBoostLongPressStart();
-              }
-            },
-            // 带外快进的收尾由 endBoost 的 _boosting 门挡住：中带开面板的
-            // 那支从未 startBoost，松手不能动速率。
-            onLongPressEnd: (_) => onBoostLongPressEnd(),
-            onLongPressCancel: onBoostLongPressEnd,
-            child: const SizedBox.expand(),
-          ),
+          // 没有双击手势了，单击立即派发（不再等双击窗口）。
+          onTap: onTap,
+          onLongPressStart: (details) {
+            if (inBand(details.localPosition.dx)) {
+              onPanelLongPress();
+            } else {
+              HapticFeedback.lightImpact();
+              onBoostLongPressStart();
+            }
+          },
+          // 带外快进的收尾由 endBoost 的 _boosting 门挡住：中带开面板的
+          // 那支从未 startBoost，松手不能动速率。
+          onLongPressEnd: (_) => onBoostLongPressEnd(),
+          onLongPressCancel: onBoostLongPressEnd,
+          child: const SizedBox.expand(),
         );
       },
     );

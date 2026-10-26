@@ -6,6 +6,7 @@ import 'package:fqapp/widgets/tab_swipe_area.dart';
 /// 宿主：标签下标由它自己持有，等同三个页面把自己的状态交给 [TabSwipeArea]。
 ///
 /// [accept] 为假时拒绝一切切换，用来覆盖「父级不认账」那条分支。
+/// [overlay] 贴在底部，模拟内容自己带横向拖动的层（短剧卡片的进度条）。
 class SwipeHost extends StatefulWidget {
   const SwipeHost({
     super.key,
@@ -14,7 +15,7 @@ class SwipeHost extends StatefulWidget {
     this.initial = 0,
     this.accept = true,
     this.enabled = true,
-    this.edgeOnly = false,
+    this.overlay,
   });
 
   final List<int> requests;
@@ -22,7 +23,7 @@ class SwipeHost extends StatefulWidget {
   final int initial;
   final bool accept;
   final bool enabled;
-  final bool edgeOnly;
+  final Widget? overlay;
 
   @override
   State<SwipeHost> createState() => SwipeHostState();
@@ -42,16 +43,27 @@ class SwipeHostState extends State<SwipeHost> {
           index: index,
           count: widget.count,
           enabled: widget.enabled,
-          edgeOnly: widget.edgeOnly,
           onSelect: (next) {
             widget.requests.add(next);
             if (widget.accept) setState(() => index = next);
           },
-          child: SizedBox.expand(
-            child: Center(
-              key: const Key('swipe-body'),
-              child: Text('tab $index'),
-            ),
+          child: Stack(
+            children: [
+              SizedBox.expand(
+                child: Center(
+                  key: const Key('swipe-body'),
+                  child: Text('tab $index'),
+                ),
+              ),
+              if (widget.overlay != null)
+                Positioned(
+                  left: 0,
+                  right: 0,
+                  bottom: 0,
+                  height: 48,
+                  child: widget.overlay!,
+                ),
+            ],
           ),
         ),
       ),
@@ -79,7 +91,7 @@ Future<void> _pumpHost(
   int initial = 0,
   bool accept = true,
   bool enabled = true,
-  bool edgeOnly = false,
+  Widget? overlay,
   GlobalKey<SwipeHostState>? key,
 }) async {
   await tester.binding.setSurfaceSize(const Size(400, 800));
@@ -93,7 +105,7 @@ Future<void> _pumpHost(
       initial: initial,
       accept: accept,
       enabled: enabled,
-      edgeOnly: edgeOnly,
+      overlay: overlay,
     ),
   );
   await tester.pumpAndSettle();
@@ -247,23 +259,41 @@ void main() {
     expect(find.text('tab 1'), findsOneWidget);
   });
 
-  testWidgets('edgeOnly：中间起手不切，边缘起手才切', (tester) async {
+  testWidgets('内层自带横向拖动的条带归它，其余区域整片归外壳', (tester) async {
     final requests = <int>[];
-    await _pumpHost(tester, requests: requests, edgeOnly: true);
+    final innerDeltas = <double>[];
+    await _pumpHost(
+      tester,
+      requests: requests,
+      overlay: GestureDetector(
+        key: const Key('inner-drag'),
+        behavior: HitTestBehavior.opaque,
+        onHorizontalDragUpdate: (details) => innerDeltas.add(details.delta.dx),
+        child: const SizedBox.expand(),
+      ),
+    );
 
-    // 屏幕中间留给内容自己（短剧卡片上的左右滑调进度）：外壳的识别器在
-    // 按下这一刻就被拒，压根不进竞技场。
-    await tester.dragFrom(const Offset(200, 400), const Offset(-260, 0));
+    // 底部那条（相当于短剧卡片上的进度条）自己注册了横向拖动、又比外壳
+    // 内层：事件从内层往外发，它先越过 slop、先 accept，所以那一条归它，
+    // 外壳不切标签。作用范围靠命中测试分开，不需要按坐标互斥。
+    await tester.drag(
+      find.byKey(const Key('inner-drag')),
+      const Offset(-260, 0),
+    );
     await tester.pumpAndSettle();
+    expect(innerDeltas, isNotEmpty);
     expect(requests, isEmpty);
+    expect(find.text('tab 0'), findsOneWidget);
     expect(_offsetX(tester), 0);
 
-    // 左边缘带（24px）起手：归外壳。
-    await tester.dragFrom(const Offset(8, 400), const Offset(-260, 0));
+    // 其余区域：整片都能横滑切标签。
+    await tester.drag(
+      find.byKey(const Key('swipe-body')),
+      const Offset(-260, 0),
+    );
     await tester.pumpAndSettle();
     expect(requests, [1]);
     expect(find.text('tab 1'), findsOneWidget);
-    expect(_offsetX(tester), 0);
   });
 
   testWidgets('标签只有一个时手势不启用', (tester) async {
