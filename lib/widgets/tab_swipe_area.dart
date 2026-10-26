@@ -93,6 +93,12 @@ class _TabSwipeAreaState extends State<TabSwipeArea>
   Animation<double>? _tween;
 
   /// 起手时量一次屏宽，动画期间不再读 `context.size`（那时可能已经不在树上）。
+  ///
+  /// 平时由 [build] 里的 `LayoutBuilder` 缓存到这里；`didUpdateWidget` 阶段
+  /// render object 还没重新布局，读 `context.size` 会抛
+  /// `Cannot get size during build`（release 下不抛，只是静默拿上一帧的值），
+  /// 所以点标签那条路径只能用上一帧的宽度。窗口 resize 时相差一帧，入场位移
+  /// 看不出来。
   double _width = 1;
 
   /// 跟手累计位移（未阻尼），与 [_offset] 分开：从 [_offset] 反推阻尼前的值
@@ -119,7 +125,9 @@ class _TabSwipeAreaState extends State<TabSwipeArea>
     // 点标签切过来的：也让新内容从对应一侧迎进来，与手势切换同一种观感。
     // 位移同步设好（免得新内容先归位再跳出去），动画放到这一帧之后启动。
     final direction = widget.index > oldWidget.index ? 1 : -1;
-    _width = _measureWidth();
+    // 这里不能量宽：[didUpdateWidget] 跑在 build 阶段，这一帧的 layout 还没
+    // 发生，`context.size` 会直接抛异常。沿用 [_width]（上一帧由 build 里的
+    // LayoutBuilder 记下的内容宽度）。
     // 先停旧补间，否则它在下一帧还会继续写 _offset，把刚设好的入场位移抹掉。
     _anim.stop();
     _offset.value = direction * _width * TabSwipeArea.enterFraction;
@@ -275,23 +283,32 @@ class _TabSwipeAreaState extends State<TabSwipeArea>
   @override
   Widget build(BuildContext context) {
     final enabled = widget.enabled && widget.count > 1;
-    return GestureDetector(
-      // 从按下点算起。默认的 start 行为会吃掉前 kTouchSlop 像素，跟手会晚
-      // 半拍（阅读页竖滑踩过同一个坑）。
-      dragStartBehavior: DragStartBehavior.down,
-      onHorizontalDragStart: enabled ? _onDragStart : null,
-      onHorizontalDragUpdate: enabled ? _onDragUpdate : null,
-      onHorizontalDragEnd: enabled ? _onDragEnd : null,
-      onHorizontalDragCancel: enabled ? _onDragCancel : null,
-      child: ValueListenableBuilder<double>(
-        valueListenable: _offset,
-        // child 传进来就不再随位移重建，只有那层 Transform 会重建。
-        child: widget.child,
-        builder: (context, offset, child) => Transform.translate(
-          offset: Offset(offset, 0),
-          child: child,
-        ),
-      ),
+    // 用 LayoutBuilder 记宽度，而不是每次切换时读 context.size：这里的
+    // constraints 在 layout 阶段就确定了，didUpdateWidget（build 阶段）也能
+    // 沿用上一次的值。只写字段不 setState，不会多出一次重建。
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final width = constraints.maxWidth;
+        if (width.isFinite && width > 0) _width = width;
+        return GestureDetector(
+          // 从按下点算起。默认的 start 行为会吃掉前 kTouchSlop 像素，跟手会晚
+          // 半拍（阅读页竖滑踩过同一个坑）。
+          dragStartBehavior: DragStartBehavior.down,
+          onHorizontalDragStart: enabled ? _onDragStart : null,
+          onHorizontalDragUpdate: enabled ? _onDragUpdate : null,
+          onHorizontalDragEnd: enabled ? _onDragEnd : null,
+          onHorizontalDragCancel: enabled ? _onDragCancel : null,
+          child: ValueListenableBuilder<double>(
+            valueListenable: _offset,
+            // child 传进来就不再随位移重建，只有那层 Transform 会重建。
+            child: widget.child,
+            builder: (context, offset, child) => Transform.translate(
+              offset: Offset(offset, 0),
+              child: child,
+            ),
+          ),
+        );
+      },
     );
   }
 }
