@@ -189,9 +189,9 @@ void main() {
   });
 
   test('播下一集：旧解码器释放完成前不建新解码器', () async {
-    // 同一部剧换集时旧解码器作废重建。创建新的必须等旧的释放结束，
-    // 否则两台原生播放器同时存活：Android 撞 MediaCodec 名额、macOS 撞
-    // 媒体会话未关闭，表现为「播下一集时提示播放失败」。
+    // 同一部剧换集时旧解码器作废重建，新的必须等旧的释放结束。否则两台原生
+    // 播放器同时存活：Android 撞 MediaCodec 名额、桌面端撞媒体会话未关闭，
+    // 表现为「播下一集时提示播放失败」。
     final releaseGate = Completer<void>();
     final players = <ControlledNativePlayer>[];
     final session = InlineVideoPlayback(

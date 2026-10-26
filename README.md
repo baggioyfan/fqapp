@@ -14,31 +14,6 @@
   <a href="https://github.com/ch6vip/fqapp/releases/latest"><img alt="下载 APK" height="40" src="https://img.shields.io/badge/%E4%B8%8B%E8%BD%BD-APK-3DDC84?style=for-the-badge&logo=android&logoColor=white"></a>
 </p>
 
-<p align="center">
-  <a href="https://github.com/ch6vip/fqapp/releases/latest">
-    <img alt="Release" src="https://img.shields.io/github/v/release/ch6vip/fqapp?color=EF5038&label=Release&logo=github">
-  </a>
-  &nbsp;
-  <a href="https://github.com/ch6vip/fqapp/releases">
-    <img alt="Downloads" src="https://img.shields.io/github/downloads/ch6vip/fqapp/total?color=14B8A6&label=Downloads&logo=github">
-  </a>
-  &nbsp;
-  <img alt="Platform" src="https://img.shields.io/badge/Platform-Android%207.0%2B%20%C2%B7%20arm64-3DDC84?logo=android&logoColor=white">
-  &nbsp;
-  <a href="LICENSE">
-    <img alt="License" src="https://img.shields.io/badge/License-GPL--3.0-blue">
-  </a>
-  &nbsp;
-  <a href="https://github.com/ch6vip/fqapp/stargazers">
-    <img alt="Stars" src="https://img.shields.io/github/stars/ch6vip/fqapp?style=social">
-  </a>
-</p>
-
-<p align="center">
-  <a href="https://github.com/ch6vip/fqapp/releases/latest">
-    <img alt="下载 APK" height="44" src="https://img.shields.io/badge/%E4%B8%8B%E8%BD%BD-APK-3DDC84?style=for-the-badge&logo=android&logoColor=white">
-  </a>
-</p>
 
 > ⚠️ **免责声明**：本项目仅供学习与研究交流，不内置、不分发任何内容资源；在线内容均来自第三方公开接口，版权归原权利方所有。本项目与内容提供方无关联，未获其授权；使用产生的一切后果由使用者自行承担，如有侵权请联系删除。
 

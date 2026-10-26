@@ -205,10 +205,15 @@ SliverMasonryGrid homeBookMasonry(
 /// is always 2 columns regardless of width — the 516/1024/1366 breakpoints
 /// only apply on tablets. [padAdapt] mirrors `b()` and defaults to `false`.
 ///
+/// Windows 桌面走同一套断点：`b()` 只认平板，桌面窗口死守 2 列会把卡片拉成
+/// 570dp 宽的巨块。
+///
 /// Hard-coding 2 would look equivalent on a phone and break on a foldable, so
 /// the breakpoints are kept.
 int homeColumnCount(BuildContext context, {bool padAdapt = false}) {
-  if (!padAdapt) return 2;
+  // Windows 桌面同样按宽度走断点：`b()` 平板适配开关只覆盖平板，桌面窗口
+  // 若死守 2 列，1280 宽下每张卡 570dp、封面 1.4 高，两张卡就吃掉一整屏。
+  if (!padAdapt && !isDesktopHost) return 2;
   final shortSide = MediaQuery.sizeOf(context).shortestSide;
   if (shortSide >= 1366) return 5;
   if (shortSide >= 1024) return 4;

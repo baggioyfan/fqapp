@@ -27,6 +27,7 @@ import '../services/native_player.dart';
 import '../services/webdav_auto_sync.dart';
 import '../services/playback_issue.dart';
 import '../services/player_history.dart';
+import '../services/player_layout_preferences.dart';
 import '../services/player_load_diagnostics.dart';
 import '../services/player_preferences.dart';
 import '../services/player_style_config.dart';
@@ -39,6 +40,8 @@ import '../widgets/player/playlet_danmaku_settings.dart';
 import '../widgets/player/story_player_panel.dart';
 import '../widgets/player/player_cover.dart';
 import '../widgets/player/player_feedback.dart';
+import '../widgets/player/player_split_panel.dart';
+import '../widgets/player/player_toast.dart';
 import '../widgets/video_player_chrome.dart';
 
 class PlayerPage extends StatefulWidget {
@@ -441,7 +444,13 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   }
 
   Future<void> _openRelatedSeries() => _withPlayerOverlay(() async {
-    final entry = await RelatedSeriesSheet.show(context, widget.bookId);
+    // 横屏与选集抽屉/视频设置同一形态：右侧面板（宽屏上的底部弹层会被拉
+    // 成一条通栏）。竖屏仍是官方底部 sheet。
+    final size = MediaQuery.sizeOf(context);
+    final landscape = size.width > size.height;
+    final entry = landscape
+        ? await RelatedSeriesSheet.showSidePanel(context, widget.bookId)
+        : await RelatedSeriesSheet.show(context, widget.bookId);
     if (entry != null && mounted) await _switchRelatedSeries(entry);
   });
 
@@ -712,10 +721,9 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     if (enabled) _loadDanmaku();
     await DanmakuPreference.save(enabled);
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(enabled ? danmakuEnabledToast : danmakuDisabledToast),
-      ),
+    PlayerToast.show(
+      context,
+      enabled ? danmakuEnabledToast : danmakuDisabledToast,
     );
   }
 
@@ -783,6 +791,8 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     WebdavAutoSync.instance.cancelPlaybackPause();
     unawaited(WebdavAutoSync.instance.syncOnLeave());
     unawaited(_teardownPlayer());
+    // 提示挂在根 Overlay 上，页面退出必须摘掉，否则会飘到下一页上。
+    PlayerToast.hide();
     super.dispose();
   }
 
@@ -818,8 +828,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       _playing &&
       _error == null;
 
-  String _episodeTitle() =>
-      widget.eps.isEmpty ? '' : widget.eps[_index].title;
+  String _episodeTitle() => widget.eps.isEmpty ? '' : widget.eps[_index].title;
 
   /// 启动悬浮窗：原生侧起服务并在 surface 就绪后把画面换到悬浮窗。
   /// 只有原生侧成功返回才置 `_floating`：焦点被占 / 服务启动失败时
@@ -1625,14 +1634,26 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
 
   @override
   Widget build(BuildContext context) {
+    // 设置页切「播放页布局」后要立刻换形态：偏好走全局 notifier，回到播放页
+    // 时 chrome 与分屏面板一起重建，不依赖路由回弹时的偶然 build。
+    return ValueListenableBuilder<PlayerLayoutMode>(
+      valueListenable: PlayerLayoutPreferences.mode,
+      builder: (context, layoutMode, _) => _chrome(layoutMode),
+    );
+  }
+
+  Widget _chrome(PlayerLayoutMode layoutMode) {
     // 官方播放页开关来自 config.json（`PlayerBottomStyleConfig` 等），
     // 每次 build 重读，配置变化无需重启页面。
     final style = PlayerStyleConfig.instance;
     return VideoPlayerChrome(
+      layoutMode: layoutMode,
+      splitPanel: _buildSplitPanel(),
       player: _player,
-      volume: _volume,
-      // 全屏竖滑调音量：先记在本页（换集重建播放器要靠它恢复），再落到当前
+      // 音量面板改音量：先记在本页（换集重建播放器要靠它恢复），再落到当前
       // 播放器上。失败不影响播放，和「默认静音」那条约定一致。
+      // 注意：全屏竖滑不经过这里——上游用 PlaybackGestureLevels 直接调系统
+      // 媒体音量（见 video_player_chrome 的 _applyGestureLevel）。
       onPlaybackVolumeChanged: (value) async {
         final clamped = value.clamp(0.0, 1.0).toDouble();
         if (mounted && _volume != clamped) {
@@ -1716,9 +1737,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       onQualitySelected: widget.shortSeries
           ? (variant) {
               // 官方 `bgw`：切换的 Toast 立即出，不等换流完成。
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(content: Text('清晰度已成功切换至${variant.name}')),
-              );
+              PlayerToast.show(context, '清晰度已成功切换至${variant.name}');
               unawaited(_switchVariant(variant));
             }
           : null,
@@ -1729,6 +1748,45 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       reverseClearScreen: style.reverseClearScreen,
       landscapeLockEnabled: style.landscapeLockEnabled,
       child: _videoArea(),
+    );
+  }
+
+  /// 分屏下半区（竖屏）/ 右侧栏（横屏）。非短剧返回 null，chrome 自动
+  /// 退回沉浸式整屏；桌面走 [DesktopVideoChrome]，不会走到这里。
+  Widget? _buildSplitPanel() {
+    if (!widget.shortSeries) return null;
+    final relatedSeries = (_seriesDetail?.hasRelatedSeries ?? false)
+        ? () => unawaited(_openRelatedSeries())
+        : null;
+    final hasEpisodes = widget.eps.isNotEmpty;
+    return PlayerSplitPanel(
+      seriesId: widget.bookId,
+      title: _seriesTitle.isNotEmpty ? _seriesTitle : widget.title,
+      cover: ApiClient.instance.absoluteUrl(_seriesCover),
+      episodeLabel: _episodeLabel,
+      status: _seriesStatus,
+      synopsis: _seriesDetail?.intro ?? '',
+      episodes: widget.eps,
+      currentIndex: _index,
+      playingIndex: _activeIndex,
+      playing: _playing,
+      watched: watchedIndexes(_watchedIds, widget.eps),
+      commentCount: _commentCount,
+      onSelectEpisode: (index) => unawaited(_selectEpisode(index)),
+      onOpenSeriesDetail: widget.bookId.isEmpty ? null : _openSeriesDetail,
+      onOpenRelatedSeries: relatedSeries,
+      relateBook: _episodeRelateBook,
+      onOpenRelateBook: _episodeRelateBook == null ? null : _openOriginalBook,
+      onOpenListenMode: hasEpisodes ? () => unawaited(_openListenMode()) : null,
+      onOpenDownload: hasEpisodes
+          ? () => unawaited(_openDownloadSheet())
+          : null,
+      // 分屏里发评论/加载分页后，页面的评论入口计数（整屏右栏与热评弹窗）
+      // 也要跟上，不能只更新下半区 Tab。
+      onCommentTotalChanged: (total) {
+        if (!mounted || total <= 0 || total == _commentCount) return;
+        setState(() => _commentCount = total);
+      },
     );
   }
 

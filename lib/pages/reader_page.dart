@@ -381,8 +381,29 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     if (_preferences.narrationHighlight &&
         layout != null &&
         session.matches(widget.bookId, _chapter.itemId)) {
+      // Two sources, two coordinate systems. System TTS reports offsets into
+      // the TTS text blob; 听书 reports the backend's (paragraph, offset)
+      // timeline. Each is translated by its own mapper so neither can smear
+      // the highlight onto the wrong paragraph.
+      final audioRange = session.audioParaRange;
       final ttsRange = session.sentenceRange;
-      if (ttsRange != null &&
+      if (audioRange != null) {
+        final translated = audioTimePointLayoutRange(
+          layout,
+          audioRange.startPara,
+          audioRange.startOff,
+          audioRange.endPara,
+          // The upstream end offset is inclusive (official
+          // `toTargetTextBlock` passes `endParaOff + 1`); this side is
+          // half-open, so the +1 belongs here.
+          audioRange.endOff + 1,
+          startElementIndex: audioRange.elemIndex,
+          startElementOffset: audioRange.elemOff,
+        );
+        if (translated != null) {
+          next = (translated.start, translated.end);
+        }
+      } else if (ttsRange != null &&
           session.textReplacementRevision ==
               (_replacement?.snapshotRevision ?? 0)) {
         final translated = narrationLayoutRange(layout, ttsRange);
@@ -2558,7 +2579,9 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
   DateTime _desktopWheelAt = DateTime.fromMillisecondsSinceEpoch(0);
 
   void _desktopScroll(PointerSignalEvent signal) {
-    if (!_paged || signal is! PointerScrollEvent || signal.scrollDelta.dy == 0) {
+    if (!_paged ||
+        signal is! PointerScrollEvent ||
+        signal.scrollDelta.dy == 0) {
       return;
     }
     GestureBinding.instance.pointerSignalResolver.register(signal, (_) {
@@ -2844,8 +2867,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
                 return IconButton(
                   key: const ValueKey('reader-shelf-button'),
                   tooltip: inShelfNow ? '已在书架' : '加入书架',
-                  onPressed: () =>
-                      unawaited(toggleShelf(context, _shelfEntry)),
+                  onPressed: () => unawaited(toggleShelf(context, _shelfEntry)),
                   icon: Icon(
                     inShelfNow
                         ? LucideIcons.bookmark_check

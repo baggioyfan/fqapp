@@ -11,6 +11,7 @@ import android.content.pm.PackageManager
 import android.media.AudioAttributes
 import android.media.AudioFocusRequest
 import android.media.AudioManager
+import android.media.AudioTrack
 import android.net.Uri
 import android.provider.Settings
 import android.os.Build
@@ -35,6 +36,8 @@ import androidx.media3.datasource.HttpDataSource
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.analytics.AnalyticsListener
+import androidx.media3.exoplayer.audio.AudioSink
+import androidx.media3.exoplayer.audio.DefaultAudioSink
 import androidx.media3.exoplayer.mediacodec.MediaCodecInfo
 import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
 import androidx.media3.exoplayer.mediacodec.MediaCodecRenderer.DecoderInitializationException
@@ -59,31 +62,18 @@ import java.util.concurrent.atomic.AtomicInteger
  * Decrypted plaintext is served to ExoPlayer through a [CryptoDataSource] backed
  * by the C crypto core; events are pushed to Flutter over an EventChannel.
  */
+/** 播放器日志 tag：类内与顶层 [buildPlayer] 共用，避免两处字面量漂移。 */
+internal const val PLAYER_LOG_TAG = "NativePlayerPlugin"
+
 @androidx.annotation.OptIn(UnstableApi::class)
 class NativePlayerPlugin internal constructor(
     private val cryptoStream: CryptoStream = JniCryptoStream,
-    private val playerFactory: (Context, VideoDecoderPreference) -> ExoPlayer = { context, decoder ->
-        // Note: decoder init fallback and 206 diagnostics — see
-        // .agents/notes/implemented/bug-fix/2026-10-15-issue2-decoder-initialization-fallback.md.
-        val renderers = DefaultRenderersFactory(context)
-            .setEnableDecoderFallback(true)
-            // 用户选的解码器策略（issue #92）。自动 = 不干预，MediaTek 部分芯片
-            // 在 Android 15 + HEVC + DRM 上硬解静默黑屏（androidx/media#2711），
-            // 没有错误回调，只能让用户手动切软解。
-            .setMediaCodecSelector(
-                when (decoder) {
-                    VideoDecoderPreference.SOFTWARE -> SoftwareOnlyCodecSelector
-                    VideoDecoderPreference.HARDWARE -> HardwareFirstCodecSelector
-                    VideoDecoderPreference.AUTOMATIC -> MediaCodecSelector.DEFAULT
-                }
-            )
-        ExoPlayer.Builder(context, renderers).build()
-    }
+    private val playerFactory: (Context, PlayerBuildOptions) -> ExoPlayer = ::buildPlayer
 ) : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAware,
     PluginRegistry.RequestPermissionsResultListener {
 
     companion object {
-        private const val TAG = "NativePlayerPlugin"
+        private const val TAG = PLAYER_LOG_TAG
         private const val POST_NOTIFICATIONS_REQUEST = 7412
         @Volatile private var instance: NativePlayerPlugin? = null
 
@@ -122,6 +112,12 @@ class NativePlayerPlugin internal constructor(
     private var floatingFocusRequest: Any? = null
     private var floatingFocusListener: AudioManager.OnAudioFocusChangeListener? = null
     private var floatingVolumeBeforeDuck: Float? = null
+
+    /**
+     * 播放页「上下滑动调亮度」覆盖的窗口亮度。null = 当前没有覆盖；存起来
+     * 是为了退出播放页时还原系统/宿主原来的亮度。
+     */
+    private var originalWindowBrightness: Float? = null
 
     private var eventSink: EventChannel.EventSink? = null
     private var noisyReceiverRegistered = false
@@ -183,6 +179,8 @@ class NativePlayerPlugin internal constructor(
         activityBinding?.removeRequestPermissionsResultListener(this)
         activityBinding = null
         activity = null
+        // 窗口随 Activity 重建，亮度覆盖已经不存在，别让下一次 reset 拿旧值。
+        originalWindowBrightness = null
     }
     override fun onReattachedToActivityForConfigChanges(binding: ActivityPluginBinding) {
         activity = binding.activity
@@ -193,6 +191,7 @@ class NativePlayerPlugin internal constructor(
         activityBinding?.removeRequestPermissionsResultListener(this)
         activityBinding = null
         activity = null
+        originalWindowBrightness = null
     }
 
     override fun onRequestPermissionsResult(
@@ -286,6 +285,85 @@ class NativePlayerPlugin internal constructor(
         return value
     }
 
+    /**
+     * 分屏播放页上下滑手势的初始档位：窗口亮度（没有覆盖时读系统亮度）与
+     * 媒体音量，都归一化到 0..1，并带上音量的档数（HUD 按同一档位取整，
+     * 避免「显示 37% 实际是第 59/160 档」的偏差）。拿不到 Activity 时回
+     * null，Dart 侧显示「暂不可用」而不是静默无效。
+     */
+    private fun gestureLevels(): Map<String, Any>? {
+        val currentActivity = activity ?: return null
+        return try {
+            val windowBrightness = currentActivity.window.attributes.screenBrightness
+            val brightness = if (windowBrightness >= 0f) {
+                windowBrightness.coerceIn(NativeGestureLevels.brightnessFloor, 1f)
+            } else {
+                val raw = Settings.System.getInt(
+                    currentActivity.contentResolver,
+                    Settings.System.SCREEN_BRIGHTNESS,
+                    128
+                )
+                NativeGestureLevels.normaliseBrightness(raw)
+            }
+            val audio = currentActivity.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+            val maxVolume = audio?.getStreamMaxVolume(AudioManager.STREAM_MUSIC) ?: 0
+            val volume = if (audio != null && maxVolume > 0) {
+                NativeGestureLevels.volumeFraction(
+                    audio.getStreamVolume(AudioManager.STREAM_MUSIC),
+                    maxVolume
+                )
+            } else {
+                0.0
+            }
+            mapOf(
+                "brightness" to brightness.toDouble(),
+                "volume" to volume,
+                "volumeSteps" to maxVolume
+            )
+        } catch (error: Throwable) {
+            Log.w(TAG, "read gesture levels failed", error)
+            null
+        }
+    }
+
+    private fun applyWindowBrightness(value: Float) {
+        val currentActivity = activity ?: return
+        val attributes = currentActivity.window.attributes
+        // 第一次调节才记原值：后续手势都在覆盖值上继续，不会把中间值当成原值。
+        if (originalWindowBrightness == null) {
+            originalWindowBrightness = attributes.screenBrightness
+        }
+        attributes.screenBrightness = value.coerceIn(NativeGestureLevels.brightnessFloor, 1f)
+        currentActivity.window.attributes = attributes
+    }
+
+    private fun resetWindowBrightness() {
+        val original = originalWindowBrightness ?: return
+        originalWindowBrightness = null
+        val currentActivity = activity ?: return
+        val attributes = currentActivity.window.attributes
+        attributes.screenBrightness = original
+        currentActivity.window.attributes = attributes
+    }
+
+    private fun applyMediaVolume(value: Float) {
+        val audio = activity?.getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return
+        val maxVolume = audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+        if (maxVolume <= 0) return
+        // flags=0：不弹系统音量面板，反馈由 Flutter 侧的档位 HUD 负责。
+        // 勿扰/固定音量模式下 setStreamVolume 可能直接抛 SecurityException，
+        // 手势失败不能把播放一起带崩。
+        try {
+            audio.setStreamVolume(
+                AudioManager.STREAM_MUSIC,
+                NativeGestureLevels.volumeIndex(value, maxVolume),
+                0
+            )
+        } catch (error: Throwable) {
+            Log.w(TAG, "set media volume failed", error)
+        }
+    }
+
     override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
         when (call.method) {
             "create" -> {
@@ -295,7 +373,20 @@ class NativePlayerPlugin internal constructor(
                 val decoder = VideoDecoderPreference.fromName(
                     call.argument<String>("videoDecoder")
                 )
-                handleCreate(cdnUrl, keyHex, decoder, result)
+                // 纯音频播放器（听书）才能选系统混音器变速；缺省/未知取值退回
+                // Media3 内建的 Sonic，与本次改动前完全一致（issue #129）。
+                val audioOnly = call.argument<Boolean>("audioOnly") == true
+                val rateEngine = if (audioOnly) {
+                    AudioRateEngine.fromName(call.argument<String>("audioRateEngine"))
+                } else {
+                    AudioRateEngine.BUILT_IN
+                }
+                handleCreate(
+                    cdnUrl,
+                    keyHex,
+                    PlayerBuildOptions(decoder, audioOnly, rateEngine),
+                    result
+                )
             }
             "play" -> {
                 val id = call.requiredArgument<Int>("id", result) ?: return
@@ -317,6 +408,23 @@ class NativePlayerPlugin internal constructor(
                 val id = call.requiredArgument<Int>("id", result) ?: return
                 val volume = call.requiredArgument<Number>("volume", result)?.toFloat() ?: return
                 players[id]?.player?.volume = volume
+                result.success(null)
+            }
+            // 分屏播放页上下滑手势：左半窗口亮度、右半媒体音量。都是设备级
+            // 档位，不属于某个播放器实例，所以不带 id。
+            "gestureLevels" -> result.success(gestureLevels())
+            "setScreenBrightness" -> {
+                val value = call.requiredArgument<Number>("value", result)?.toFloat() ?: return
+                applyWindowBrightness(value)
+                result.success(null)
+            }
+            "resetScreenBrightness" -> {
+                resetWindowBrightness()
+                result.success(null)
+            }
+            "setMediaVolume" -> {
+                val value = call.requiredArgument<Number>("value", result)?.toFloat() ?: return
+                applyMediaVolume(value)
                 result.success(null)
             }
             "setRate" -> {
@@ -558,7 +666,7 @@ class NativePlayerPlugin internal constructor(
     private fun handleCreate(
         cdnUrl: String,
         keyHex: String,
-        decoder: VideoDecoderPreference,
+        options: PlayerBuildOptions,
         result: MethodChannel.Result
     ) {
         // Note: deferred CDN I/O — see .agents/notes/implemented/bug-fix/2026-09-17-reviewed-runtime-boundaries.md.
@@ -568,7 +676,7 @@ class NativePlayerPlugin internal constructor(
 
         if (keyHex.isEmpty()) {
             handler.post {
-                createPlayerWithUri(playerId, cdnUrl, decoder)
+                createPlayerWithUri(playerId, cdnUrl, options)
             }
         } else {
             try {
@@ -577,7 +685,7 @@ class NativePlayerPlugin internal constructor(
                 // A separate probe repeats all metadata I/O and cannot be
                 // cancelled while the native open is still obtaining a handle.
                 handler.post {
-                    createPlayerWithCrypto(playerId, cdnUrl, keyHex, decoder)
+                    createPlayerWithCrypto(playerId, cdnUrl, keyHex, options)
                 }
             } catch (_: Throwable) {
                 failCreation(playerId)
@@ -594,9 +702,9 @@ class NativePlayerPlugin internal constructor(
     private fun createPlayerWithUri(
         playerId: Int,
         uri: String,
-        decoder: VideoDecoderPreference
+        options: PlayerBuildOptions
     ) {
-        createPlayer(playerId, decoder) { player ->
+        createPlayer(playerId, options) { player ->
             player.setMediaItem(MediaItem.fromUri(uri))
         }
     }
@@ -605,10 +713,10 @@ class NativePlayerPlugin internal constructor(
         playerId: Int,
         cdnUrl: String,
         keyHex: String,
-        decoder: VideoDecoderPreference
+        options: PlayerBuildOptions
     ) {
         cryptoStream.clearHttpStatus(cdnUrl)
-        createPlayer(playerId, decoder, cdnUrl) { player ->
+        createPlayer(playerId, options, cdnUrl) { player ->
             val dataSourceFactory = DataSource.Factory {
                 CryptoDataSource(cdnUrl, keyHex, cryptoStream)
             }
@@ -620,7 +728,7 @@ class NativePlayerPlugin internal constructor(
 
     private fun createPlayer(
         playerId: Int,
-        decoder: VideoDecoderPreference,
+        options: PlayerBuildOptions,
         diagnosticUrl: String? = null,
         configure: (ExoPlayer) -> Unit
     ) {
@@ -635,7 +743,7 @@ class NativePlayerPlugin internal constructor(
             // MediaCodec supplies the buffer dimensions; don't resize the
             // producer to match the description panel's Flutter rectangle.
             producer = textureRegistry.createSurfaceProducer()
-            player = playerFactory(flutterBinding.applicationContext, decoder)
+            player = playerFactory(flutterBinding.applicationContext, options)
             output = NativeVideoOutput(player, producer)
             players[playerId] = PlayerInstance(playerId, player, output, diagnosticUrl)
             output.attach()
@@ -1145,6 +1253,127 @@ internal enum class VideoDecoderPreference {
         fun fromName(value: String?): VideoDecoderPreference =
             entries.firstOrNull { it.name.equals(value, ignoreCase = true) } ?: AUTOMATIC
     }
+}
+
+/**
+ * 听书倍速的变速实现（与 Dart 侧 `AudioRateEngine` 同名，issue #129）。
+ *
+ * [BUILT_IN] = Media3 自带的 Sonic 时伸缩（`SonicAudioProcessor`，默认行为）；
+ * [PLATFORM] = 系统音频混音器时伸缩（`AudioTrack.setPlaybackParams`，需要
+ * Media3 的 `setEnableAudioTrackPlaybackParams(true)` 才会启用）。
+ *
+ * 同一段智能朗读语音 2.0× 实测，Sonic 的谐噪比比系统实现低 2.9 dB，听感就是
+ * 用户报的「电音/金属感」。系统实现依赖厂商 AudioFlinger/APM，而 ExoPlayer
+ * 历史上在部分蓝牙设备上开这个选项会报 AudioTrack init failed（#9712），
+ * 所以保留 [BUILT_IN] 作为可回退的兼容档。
+ */
+internal enum class AudioRateEngine(val wireName: String) {
+    /** 移植自官方 FFmpeg af_atempo 的 WSOLA，听感对齐番茄官方（issue #129）。 */
+    WSOLA("wsola"),
+    PLATFORM("platform"),
+    BUILT_IN("builtIn");
+
+    companion object {
+        fun fromName(value: String?): AudioRateEngine =
+            entries.firstOrNull { it.wireName.equals(value, ignoreCase = true) } ?: WSOLA
+    }
+}
+
+/**
+ * 建播放器时的固定参数。
+ *
+ * [audioOnly] 是听书专用播放器：只有这种播放器才能选 [AudioRateEngine.PLATFORM]。
+ * 视频/短剧必须走 Media3 内建变速，否则音频处理与视频渲染不再步进同一套计时
+ * （画面与声音会错位）。
+ */
+internal data class PlayerBuildOptions(
+    val decoder: VideoDecoderPreference = VideoDecoderPreference.AUTOMATIC,
+    val audioOnly: Boolean = false,
+    val rateEngine: AudioRateEngine = AudioRateEngine.BUILT_IN
+) {
+    /** 真正生效的变速引擎：视频播放器永远强制内建变速。 */
+    val effectiveRateEngine: AudioRateEngine
+        get() = if (audioOnly) rateEngine else AudioRateEngine.BUILT_IN
+}
+
+/**
+ * 播放器工厂。解码器偏好与变速引擎都是 builder 期定型，事后无法改，
+ * 不过两者都会影响 renderer 集合。
+ */
+/**
+ * 设备原生输出采样率，等价于官方 TTPlayer 里的 `getNativeOutputSampleRate`。
+ *
+ * 官方在 atempo 之前用 FFSampleFilter/aformat 把 PCM 统一到这个速率
+ * （`start samplefilter %p, src samplerate:%d ... dst samplerate:%d`），
+ * 这样 AudioTrack 不必再做一次隐式重采样。拿不到时退回 48 kHz 这个
+ * Android 音频输出的通用速率。
+ */
+internal fun nativeOutputSampleRate(): Int {
+    return try {
+        AudioTrack.getNativeOutputSampleRate(AudioManager.STREAM_MUSIC)
+            .takeIf { it > 0 } ?: FALLBACK_SAMPLE_RATE
+    } catch (_: Throwable) {
+        FALLBACK_SAMPLE_RATE
+    }
+}
+
+private const val FALLBACK_SAMPLE_RATE = 48_000
+
+internal fun buildPlayer(context: Context, options: PlayerBuildOptions): ExoPlayer {
+    // Note: decoder init fallback and 206 diagnostics — see
+    // .agents/notes/implemented/bug-fix/2026-10-15-issue2-decoder-initialization-fallback.md.
+    // issue #129：听书倍速改由系统混音器做（AudioTrack/APM），高倍速下
+    // 谐噪比明显好于内建 Sonic。默认值 false，视频播放器保持内建变速。
+    val platformRate = options.effectiveRateEngine == AudioRateEngine.PLATFORM
+    if (options.audioOnly) {
+        // 一行可检索的日志：反馈「高倍速电音/没声音」时能先分清是哪一档。
+        Log.i(
+            PLAYER_LOG_TAG,
+            "audio rate engine=${options.effectiveRateEngine.wireName} platform=$platformRate"
+        )
+    }
+    /*
+     * issue #129：选 WSOLA 时用自定义 AudioProcessorChain —— 把内建 Sonic 换成
+     * 移植过来的 FFmpeg atempo（SpeechTempoProcessor），听感与番茄官方一致。
+     * 音高/速度变化的时机、SilenceSkipping 的位置都保持 Media3 的默认编排，
+     * 只替换「谁来做时伸缩」。
+     */
+    val wsola = options.effectiveRateEngine == AudioRateEngine.WSOLA
+    val factory = if (wsola) {
+        object : DefaultRenderersFactory(context) {
+            override fun buildAudioSink(
+                context: Context,
+                enableFloatOutput: Boolean,
+                enableAudioTrackPlaybackParams: Boolean
+            ): AudioSink {
+                return DefaultAudioSink.Builder(context)
+                    .setAudioProcessorChain(
+                        WsolaProcessorChain(nativeOutputSampleRate())
+                    )
+                    .setEnableFloatOutput(enableFloatOutput)
+                    // 时伸缩已由 WSOLA 完成，AudioTrack 不能再做一次。
+                    .setEnableAudioTrackPlaybackParams(false)
+                    .build()
+            }
+        }
+    } else {
+        DefaultRenderersFactory(context)
+    }
+
+    val renderers = factory
+        .setEnableDecoderFallback(true)
+        // 用户选的解码器策略（issue #92）。自动 = 不干预，MediaTek 部分芯片
+        // 在 Android 15 + HEVC + DRM 上硬解静默黑屏（androidx/media#2711），
+        // 没有错误回调，只能让用户手动切软解。
+        .setMediaCodecSelector(
+            when (options.decoder) {
+                VideoDecoderPreference.SOFTWARE -> SoftwareOnlyCodecSelector
+                VideoDecoderPreference.HARDWARE -> HardwareFirstCodecSelector
+                VideoDecoderPreference.AUTOMATIC -> MediaCodecSelector.DEFAULT
+            }
+        )
+        .setEnableAudioTrackPlaybackParams(platformRate)
+    return ExoPlayer.Builder(context, renderers).build()
 }
 
 /**
