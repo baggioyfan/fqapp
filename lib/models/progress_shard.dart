@@ -31,7 +31,18 @@ class ProgressShard {
   factory ProgressShard.capture(List<Map<String, dynamic>> history) =>
       ProgressShard._(
         createdAt: DateTime.now(),
-        history: List.unmodifiable(history),
+        // 本机导入的书籍（`local_…`）不进去：它们在别的设备上打不开，而且
+        // `sanitizeHistory` 读回来时会**拒绝整个文件**（「备份含无效作品标识
+        // 或本地书籍记录」）。之前只有整包做了这个过滤，热路径没做 —— 分片里
+        // 只要混进一条，另一台设备就再也解不开它，所有进度（不止这本书）都
+        // 同步不过去。
+        history: List.unmodifiable([
+          for (final record in history)
+            if (!LibraryBackup.isDeviceLocalId(
+              '${record['contentId'] ?? record['id']}',
+            ))
+              record,
+        ]),
       );
 
   factory ProgressShard.decode(Uint8List bytes) {

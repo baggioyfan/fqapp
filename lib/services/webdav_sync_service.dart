@@ -316,7 +316,21 @@ class WebdavSyncService {
         // 云端不是本机上次写上去的那一份：可能别的设备改过，也可能本机
         // 不知道它是哪一版。两种都读回来合并 —— 合并是并集语义，多读一次
         // 不会丢东西。
-        merged += await _restoreProgress(latest.bytes);
+        try {
+          merged += await _restoreProgress(latest.bytes);
+        } on WebdavException catch (error) {
+          // 老版本写上去的分片里可能混着本机导入书的记录（`local_…`）。那种
+          // 文件里没有一条是本机能用的，但整份会被判成「含无效作品标识」而
+          // 全部拒收 —— 于是每次都卡在这里，一块进度都推不上去，只能等 24
+          // 小时后的整包同步把分片重写一遍才自愈。这里明确放行这一种，让这
+          // 一趟就把它换成下面这份干净的。
+          if (!error.message.contains('本地书籍记录')) rethrow;
+          AppLog.w(
+            'webdav-sync',
+            '云端的进度分片含本机专属记录（导入书），本轮跳过合并，用本机这份重写',
+            error: error,
+          );
+        }
       } else if (!localDirty) {
         return (merged: merged, bytes: null, ifMatch: null);
       }

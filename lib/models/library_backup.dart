@@ -76,6 +76,12 @@ class LibraryBackup {
     required this.excludedLocalRecords,
   });
 
+  /// 这台设备上导入的本地书籍（`local_<时间戳>_<盐>`）。它们只存在于本机：
+  /// 换一台设备根本打不开，写进云端只会让对端拿到一条读不懂的记录。
+  ///
+  /// [id] 可以是裸 id，也可以带 `audio:` / `manga:` 前缀。
+  static bool isDeviceLocalId(String id) => _bareId(id).startsWith('local_');
+
   /// 删除记录还原成存储键，交给 `ShelfStore.mergeBackup` 的 `removed`。
   Map<String, DateTime> get shelfTombstones {
     final result = <String, DateTime>{};
@@ -102,7 +108,7 @@ class LibraryBackup {
   }) {
     var excluded = 0;
     bool include(String id) {
-      if (!_bareId(id).startsWith('local_')) return true;
+      if (!isDeviceLocalId(id)) return true;
       excluded++;
       return false;
     }
@@ -388,7 +394,15 @@ class LibraryBackup {
           clean[key] = _id(record[key]);
         }
       }
-      for (final key in ['time', 'episode', 'positionVersion', 'textOffset']) {
+      // `chapterCount` 是书架「第 N/M 章」的依据（总章数）。漏掉它，从云端
+      // 合并回来的书就只剩百分比，读完与差一章也分不出来。
+      for (final key in [
+        'time',
+        'episode',
+        'positionVersion',
+        'textOffset',
+        'chapterCount',
+      ]) {
         if (record[key] != null) {
           clean[key] = _integer(
             record[key],

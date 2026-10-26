@@ -1,7 +1,7 @@
 {
   "files": {
     "lib/main.dart": 876,
-    "lib/models/library_backup.dart": 629,
+    "lib/models/library_backup.dart": 643,
     "lib/models/media_item.dart": 1489,
     "lib/pages/api_service_page.dart": 601,
     "lib/pages/audio_page.dart": 1936,
@@ -35,7 +35,7 @@
     "lib/services/native_player.dart": 746,
     "lib/services/system_tts.dart": 650,
     "lib/services/webdav_client.dart": 781,
-    "lib/services/webdav_sync_service.dart": 941,
+    "lib/services/webdav_sync_service.dart": 955,
     "lib/widgets/audio/audio_sections.dart": 1686,
     "lib/widgets/bookshelf_card.dart": 1003,
     "lib/widgets/desktop_video_chrome.dart": 885,
@@ -86,7 +86,7 @@
     "test/player_page_stability_test.dart": 607,
     "test/player_split_layout_test.dart": 658,
     "test/playlet_danmaku_layer_test.dart": 521,
-    "test/progress_shard_test.dart": 539,
+    "test/progress_shard_test.dart": 611,
     "test/reader_bubble_test.dart": 663,
     "test/reader_ideas_test.dart": 597,
     "test/reader_illustrations_test.dart": 1046,

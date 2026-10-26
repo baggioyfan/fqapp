@@ -247,6 +247,29 @@ void main() {
       );
     });
 
+    test('drops device-local records instead of poisoning the file', () {
+      // 本机导入的书（`local_…`）在别的设备上根本打不开；更糟的是
+      // `sanitizeHistory` 会因此拒收**整份**分片，于是所有进度（不止这本书）
+      // 都同步不过去。热路径以前没做整包那套过滤。
+      final bytes = ProgressShard.capture([
+        record('a'),
+        record('local_1712345678_ab12cd'),
+        record('audio:local_1712345678_ab12cd'),
+      ]).encode();
+      final decoded = ProgressShard.decode(bytes);
+
+      expect(decoded.history.map((e) => e['id']), ['a']);
+    });
+
+    test('keeps chapterCount so the shelf keeps 第N/M章', () {
+      // 总章数决定书架显示「第 12 章 · 共 84 章」还是退化成百分比。
+      final bytes = ProgressShard.capture([
+        {...record('a'), 'chapterCount': 84},
+      ]).encode();
+
+      expect(ProgressShard.decode(bytes).history.single['chapterCount'], 84);
+    });
+
     test('refuses duplicates that would make the merge ambiguous', () {
       expect(
         () => ProgressShard.decode(
@@ -349,6 +372,53 @@ void main() {
         (await library.history()).map((e) => e['id']),
         contains('elsewhere'),
       );
+    });
+
+    test('a cloud shard with local records is rewritten', () async {
+      // 老版本把本机导入书的进度也写进了分片：这份文件 `sanitizeHistory` 一律
+      // 拒收，但它没有一条记录是本机用得上的。这一趟要照样把干净的这份推上去，
+      // 而不是每次都卡在「云端的进度文件无法识别」等 24 小时后的整包同步。
+      transport.files[ProgressShard.fileName] = Uint8List.fromList(
+        utf8.encode(
+          jsonEncode({
+            'format': ProgressShard.format,
+            'version': ProgressShard.version,
+            'createdAt': 1,
+            'history': [
+              {
+                'id': 'local_1712345678_ab12cd',
+                'kind': 'book',
+                'title': '导入的书',
+                'time': 1000,
+                'episode': 1,
+                'progress': 0.2,
+              },
+            ],
+          }),
+        ),
+      );
+      transport.stamps[ProgressShard.fileName] = DateTime.now().toUtc();
+      await library.addHistory({
+        'id': 'mine',
+        'kind': 'book',
+        'title': '本机',
+        'time': 5000,
+        'episode': 2,
+        'progress': 0.4,
+      });
+
+      final report = await service.syncProgress(
+        config,
+        password: '',
+        localDirty: true,
+      );
+
+      expect(report.uploadedBytes, greaterThan(0));
+      final ids = ProgressShard.decode(
+        transport.files[ProgressShard.fileName]!,
+      ).history.map((e) => e['id']);
+      expect(ids, contains('mine'));
+      expect(ids, isNot(contains('local_1712345678_ab12cd')));
     });
 
     test('nothing changed anywhere means one GET and no upload', () async {
