@@ -36,11 +36,14 @@ void main() {
   });
 
   test('每个本地分类都能解析出请求身份', () {
-    // 第 0 项「全部」是组合流：没有单一 tab_type，种类兜底成 'book'。
-    for (var i = 1; i < HomeNotifier.tabs.length; i++) {
-      final name = HomeNotifier.tabs[i];
+    // 「 全部 」是组合流，「漫画」没有对应的书城 `tab_type`（本地走漫画搜索
+    // 兜底，`_mangaSearchLoader`），这两项的映射本来就是缺省的；其余四项
+    // 必须既有卡片种类、又有 `tab_type`。
+    for (final name in const ['小说', '短剧', '漫剧', '听书']) {
       expect(HomeNotifier.tabKinds[name], isNotNull, reason: '「$name」缺卡片种类');
       expect(HomeNotifier.tabTypes[name], isNotNull, reason: '「$name」缺 tab_type');
     }
+    expect(HomeNotifier.tabKinds['漫画'], isNull);
+    expect(HomeNotifier.tabTypes['漫画'], isNull);
   });
 }

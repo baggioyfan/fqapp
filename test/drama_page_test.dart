@@ -1300,6 +1300,11 @@ void main() {
     await tester.binding.setSurfaceSize(const Size(360, 800));
     addTearDown(() => tester.binding.setSurfaceSize(null));
     addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
+    // 「按类型续接」优先于服务端 `tab_index`：本地默认停在「推荐」，而下面那
+    // 张表里也有推荐，会命中续接、根本走不到换算那条分支。先把上次看过的频道
+    // 设成「最近」（服务端表里没有这一项），才测得到换算本身。
+    DramaChannelPreferences.selectedType = kChannelRecent;
+    addTearDown(() => DramaChannelPreferences.selectedType = null);
     await tester.pumpWidget(
       _scope(
         perTab: 1,

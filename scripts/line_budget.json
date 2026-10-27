@@ -73,7 +73,7 @@
     "test/detail_page_test.dart": 776,
     "test/discovery_pages_test.dart": 690,
     "test/drama_inline_playback_test.dart": 1166,
-    "test/drama_page_test.dart": 2034,
+    "test/drama_page_test.dart": 2039,
     "test/home_page_test.dart": 770,
     "test/home_provider_test.dart": 1122,
     "test/imported_book_store_test.dart": 527,
@@ -97,7 +97,7 @@
     "test/series_detail_page_test.dart": 865,
     "test/video_player_chrome_test.dart": 2142,
     "test/webdav_client_test.dart": 748,
-    "test/webdav_sync_service_test.dart": 739
+    "test/webdav_sync_service_test.dart": 742
   },
   "functions": {
     "lib/main.dart::_RootShellState.build": {

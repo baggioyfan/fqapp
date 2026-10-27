@@ -347,11 +347,11 @@ void main() {
     await service.sync(config, password: 'hunter2');
 
     expect(ShelfStore.instance.records(), isEmpty);
-    // 墓碑要写回云端，另一台设备才会跟着删。
-    expect(
-      LibraryBackup.decode(transport.uploaded!).shelfRemoved.keys,
-      ['book:local-1'],
-    );
+    // 云端那份本来就带着这条墓碑（解码时「收藏与删除只留较晚的一个」已经把那
+    // 条收藏剔掉），合并结果与它一字不差 —— 这一趟不写回，也就不会白换一个新
+    // ETag 把别的设备叫起来。本地发起的删除要写回，见
+    // 「a shelf removal survives its own sync」。
+    expect(transport.uploaded, isNull);
   });
 
   test('a shelf entry added after the removal survives', () async {
@@ -382,6 +382,9 @@ void main() {
       'progress': 0.5,
       'time': 2000,
     });
+    // 顺手加一本收藏：v5 的整包不含进度，只有进度不同时整包会被判成「与云端
+    // 一致」而不写回，那份「整包不带 history」的文件也就没得断言了。
+    await ShelfStore.instance.add(_item('local-1'));
     transport.remote = snapshot(
       history: [
         {
