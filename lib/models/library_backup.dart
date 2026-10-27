@@ -124,6 +124,48 @@ class LibraryBackup {
         'removedAt': entry.value.millisecondsSinceEpoch,
       });
     }
+    // 阅读时长图的两处归一化，必须在写出去之前做完。
+    //
+    // 本机可能同时存着同一本书的两种键（`123` 与 `audio:123`：看书、听书记的
+    // 是同一个作品），也可能存着同一天的两处写法（`2026-10-7` 与
+    // `2026-10-07`）。`_bareId` / `_parseDayKey` 一归一，它们就撞成同一条，
+    // 而下面的 `_fromJson` 自校验会把重复的 books 判成「重复的阅读时长」直接
+    // 抛异常 —— 整包从此再也打不出来，同步、「用本机覆盖云端」全部作废，界面
+    // 上只表现为「点了没反应」。
+    //
+    // 合并规则：同一天的同一设备取较大的那个值。两份本来就是同一天的两次
+    // 快照，相加会把时长翻倍。
+    final dailyJson = <String, Map<String, double>>{};
+    for (final day in daily.entries) {
+      final parsed = _parseDayKey(day.key);
+      if (parsed == null || day.value.isEmpty) continue;
+      final key = '${parsed.year}-${parsed.month}-${parsed.day}';
+      final bucket = dailyJson.putIfAbsent(key, () => <String, double>{});
+      for (final device in day.value.entries) {
+        if (!device.value.isFinite || device.value <= 0) continue;
+        final previous = bucket[device.key];
+        if (previous == null || device.value > previous) {
+          bucket[device.key] = device.value;
+        }
+      }
+    }
+    final booksJson = <String, ({String kind, Map<String, double> devices})>{};
+    for (final book in books) {
+      if (book.devices.isEmpty) continue;
+      final id = _bareId(book.id);
+      if (!include(id)) continue;
+      final bucket = booksJson.putIfAbsent(
+        id,
+        () => (kind: book.kind, devices: <String, double>{}),
+      );
+      for (final device in book.devices.entries) {
+        if (!device.value.isFinite || device.value <= 0) continue;
+        final previous = bucket.devices[device.key];
+        if (previous == null || device.value > previous) {
+          bucket.devices[device.key] = device.value;
+        }
+      }
+    }
     return LibraryBackup._fromJson({
       'format': _format,
       'version': _version,
@@ -144,27 +186,18 @@ class LibraryBackup {
           if (include(entry.key)) {'id': entry.key, 'episodes': entry.value},
       ],
       'daily': {
-        for (final day in daily.entries)
-          if (_parseDayKey(day.key) != null && day.value.isNotEmpty)
-            day.key: {
-              for (final device in day.value.entries)
-                if (device.value.isFinite && device.value > 0)
-                  device.key: device.value,
-            },
+        for (final day in dailyJson.entries)
+          if (day.value.isNotEmpty) day.key: day.value,
       },
       'books': [
-        for (final book in books)
-          if (include(book.id) && book.devices.isNotEmpty)
+        for (final book in booksJson.entries)
+          if (book.value.devices.isNotEmpty)
             {
               // Stored by content ID, like history: the store rebuilds the
               // `kind:id` key for scoped media on restore.
-              'id': _bareId(book.id),
-              'kind': book.kind,
-              'devs': {
-                for (final device in book.devices.entries)
-                  if (device.value.isFinite && device.value > 0)
-                    device.key: device.value,
-              },
+              'id': book.key,
+              'kind': book.value.kind,
+              'devs': book.value.devices,
             },
       ],
       'searchHistory': normalizeSearchHistory(searchHistory).toList(),
