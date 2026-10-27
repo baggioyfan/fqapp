@@ -65,16 +65,16 @@ void main() {
     expect(harness.ids, ['a', 'b']);
 
     // 第二次刷新先挂住，模拟网络往返：这段时间屏上必须是上一份内容。
-    final gate = Completer<void>();
+    final hold = Completer<void>();
     harness
       ..items = ['x']
-      ..gate = gate.future;
+      ..gate = hold.future;
     final pending = harness.notifier.load(manualRefresh: true);
     await Future<void>.delayed(Duration.zero);
     expect(harness.ids, ['a', 'b']);
     expect(harness.isLoading, isTrue);
 
-    gate.complete();
+    hold.complete();
     await pending;
     expect(harness.ids, ['x']);
   });
@@ -109,6 +109,8 @@ class _Harness {
   late final provider = NotifierProvider<HomeNotifier, HomeState>(
     () => HomeNotifier(
       initialTabIndex: _tabIndex,
+      // 失败路径会退到搜索兜底；这里给空的，别让它真去打网络。
+      searchLoader: (query, {int page = 1}) async => const [],
       homepageLoader:
           ({int tabType = 2, int offset = 0, String? sessionId}) async {
             offsets.add(offset);
