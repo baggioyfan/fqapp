@@ -137,7 +137,7 @@ class LibraryBackup {
       'history': [
         for (final record in history)
           if (include((record['contentId'] ?? record['id']).toString()))
-            if (wireHistoryRecord(record) case final wire?) wire,
+            ?wireHistoryRecord(record),
       ],
       'watched': [
         for (final entry in watched.entries)

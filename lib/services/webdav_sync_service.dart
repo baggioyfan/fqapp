@@ -639,7 +639,7 @@ class WebdavSyncService {
       remoteExisted: true,
       remoteModified: (await transport.remoteFile())?.modified ?? now,
       // 整包 + 进度分片：v5 起整包不含进度，只报整包会少报一半。
-      uploadedBytes: bytes.length + progressBytes.length,
+      uploadedBytes: bytes.length + progress.bytes.length,
       shelf: snapshot.shelf.length,
       history: snapshot.history.length,
       episodes: snapshot.watched.length,
