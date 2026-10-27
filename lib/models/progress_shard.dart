@@ -114,4 +114,10 @@ class ProgressShard {
       }),
     ),
   );
+
+  /// 内容指纹：忽略 `createdAt`（每次 [capture] 都取当前时间），只比进度本身。
+  ///
+  /// 整包同步时用它判断云端那份分片是不是已经和本机一样 —— 一样就不重写，
+  /// 免得白白换一个 ETag、多推几十 KB。
+  String contentFingerprint() => canonicalJsonFingerprint(history);
 }

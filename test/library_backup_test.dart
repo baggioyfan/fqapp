@@ -224,6 +224,55 @@ void main() {
       );
     },
   );
+
+  test('内容指纹只比内容：忽略 createdAt 与键序', () {
+    // 同步要不要写回云端，靠这个指纹判断。每次 encode 都会写新的 createdAt，
+    // 键序也会随「本机 capture」与「云端 decode」不同，两者都不该影响结论 ——
+    // 否则每趟同步都判成「内容变了」，两边就会一直互相触发「云端有更新」。
+    final base = LibraryBackup.capture(
+      shelf: [
+        ShelfRecord(item: _item('1'), addedAt: DateTime(2026, 10, 27)),
+      ],
+      shelfRemoved: const {},
+      history: const [],
+      watched: const {},
+      daily: {
+        '2026-10-27': const {'dev-a': 60.0},
+      },
+      books: const [],
+      searchHistory: const [],
+    );
+    final decoded = jsonDecode(base.encodeAsText()) as Map<String, dynamic>;
+    decoded['createdAt'] = 1;
+    final reordered = Uint8List.fromList(
+      utf8.encode(
+        jsonEncode({
+          for (final key in decoded.keys.toList().reversed) key: decoded[key],
+        }),
+      ),
+    );
+
+    final other = LibraryBackup.decode(reordered);
+    // 字节确实不同（createdAt 改了、键序也换了），指纹却必须相同。
+    expect(other.encode(), isNot(equals(base.encode())));
+    expect(other.contentFingerprint(), base.contentFingerprint());
+
+    final changed = LibraryBackup.capture(
+      shelf: [
+        ShelfRecord(item: _item('1'), addedAt: DateTime(2026, 10, 27)),
+        ShelfRecord(item: _item('2'), addedAt: DateTime(2026, 10, 27)),
+      ],
+      shelfRemoved: const {},
+      history: const [],
+      watched: const {},
+      daily: {
+        '2026-10-27': const {'dev-a': 60.0},
+      },
+      books: const [],
+      searchHistory: const [],
+    );
+    expect(changed.contentFingerprint(), isNot(base.contentFingerprint()));
+  });
 }
 
 MediaItem _item(String id, {String title = '作品'}) => MediaItem(

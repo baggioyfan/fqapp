@@ -281,6 +281,26 @@ void main() {
     );
   });
 
+  test('a repeat sync leaves an unchanged remote alone', () async {
+    await ShelfStore.instance.add(_item('local-1'));
+    final first = await service.sync(config, password: 'hunter2');
+    expect(first.uploadedBytes, greaterThan(0));
+    final written = transport.uploaded;
+
+    final second = await service.sync(config, password: 'hunter2');
+
+    // 内容没变就一个字节都不写，也不换 ETag。每次 PUT 都会换新 ETag，而 ETag
+    // 正是「云端有更新」的判据 —— 重写一份没变的内容，会把另一台设备叫起来
+    // 再弹一次「现在同步吗」，两端开着就互相催个没完。
+    expect(second.uploadedBytes, 0);
+    expect(identical(transport.uploaded, written), isTrue);
+    // 但「已经看到这一版」必须记下来，否则下一次 check() 仍判成有更新。
+    expect(
+      await WebdavConfigStore.instance.fullVersion(),
+      transport.etags[''],
+    );
+  });
+
   test('a shelf removal survives its own sync', () async {
     // 用户报的那个 bug：移出书架后点同步，云端那份又被合并回本机。
     await ShelfStore.instance.add(_item('keep-1'));

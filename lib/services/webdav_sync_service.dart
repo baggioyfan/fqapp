@@ -558,6 +558,9 @@ class WebdavSyncService {
           history: prepared.snapshot.history,
           ifMatch: prepared.versionKey,
           progressIfMatch: prepared.progressVersionKey,
+          progressDigestOnCloud: prepared.progressDigest,
+          skipMain: prepared.mainUnchanged,
+          skipProgress: prepared.progressUnchanged,
         );
         return (
           remoteExisted: remoteExisted,
@@ -664,6 +667,9 @@ class WebdavSyncService {
     merged,
     String? versionKey,
     String? progressVersionKey,
+    String? progressDigest,
+    bool mainUnchanged,
+    bool progressUnchanged,
     bool remoteExisted,
     DateTime? remoteModified,
   })>
@@ -676,10 +682,15 @@ class WebdavSyncService {
       readTime: 0,
       searchHistory: 0,
     );
+    LibraryBackup? remote;
+    // 主文件本身能读懂吗？只读得懂才允许「内容一致 → 跳过写回」；靠 `.bak`
+    // 救回来的那一份必须照样写一次，把坏掉的主文件换掉。
+    var primaryReadable = false;
     if (primary != null) {
-      merged = await _backups.restore(
-        await _decodeWithBackup(transport, config, primary),
-      );
+      final decoded = await _decodeWithBackup(transport, config, primary);
+      remote = decoded.snapshot;
+      primaryReadable = !decoded.fromBackup;
+      merged = await _backups.restore(remote);
     }
     // v5 起整包不带进度（它在 `progress.json` 里），所以这里得单独合并一次。
     // 不合并的后果不是「少同步几条」，而是**抹掉**：`_commit` 会拿本机这份
@@ -717,12 +728,31 @@ class WebdavSyncService {
     }
     final snapshot = await _backups.capture();
     final bytes = await _encode(snapshot);
+    var progressUnchanged = false;
+    if (shard != null) {
+      try {
+        // 进度也要按内容比，不能按字节：`createdAt` 每次 capture 都会变。
+        progressUnchanged =
+            ProgressShard.decode(shard.bytes).contentFingerprint() ==
+            ProgressShard.capture(snapshot.history).contentFingerprint();
+      } on Object {
+        // 云端分片读不懂：照旧用本机这份重写一遍，别把一个坏文件留在那里。
+        progressUnchanged = false;
+      }
+    }
     return (
       snapshot: snapshot,
       bytes: bytes,
       merged: merged,
       versionKey: primary?.versionKey,
       progressVersionKey: progressVersionKey,
+      progressDigest: shard == null ? null : digestOf(shard.bytes),
+      // 合并之后和云端那份逐字段相同：这一趟没有新内容要写。
+      mainUnchanged:
+          primaryReadable &&
+          remote != null &&
+          remote.contentFingerprint() == snapshot.contentFingerprint(),
+      progressUnchanged: progressUnchanged,
       remoteExisted: primary != null,
       remoteModified: primary?.modified,
     );
@@ -739,14 +769,30 @@ class WebdavSyncService {
     required List<Map<String, dynamic>> history,
     String? ifMatch,
     String? progressIfMatch,
+    String? progressDigestOnCloud,
+    bool skipMain = false,
+    bool skipProgress = false,
   }) async {
-    final version = await _writeAtomically(
-      transport,
-      config,
-      bytes,
-      ifMatch: ifMatch,
-    );
-    await _config.markFullVersion(version);
+    var written = 0;
+    if (skipMain) {
+      // 内容与云端一致：不重写主文件，只把「已经看到的这一版」记下来。
+      //
+      // 必须记版本，否则下一次 `WebdavAutoSync.check()` 还会判成「云端有新
+      // 更新」，于是又弹一次「现在同步吗」——写回一份没变的内容只会换一个新
+      // ETag，把另一台设备叫起来，两端开着就互相催个不停。
+      await _config.markFullVersion(
+        ifMatch ?? (await transport.remoteFile())?.versionKey,
+      );
+    } else {
+      final version = await _writeAtomically(
+        transport,
+        config,
+        bytes,
+        ifMatch: ifMatch,
+      );
+      await _config.markFullVersion(version);
+      written += bytes.length;
+    }
     // 整包不再带进度（v5），所以这里必须把分片写成合并后的那一份：不这么
     // 做的话，刚同步完整包、进度分片还停在旧值，下一次「离开阅读页」会推
     // 一份过期数据上去，把刚合并进来的对方进度盖掉。
@@ -755,17 +801,26 @@ class WebdavSyncService {
     // 的内容能从整包重建，坏掉不是灾难 —— 整包才是。
     //
     // `progressIfMatch` 由 `_prepare` 读分片时一并带回，省掉一次 PROPFIND。
-    final progress = await _encodeProgress(history);
-    await transport.upload(
-      progress.bytes,
-      name: ProgressShard.fileName,
-      ifMatch: progressIfMatch,
-    );
-    await _config.markProgressDigest(digestOf(progress.bytes));
+    if (skipProgress) {
+      // 内容一致：不重写。云端那份的字节指纹要记下来，否则下一次 `_prepare`
+      // 会把「就是自己写的那份」当成别人的，白读一遍再比对。
+      if (progressDigestOnCloud != null) {
+        await _config.markProgressDigest(progressDigestOnCloud);
+      }
+    } else {
+      final progress = await _encodeProgress(history);
+      await transport.upload(
+        progress.bytes,
+        name: ProgressShard.fileName,
+        ifMatch: progressIfMatch,
+      );
+      await _config.markProgressDigest(digestOf(progress.bytes));
+      written += progress.bytes.length;
+    }
     final now = DateTime.now();
     await _config.markSynced(now);
     await _config.markProgressSynced(now);
-    return bytes.length + progress.bytes.length;
+    return written;
   }
 
   /// 读整包；撞上「别人正在替换」的窗口时等一下重看一次。
@@ -788,13 +843,16 @@ class WebdavSyncService {
   /// 这是「一次坏上传永久锁死」的出口：没有它，两台设备会各自在这里抛
   /// `FormatException` 并拒绝同步，而设置页只有「立即同步」和「清除配置」，
   /// 用户在应用里没有任何办法把云端那份坏文件换掉。
-  Future<LibraryBackup> _decodeWithBackup(
+  ///
+  /// `fromBackup` 表示这一份是 `.bak` 里的旧版，不是主文件。调用方据此决定
+  /// 「能不能因为内容一致就跳过写回」—— 主文件是坏的，跳过一次就再也修不好。
+  Future<({LibraryBackup snapshot, bool fromBackup})> _decodeWithBackup(
     WebdavTransport transport,
     WebdavConfig config,
     ({Uint8List bytes, DateTime? modified, String? versionKey}) primary,
   ) async {
     try {
-      return await _decode(primary.bytes);
+      return (snapshot: await _decode(primary.bytes), fromBackup: false);
     } on WebdavException {
       final backup = await transport.download(
         name: siblingOf(config, backupSuffix),
@@ -802,7 +860,7 @@ class WebdavSyncService {
       if (backup == null) rethrow;
       final snapshot = await _decode(backup.bytes);
       AppLog.w('webdav-sync', '云端主文件无法识别，已回退到上一版（.bak）继续合并');
-      return snapshot;
+      return (snapshot: snapshot, fromBackup: true);
     }
   }
 
@@ -951,6 +1009,11 @@ String syncCounts(WebdavSyncReport report) =>
 /// 一次同步的结果说明。`brief` 用于没有页面上下文的场合（自动同步的提示）。
 String describeSyncReport(WebdavSyncReport report, {bool brief = false}) {
   final size = '${(report.uploadedBytes / 1024).toStringAsFixed(1)} KB';
+  // 合并完发现云端那份已经和本机一样：一个字节都没写。说成「0.0 KB 写回
+  // 云端」会像是同步没跑，其实是「云端本来就是这一份」。
+  if (report.remoteExisted && report.uploadedBytes == 0) {
+    return '云端与本机一致，本次没有写回任何内容（${syncCounts(report)}）';
+  }
   if (brief) {
     return report.remoteExisted
         ? '已同步：${syncCounts(report)}（$size 写回云端）'

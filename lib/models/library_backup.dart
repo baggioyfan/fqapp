@@ -515,6 +515,30 @@ class LibraryBackup {
     'excludedLocalRecords': excludedLocalRecords,
   };
 
+  /// 内容指纹：判断两份备份是不是同一份内容，不受 `createdAt` 影响。
+  ///
+  /// 每次 [encode] 都会写一个新的 `createdAt`，所以字节比较永远不相等；而
+  /// 「要不要把这份写回云端」只取决于内容。键序也归一化 —— 本机 `capture()`
+  /// 出来的 map 与云端 `decode()` 出来的插入顺序未必相同，不排序就会假性
+  /// 不等，等于白做。
+  ///
+  /// 用在 WebDAV 整包同步：合并完发现和云端一模一样就不写回去。每次 PUT
+  /// 都会换一个新 ETag，而 ETag 正是「云端有更新」的唯一判据 —— 重写一份
+  /// 没变的内容会让另一台设备再弹一次提示，两台开着就互相催个不停。
+  String contentFingerprint({bool includeHistory = false}) {
+    final json = _toJson(includeHistory: includeHistory)..remove('createdAt');
+    return canonicalJsonFingerprint(json);
+  }
+
+  static Object? _canonicalJson(Object? value) {
+    if (value is Map) {
+      final keys = value.keys.map((key) => key.toString()).toList()..sort();
+      return {for (final key in keys) key: _canonicalJson(value[key])};
+    }
+    if (value is List) return [for (final entry in value) _canonicalJson(entry)];
+    return value;
+  }
+
   /// 恢复时用的书表：把内容 id 还原成存储键（音频/漫画带 `kind:` 前缀），
   /// 和历史的键规则保持一致。
   List<({String id, String kind, Map<String, double> devices})>
@@ -739,3 +763,10 @@ class LibraryBackup {
     return value;
   }
 }
+
+/// 把任意 JSON 结构归一化成可比对的字符串：键排序、不掺时间戳。
+///
+/// 整包与进度分片都用它判断「云端那份和本机这份是不是同一份内容」。两者
+/// 的 `createdAt` 每次编码都会取当前时间，直接比字节永远不相等。
+String canonicalJsonFingerprint(Object? value) =>
+    jsonEncode(LibraryBackup._canonicalJson(value));

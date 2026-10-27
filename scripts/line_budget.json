@@ -1,7 +1,7 @@
 {
   "files": {
     "lib/main.dart": 876,
-    "lib/models/library_backup.dart": 741,
+    "lib/models/library_backup.dart": 772,
     "lib/models/media_item.dart": 1489,
     "lib/pages/api_service_page.dart": 601,
     "lib/pages/audio_page.dart": 1936,
@@ -35,7 +35,7 @@
     "lib/services/native_player.dart": 746,
     "lib/services/system_tts.dart": 650,
     "lib/services/webdav_client.dart": 781,
-    "lib/services/webdav_sync_service.dart": 968,
+    "lib/services/webdav_sync_service.dart": 1031,
     "lib/widgets/audio/audio_sections.dart": 1690,
     "lib/widgets/bookshelf_card.dart": 1003,
     "lib/widgets/desktop_video_chrome.dart": 885,
@@ -97,7 +97,7 @@
     "test/series_detail_page_test.dart": 865,
     "test/video_player_chrome_test.dart": 2142,
     "test/webdav_client_test.dart": 748,
-    "test/webdav_sync_service_test.dart": 719
+    "test/webdav_sync_service_test.dart": 739
   },
   "functions": {
     "lib/main.dart::_RootShellState.build": {
