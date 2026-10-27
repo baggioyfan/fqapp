@@ -577,9 +577,21 @@ class _DramaPageState extends ConsumerState<DramaPage>
     }
     if (!mounted) return;
     final mapped = <DramaChannel>[];
-    for (final tab in table.tabs) {
-      final channel = serverChannelOf(tab);
-      if (channel != null) mapped.add(channel);
+    // 服务端下标 → `mapped` 下标。`serverChannelOf` 会丢掉映射不到的类型，也会
+    // 丢掉下面去重掉的那一条，所以服务端的 `tab_index` 不能直接当 `mapped`
+    // 的下标用（错位会落到隔壁频道）。
+    final mappedIndexOf = <int, int>{};
+    final seenChannels = <String>{};
+    for (var i = 0; i < table.tabs.length; i++) {
+      final channel = serverChannelOf(table.tabs[i]);
+      if (channel == null) continue;
+      // 同一个流只留一个入口：上游会把 `dynamic_comic` 下发两次，短剧条上就并排
+      // 出现两个「漫剧」（2026-10-27 x64 端实见）。官方 `m0.java` 逐条转、不去重，
+      // 说明是上游数据脏了，客户端这边兜住。频道表只在进短剧页时拉一次，脏响应
+      // 落在哪台机器上，哪台才看得见。
+      if (!seenChannels.add('${channel.serverType}:${channel.source}')) continue;
+      mappedIndexOf[i] = mapped.length;
+      mapped.add(channel);
     }
     final isSeriesmallStrip = mapped.any(
       (channel) =>
@@ -605,10 +617,9 @@ class _DramaPageState extends ConsumerState<DramaPage>
       );
     }
     if (index < 0) {
-      final serverDefault = table.defaultIndex;
-      index = serverDefault >= 0 && serverDefault < mapped.length
-          ? serverDefault
-          : 0;
+      // 服务端下标先换算成映射后的下标：映射不到的类型、被去重的那一条都会让
+      // 服务端的 `tab_index` 偏大，直接用会落到隔壁频道。
+      index = mappedIndexOf[table.defaultIndex] ?? 0;
     }
     setState(() {
       _channels = List.unmodifiable(mapped);

@@ -1266,6 +1266,65 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('服务端把同一条流下发两次时只保留一个频道', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(360, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
+    await tester.pumpWidget(
+      _scope(
+        perTab: 1,
+        child: MaterialApp(
+          home: _Seams().page(
+            channelLoader: () async => const ChannelTable(
+              tabs: [
+                ChannelTab(type: kChannelVideoFeed, title: '推荐'),
+                ChannelTab(type: kChannelDynamicComic, title: '漫剧'),
+                // 上游脏数据：24 又来一遍。x64 端曾因此在短剧条上并排显示两个
+                // 「漫剧」（2026-10-27，其余端那次没触发替换，看不出）。
+                ChannelTab(type: kChannelDynamicComic, title: '漫剧'),
+                ChannelTab(type: kChannelVideoEpisode, title: '看剧'),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+    await _flush(tester);
+    expect(find.text('漫剧'), findsOneWidget, reason: '同一条流只留一个入口');
+    expect(find.text('推荐'), findsOneWidget);
+    expect(find.text('看剧'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('服务端默认下标按映射后的顺序换算', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(360, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
+    await tester.pumpWidget(
+      _scope(
+        perTab: 1,
+        child: MaterialApp(
+          home: _Seams().page(
+            channelLoader: () async => const ChannelTable(
+              defaultIndex: 2,
+              tabs: [
+                ChannelTab(type: kChannelVideoFeed, title: '推荐'),
+                // 映射不到的类型会被丢掉，所以服务端的 2 在映射后是 1。
+                ChannelTab(type: 103, title: '短篇'),
+                ChannelTab(type: kChannelDynamicComic, title: '漫剧'),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+    await _flush(tester);
+    // 直接拿服务端下标当 `mapped` 下标会越界退回 0（推荐）；换算后应落在漫剧
+    // ——搜索框占位文案跟着当前频道的种类走，是最好的观测点。
+    expect(find.text('请输入漫剧名或主演名'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('服务端频道表取不到时保留本地表', (tester) async {
     await tester.binding.setSurfaceSize(const Size(360, 800));
     addTearDown(() => tester.binding.setSurfaceSize(null));
