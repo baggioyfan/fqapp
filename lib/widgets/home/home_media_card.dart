@@ -321,10 +321,20 @@ class HomeMediaCard extends StatelessWidget {
 class HomeSectionHeader extends StatelessWidget {
   final String title;
   final String subtitle;
+
+  /// 右侧刷新入口。为空时整行只留标题 —— 这里原来挂的是一个没有回调的
+  /// 指南针，看着像按钮、点下去什么都不会发生（2026-10-27 用户问到）。
+  final Future<void> Function()? onRefresh;
+
+  /// 请求在途：把图标换成小转圈，否则首页内容还在屏上，点完毫无反馈。
+  final bool busy;
+
   const HomeSectionHeader({
     super.key,
     required this.title,
     required this.subtitle,
+    this.onRefresh,
+    this.busy = false,
   });
 
   @override
@@ -358,7 +368,31 @@ class HomeSectionHeader extends StatelessWidget {
                   ),
                 ),
               ),
-              Icon(LucideIcons.compass, size: 19, color: palette.muted),
+              if (onRefresh != null)
+                SizedBox(
+                  width: 32,
+                  height: 32,
+                  child: busy
+                      ? const Center(
+                          child: SizedBox(
+                            width: 15,
+                            height: 15,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: HomePalette.accent,
+                            ),
+                          ),
+                        )
+                      : IconButton(
+                          key: const Key('home_section_refresh'),
+                          tooltip: '刷新',
+                          onPressed: onRefresh,
+                          iconSize: 19,
+                          padding: EdgeInsets.zero,
+                          color: palette.muted,
+                          icon: const Icon(LucideIcons.refresh_cw),
+                        ),
+                ),
             ],
           ),
           const SizedBox(height: 6),

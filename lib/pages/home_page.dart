@@ -454,6 +454,9 @@ class _HomePageState extends ConsumerState<HomePage> {
           child: HomeSectionHeader(
             title: '值得一看',
             subtitle: _captions[state.tabIndex % _captions.length],
+            // 标题右侧的刷新按钮：和下拉、错误重试、空态共用 `_refresh()`。
+            onRefresh: _refresh,
+            busy: state.isLoading,
           ),
         ),
         _gridSliverFor(state, rest, gridWidth),
