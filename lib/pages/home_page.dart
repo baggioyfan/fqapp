@@ -192,6 +192,15 @@ class _HomePageState extends ConsumerState<HomePage> {
   /// 本地表驱动，与这里的下标一一对应。
   List<HomeCategory> _categoriesOf(HomeState state) => homeCategories;
 
+  /// 首页所有手动刷新入口（下拉、错误重试、空态「刷新推荐」）都走这里。
+  ///
+  /// 必须是「手动刷新」：不带这个标记时 `load()` 会按落地缓存续接——只留
+  /// 用户停留的那张卡往后，并把快照里每张卡的 id 记成「已看过」，服务端回来
+  /// 的同一批卡被整份去重丢掉，界面一帧不动。官方下拉走的是
+  /// `SaasClientReqType.Refresh`（整页替换）。
+  Future<void> _refresh() =>
+      ref.read(homeProvider.notifier).load(manualRefresh: true);
+
   @override
   Widget build(BuildContext context) {
     final state = ref.watch(homeProvider);
@@ -212,12 +221,12 @@ class _HomePageState extends ConsumerState<HomePage> {
                     headline: '故事还在路上',
                     message: '暂时无法加载推荐，稍后再试一次。',
                     detail: state.error!,
-                    onRetry: notifier.load,
+                    onRetry: _refresh,
                   )
                 : RefreshIndicator(
                     color: HomePalette.accent,
                     backgroundColor: palette.surface,
-                    onRefresh: notifier.load,
+                    onRefresh: _refresh,
                     // The grid used to measure itself from inside a sliver
                     // (SliverLayoutBuilder). A sliver's constraints carry
                     // the scroll offset, so they differ on every scroll
@@ -415,7 +424,7 @@ class _HomePageState extends ConsumerState<HomePage> {
             title: '暂无内容',
             message: '换个分类，或刷新发现新故事',
             actionLabel: '刷新推荐',
-            onRefresh: ref.read(homeProvider.notifier).load,
+            onRefresh: _refresh,
           ),
         ),
       ];

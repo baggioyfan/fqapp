@@ -266,7 +266,22 @@ typedef _AllManjuGroup = ({
 /// and feed before the first await, so switching tabs can never redirect a
 /// late response into a different tab's cache.
 class HomeNotifier extends Notifier<HomeState> {
-  static const tabs = ['全部', '小说', '短剧', '漫剧', '漫画', '听书', '视频'];
+  /// 首页顶栏**可达**的分类（6 项），与 `home_tab_bar.dart` 的 `homeCategories`
+  /// 同长同序（首项一个是「推荐」（服务端 title）、一个是「全部」（本地兜底
+  /// 名），属于既有差异）。滑动 `count` 与点击下标都按它算。
+  ///
+  /// 不要往这里补「视频」：首页顶栏只有 6 格，第 7 项点不到也滑不到，多一项
+  /// 只会让按 `tabs.length` 遍历的代码多算一格。它在 [allTabs] 里。
+  static const tabs = ['全部', '小说', '短剧', '漫剧', '漫画', '听书'];
+
+  /// 底层 tab 表（7 项）：比首页多一项「视频」（`BookstoreTabType.video_feed
+  /// = 16`，书城条上叫「视频」、seriesmall 页显示为「推荐」）。
+  ///
+  /// 首页顶栏到不了它，但短剧页频道条的「推荐」频道按**这张表的下标**取
+  /// （`drama_page.dart` 的 `HomeNotifier.allTabs.indexOf('视频')`），所以
+  /// 不能为了跟首页对齐而删项。前 6 项必须与 [tabs] 同序同名
+  /// （`test/home_tab_alignment_test.dart` 守着）。
+  static const allTabs = ['全部', '小说', '短剧', '漫剧', '漫画', '听书', '视频'];
   static const tabKinds = {
     '小说': 'book',
     '短剧': 'video',
@@ -324,9 +339,9 @@ class HomeNotifier extends Notifier<HomeState> {
         tabType: type <= 1 ? null : type,
       );
     }
-    final name = tabIndex >= 0 && tabIndex < tabs.length
-        ? tabs[tabIndex]
-        : tabs.first;
+    final name = tabIndex >= 0 && tabIndex < allTabs.length
+        ? allTabs[tabIndex]
+        : allTabs.first;
     return (
       name: name,
       kind: tabKinds[name] ?? 'book',
@@ -364,7 +379,7 @@ class HomeNotifier extends Notifier<HomeState> {
   /// 顶栏下标的口径：`true` 表示这一页的分类条由本地 [tabs] 表驱动。
   ///
   /// 短剧页（[dramaProvider]）的频道条是本地表下标拼的
-  /// （`drama_page.dart` 的 `dramaChannels` 全用 `HomeNotifier.tabs.indexOf`），
+  /// （`drama_page.dart` 的 `dramaChannels` 全用 `HomeNotifier.allTabs.indexOf`），
   /// 而它的 `state.tabs` 同样会被服务端那 11 项填满。若跟着服务端下标解析，
   /// 它的「短剧」（本地下标 2）就会变成服务端的「经典」——所以这一页必须
   /// 固定走本地表，不能靠 `state.tabs` 空不空来猜。
@@ -482,7 +497,19 @@ class HomeNotifier extends Notifier<HomeState> {
   Future<void> load({bool manualRefresh = false}) async {
     final tabIndex = state.tabIndex;
     final generation = ++_generation;
-    final feed = _feedFor(tabIndex)..reset();
+    final feed = _feedFor(tabIndex);
+    // 手动刷新保留屏上这份做过渡。[reset] 会清空 items/cells，若直接让它上
+    // 屏，下拉的那一秒整页会塌成骨架屏。旧内容只是过渡：响应回来按
+    // `replace: true` 整页换掉；响应失败时它正好还留在屏上，比白屏好。
+    final onScreen = manualRefresh && feed.items.isNotEmpty
+        ? (items: feed.items, cells: feed.cells)
+        : null;
+    feed.reset();
+    if (onScreen != null) {
+      feed
+        ..items = onScreen.items
+        ..cells = onScreen.cells;
+    }
     // Stale-while-revalidate: show the last rendered cards while the network
     // refresh runs. The cursors stay reset, so the response replaces page one.
     final snapshot = manualRefresh ? null : _feedCache?.load(tabIndex);
@@ -589,10 +616,11 @@ class HomeNotifier extends Notifier<HomeState> {
   /// even on a cache hit, which invalidates requests started by the old tab.
   void selectTab(int index) {
     // 上限跟着下标口径走：走服务端表时是它下发的分类数（首页 11 个），走本地
-    // 表时是本地那 7 个。用错口径会把短剧页的「短剧」（本地下标 2）拦掉或
-    // 放进越界下标。
+    // 表时是底层那 7 项 [allTabs]——短剧页的「推荐」频道下标是 6，用首页可达
+    // 的 6 格 [tabs] 当上限会把它整条拦掉。用错口径还会把短剧页的「短剧」
+    // （本地下标 2）拦掉或放进越界下标。
     final limit = usesLocalTabs || state.tabs.isEmpty
-        ? tabs.length
+        ? allTabs.length
         : state.tabs.length;
     if (index == state.tabIndex || index < 0 || index >= limit) return;
     // 记住切换前的位置：下一次加载要把它当 `last_tab_index` 交给上游，
@@ -1247,8 +1275,8 @@ final homeProvider = NotifierProvider<HomeNotifier, HomeState>(
 // 理由与被否掉的方案见
 // .agents/notes/implemented/feature/2026-09-20-bottom-short-drama-tab.md
 
-/// Index of 短剧 inside [HomeNotifier.tabs].
-final dramaTabIndex = HomeNotifier.tabs.indexOf('短剧');
+/// Index of 短剧 inside [HomeNotifier.allTabs].
+final dramaTabIndex = HomeNotifier.allTabs.indexOf('短剧');
 
 /// The bottom navigation's 短剧 destination.
 ///

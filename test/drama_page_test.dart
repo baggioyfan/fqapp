@@ -331,13 +331,13 @@ void main() {
     // 漫剧 = dynamic_comic(24); the last two are device-local lists.
     // （预约=video_subscribe 28 无数据源，刻意不做。）
     expect(
-      HomeNotifier.tabTypes[HomeNotifier.tabs[dramaChannels[0].tabIndex]],
+      HomeNotifier.tabTypes[HomeNotifier.allTabs[dramaChannels[0].tabIndex]],
       16,
     );
     expect(dramaChannels[1].tabIndex, dramaTabIndex);
     expect(dramaChannels[1].kind, 'video');
     expect(
-      HomeNotifier.tabTypes[HomeNotifier.tabs[dramaChannels[2].tabIndex]],
+      HomeNotifier.tabTypes[HomeNotifier.allTabs[dramaChannels[2].tabIndex]],
       24,
     );
     expect(dramaChannels[2].kind, 'manju');

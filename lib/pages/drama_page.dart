@@ -77,7 +77,7 @@ enum DramaChannelSource { feed, history, shelf }
 class DramaChannel {
   final String label;
 
-  /// Index into [HomeNotifier.tabs] for [DramaChannelSource.feed].
+  /// Index into [HomeNotifier.allTabs] for [DramaChannelSource.feed].
   final int tabIndex;
   final String kind;
   final DramaChannelSource source;
@@ -112,19 +112,19 @@ class DramaChannel {
 final dramaChannels = <DramaChannel>[
   DramaChannel(
     label: '推荐',
-    tabIndex: HomeNotifier.tabs.indexOf('视频'),
+    tabIndex: HomeNotifier.allTabs.indexOf('视频'),
     kind: 'video',
     serverType: kChannelVideoFeed,
   ),
   DramaChannel(
     label: '看剧',
-    tabIndex: HomeNotifier.tabs.indexOf('短剧'),
+    tabIndex: HomeNotifier.allTabs.indexOf('短剧'),
     kind: 'video',
     serverType: kChannelVideoEpisode,
   ),
   DramaChannel(
     label: '漫剧',
-    tabIndex: HomeNotifier.tabs.indexOf('漫剧'),
+    tabIndex: HomeNotifier.allTabs.indexOf('漫剧'),
     kind: 'manju',
     serverType: kChannelDynamicComic,
   ),
@@ -164,7 +164,7 @@ DramaChannel? serverChannelOf(ChannelTab tab) {
     case kChannelVideoFeed:
       return DramaChannel(
         label: label('推荐'),
-        tabIndex: HomeNotifier.tabs.indexOf('视频'),
+        tabIndex: HomeNotifier.allTabs.indexOf('视频'),
         kind: 'video',
         serverType: tab.type,
       );
@@ -172,14 +172,14 @@ DramaChannel? serverChannelOf(ChannelTab tab) {
     case kChannelVideo:
       return DramaChannel(
         label: label('看剧'),
-        tabIndex: HomeNotifier.tabs.indexOf('短剧'),
+        tabIndex: HomeNotifier.allTabs.indexOf('短剧'),
         kind: 'video',
         serverType: tab.type,
       );
     case kChannelDynamicComic:
       return DramaChannel(
         label: label('漫剧'),
-        tabIndex: HomeNotifier.tabs.indexOf('漫剧'),
+        tabIndex: HomeNotifier.allTabs.indexOf('漫剧'),
         kind: 'manju',
         serverType: tab.type,
       );
