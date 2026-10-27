@@ -336,10 +336,27 @@ class WebdavSyncService {
       }
     }
     final history = await _backups.captureProgress();
-    final bytes = await Isolate.run(
-      () => ProgressShard.capture(history).encode(),
-    );
-    return (merged: merged, bytes: bytes, ifMatch: ifMatch);
+    final encoded = await _encodeProgress(history);
+    return (merged: merged, bytes: encoded.bytes, ifMatch: ifMatch);
+  }
+
+  /// 编码热路径分片。三个写分片的地方共用它，好让「剔除坏记录」这件事只有
+  /// 一处实现：编码前会按读者的同一套契约整理记录，写不出去的逐条剔除并
+  /// 记账，绝不让一条 `audio:…` / 导入书记录把整份文件变成对端读不懂的毒药。
+  Future<({Uint8List bytes, int dropped})> _encodeProgress(
+    List<Map<String, dynamic>> history,
+  ) async {
+    final encoded = await Isolate.run(() {
+      final shard = ProgressShard.capture(history);
+      return (bytes: shard.encode(), dropped: shard.dropped);
+    });
+    if (encoded.dropped > 0) {
+      AppLog.w(
+        'webdav-sync',
+        '写入进度分片时剔除 ${encoded.dropped} 条本机专属/无法共享的记录',
+      );
+    }
+    return encoded;
   }
 
   /// 写分片并记下「写出去的是哪一份」。
@@ -609,14 +626,12 @@ class WebdavSyncService {
     final bytes = await _encode(snapshot);
     final version = await _writeAtomically(transport, config, bytes);
     await _config.markFullVersion(version);
-    final progressBytes = await Isolate.run(
-      () => ProgressShard.capture(snapshot.history).encode(),
-    );
+    final progress = await _encodeProgress(snapshot.history);
     await transport.upload(
-      progressBytes,
+      progress.bytes,
       name: ProgressShard.fileName,
     );
-    await _config.markProgressDigest(digestOf(progressBytes));
+    await _config.markProgressDigest(digestOf(progress.bytes));
     final now = DateTime.now();
     await _config.markSynced(now);
     await _config.markProgressSynced(now);
@@ -740,19 +755,17 @@ class WebdavSyncService {
     // 的内容能从整包重建，坏掉不是灾难 —— 整包才是。
     //
     // `progressIfMatch` 由 `_prepare` 读分片时一并带回，省掉一次 PROPFIND。
-    final progressBytes = await Isolate.run(
-      () => ProgressShard.capture(history).encode(),
-    );
+    final progress = await _encodeProgress(history);
     await transport.upload(
-      progressBytes,
+      progress.bytes,
       name: ProgressShard.fileName,
       ifMatch: progressIfMatch,
     );
-    await _config.markProgressDigest(digestOf(progressBytes));
+    await _config.markProgressDigest(digestOf(progress.bytes));
     final now = DateTime.now();
     await _config.markSynced(now);
     await _config.markProgressSynced(now);
-    return bytes.length + progressBytes.length;
+    return bytes.length + progress.bytes.length;
   }
 
   /// 读整包；撞上「别人正在替换」的窗口时等一下重看一次。

@@ -26,24 +26,46 @@ class ProgressShard {
   final DateTime createdAt;
   final List<Map<String, dynamic>> history;
 
-  const ProgressShard._({required this.createdAt, required this.history});
+  /// 本轮被剔除的记录数：本机导入书（`local_…`）、id 非法、作用域无法还原，
+  /// 以及还原后撞成同一个 `kind:id` 的条目。以前这里只要混进一条，对端就会整
+  /// 份拒收 —— 一条坏记录废掉全部进度。现在改成逐条剔除并计数，同步继续。
+  final int dropped;
 
-  factory ProgressShard.capture(List<Map<String, dynamic>> history) =>
-      ProgressShard._(
-        createdAt: DateTime.now(),
-        // 本机导入的书籍（`local_…`）不进去：它们在别的设备上打不开，而且
-        // `sanitizeHistory` 读回来时会**拒绝整个文件**（「备份含无效作品标识
-        // 或本地书籍记录」）。之前只有整包做了这个过滤，热路径没做 —— 分片里
-        // 只要混进一条，另一台设备就再也解不开它，所有进度（不止这本书）都
-        // 同步不过去。
-        history: List.unmodifiable([
-          for (final record in history)
-            if (!LibraryBackup.isDeviceLocalId(
-              '${record['contentId'] ?? record['id']}',
-            ))
-              record,
-        ]),
-      );
+  const ProgressShard._({
+    required this.createdAt,
+    required this.history,
+    required this.dropped,
+  });
+
+  factory ProgressShard.capture(List<Map<String, dynamic>> history) {
+    final records = <Map<String, dynamic>>[];
+    // 还原作用域键之后，两条不同的本机记录可能落成同一个 `kind:id`（例如
+    // 一条旧的 `book/audio:123` 和一条 `audio/123`）。读者的 `sanitizeHistory`
+    // 遇到重复会判「备份中有重复的进度」—— 又是一次整份拒收，所以在这里先去
+    // 重：`history` 已按时间倒序，先到的那条就是更新的。
+    final seen = <String>{};
+    var dropped = 0;
+    for (final record in history) {
+      // 编码必须与读者共用同一套契约（[LibraryBackup.wireHistoryRecord]）：
+      // 本机盒子的作用域键 `audio:123` 在这里还原成裸 id `123`，否则读者
+      // 的 `sanitizeHistory` 会因冒号判整份文件无效。
+      final wire = LibraryBackup.wireHistoryRecord(record);
+      if (wire == null) {
+        dropped++;
+        continue;
+      }
+      if (!seen.add('${wire['kind']}:${wire['id']}')) {
+        dropped++;
+        continue;
+      }
+      records.add(wire);
+    }
+    return ProgressShard._(
+      createdAt: DateTime.now(),
+      history: List.unmodifiable(records),
+      dropped: dropped,
+    );
+  }
 
   factory ProgressShard.decode(Uint8List bytes) {
     if (bytes.length > maxBytes) {
@@ -78,6 +100,7 @@ class ProgressShard {
       createdAt: DateTime.fromMillisecondsSinceEpoch(createdAt),
       // 与整包共用同一套字段校验，免得两处对同一条记录给出不同判断。
       history: LibraryBackup.sanitizeHistory(records),
+      dropped: 0,
     );
   }
 

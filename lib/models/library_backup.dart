@@ -137,12 +137,7 @@ class LibraryBackup {
       'history': [
         for (final record in history)
           if (include((record['contentId'] ?? record['id']).toString()))
-            {
-              ...record,
-              'id': record['contentId'] ?? record['id'],
-              'kind': record['kind'] ?? 'book',
-              'cover': _portableCover(record['cover']?.toString() ?? ''),
-            },
+            if (wireHistoryRecord(record) case final wire?) wire,
       ],
       'watched': [
         for (final entry in watched.entries)
@@ -544,6 +539,76 @@ class LibraryBackup {
     return scope == 'audio' || scope == 'manga'
         ? id.substring(separator + 1)
         : id;
+  }
+
+  /// 把一条本机历史记录整理成**可传输**的形态。
+  ///
+  /// 本机盒子的键是作用域键（`audio:123` / `manga:123`），而 `LibraryStore`
+  /// 的 `_historyRecord(raw, id: key)` 会把它写进 `id` 字段；线上契约的 `id`
+  /// 却只能是作品裸 id（见 `_idPattern`，不含冒号）。整包与热路径分片两个
+  /// 编码器必须共用这一处 —— 分片只要混进一条 `audio:…`，
+  /// `sanitizeHistory` 就会**拒收整份文件**，所有设备的所有进度一起停摆。
+  ///
+  /// 返回 null 表示这条记录线上不可表示（本机导入书、id 为空或非法）。调用
+  /// 方按「剔除并计数」处理，不能让一条坏记录带走整份。
+  static Map<String, dynamic>? wireHistoryRecord(Map<String, dynamic> record) {
+    // `contentId` 才是作品裸 id；它缺失或为空时退回去解析 `id`（可能带作用域）。
+    final contentId = record['contentId'];
+    final id = _wireId(
+      contentId is String && contentId.isNotEmpty ? contentId : record['id'],
+    );
+    if (id.isEmpty || id.startsWith('local_') || !_idPattern.hasMatch(id)) {
+      return null;
+    }
+    // 未知作品类型写出去也只会被拒收，索性在这里就剔掉；缺省仍按 book 算，
+    // 与旧的 `record['kind'] ?? 'book'` 一致。
+    final rawKind = record['kind'];
+    final kind = rawKind is String ? rawKind : 'book';
+    if (!_kinds.contains(kind)) return null;
+    final wire = <String, dynamic>{
+      for (final entry in record.entries)
+        if (entry.key != 'contentId') entry.key: entry.value,
+      'id': id,
+      'kind': kind,
+      'cover': _portableCover(record['cover']?.toString() ?? ''),
+    };
+    // 其余 id 字段读者也会逐个校验，同样一个不合格就整份拒收。这里丢一个
+    // 锚点（章内位置仍由 episode/progress 承载）换整份能同步，明显划算。
+    for (final key in const [
+      'bookId',
+      'chapterId',
+      'toneId',
+      'seriesId',
+      'episodeId',
+    ]) {
+      final value = wire[key];
+      if (value == null || value == '') {
+        wire.remove(key);
+        continue;
+      }
+      final bare = _wireId(value);
+      if (bare.isEmpty ||
+          bare.startsWith('local_') ||
+          !_idPattern.hasMatch(bare)) {
+        wire.remove(key);
+      } else if (bare != value) {
+        wire[key] = bare;
+      }
+    }
+    return wire;
+  }
+
+  /// 线上 id：任何已知作用域的存储键都还原成裸 id。真实作品 id 里不会有冒
+  /// 号（`_idPattern` 就是这条契约），所以按首个冒号切一刀是安全的。
+  static String _wireId(Object? value) {
+    final raw = value is String ? value : value?.toString() ?? '';
+    final bare = _bareId(raw);
+    if (bare != raw) return bare;
+    final separator = raw.indexOf(':');
+    if (separator <= 0) return raw;
+    return _kinds.contains(raw.substring(0, separator))
+        ? raw.substring(separator + 1)
+        : raw;
   }
 
   /// Mirrors `LibraryStore._dayKey`, which does not zero-pad its parts.
