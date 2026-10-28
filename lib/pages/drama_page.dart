@@ -1420,8 +1420,7 @@ class _DramaPageState extends ConsumerState<DramaPage>
                 child: _channelBody(state, channel, items),
               ),
             ),
-            if (_pullDistance > 0)
-              Positioned(
+            if (_pullDistance > 0)              Positioned(
                 top: MediaQuery.paddingOf(context).top + _topChromeHeight + 8,
                 left: 0,
                 right: 0,
@@ -3784,20 +3783,23 @@ class _InlineVideoLayer extends StatelessWidget {
 
   const _InlineVideoLayer({required this.item, required this.playback});
 
-  /// 未起播 / 首帧未到时铺在这张卡上的封面。
+  /// The cover laid over this card while nothing is playing (or before the
+  /// first frame arrives).
   ///
-  /// 封面是 9:16 的竖图，而这张卡在桌面端拿到的是横向窗口：`cover` 会按宽度
-  /// 铺满、高度溢出三四倍，看起来只剩海报最上面一截。桌面端改用 `contain`
-  /// 完整显示，并垫黑底（与视频的 `VideoFit.contain` 同一套观感）；手机上卡片
-  /// 本身就是竖的，保持铺满。
-  Widget _cover(MediaItem item, int cacheWidth) => ColoredBox(
+  /// The poster is a 9:16 portrait image while this card gets a landscape
+  /// window on desktop: `cover` fills by width and overflows several times,
+  /// which reads as "only the top slice of the poster". Desktop switches to
+  /// `contain` over a black backing — the same look as the video's
+  /// `VideoFit.contain` right below. Phones keep a portrait card, so they
+  /// keep filling.
+  Widget _cover(int cacheWidth) => ColoredBox(
     color: Colors.black,
     child: StoryCover(
       key: ValueKey('drama_inline_cover_${item.kind}_${item.id}'),
       item: item,
       cacheWidth: cacheWidth,
       alignment: Alignment.topCenter,
-      fit: isDesktopHost ? BoxFit.contain : BoxFit.cover,
+      fit: isWindowsDesktop ? BoxFit.contain : BoxFit.cover,
     ),
   );
 
@@ -3822,7 +3824,7 @@ class _InlineVideoLayer extends StatelessWidget {
             playback.videoSize,
           ]),
           builder: (context, _) {
-            final cover = _cover(item, cacheWidth);
+            final cover = _cover(cacheWidth);
             // A card the session is not playing (yet) shows its cover only.
             if (playback.activeId.value != item.id) return cover;
             final textureId = playback.textureId.value;

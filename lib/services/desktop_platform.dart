@@ -51,6 +51,22 @@ bool playbackAppIsActive(AppLifecycleState? state) =>
     state == AppLifecycleState.resumed ||
     (isDesktopHost && state == AppLifecycleState.inactive);
 
+/// 桌面窗口只是失焦时，是否仍算「在前台」。
+///
+/// Flutter 3.13 起桌面端有真正的生命周期：窗口失去焦点报 `inactive`，
+/// 最小化报 `hidden` / `paused`。**失焦不是退到后台** —— 窗口还在、渲染还在
+/// 跑；把它当后台会让听书跟随停止翻页（鼠标点一下别的窗口，页面就不跟了）。
+///
+/// 与 [playbackAppIsActive] 是同一件事的两处用法：那个管视频前台播放，这个
+/// 管阅读页的跟随与高亮。平台范围比它宽一点，三个桌面平台都成立。
+bool desktopInactiveStillVisible(AppLifecycleState state) =>
+    state == AppLifecycleState.resumed ||
+    ((!kIsWeb &&
+            (defaultTargetPlatform == TargetPlatform.windows ||
+                defaultTargetPlatform == TargetPlatform.macOS ||
+                defaultTargetPlatform == TargetPlatform.linux)) &&
+        state == AppLifecycleState.inactive);
+
 class DesktopPlatform with WindowListener {
   DesktopPlatform._();
   static final instance = DesktopPlatform._();
@@ -351,8 +367,11 @@ class DesktopPlatform with WindowListener {
         } else {
           await _tts.setLanguage('zh-CN');
         }
+        // flutter_tts 的 Windows 实现内部会再 +0.5（SAPI SpeakingRate 的
+        // 0.5 基线），所以这里减掉同一个偏移才是 app 侧的 rate。
+        // 早先是 *0.5，等效 0.5r+0.5：拉满 2.0× 实际只有 1.5×。
         await _tts.setSpeechRate(
-          ((args['rate'] as num?)?.toDouble() ?? 1) * .5,
+          ((args['rate'] as num?)?.toDouble() ?? 1) - .5,
         );
         return 300;
       case 'speak':
