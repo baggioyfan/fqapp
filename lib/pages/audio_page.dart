@@ -26,6 +26,7 @@ import '../services/library_store.dart';
 import '../services/listening_session.dart';
 import '../services/native_player.dart';
 import '../services/playback_format.dart';
+import '../services/webdav_auto_sync.dart';
 import '../services/shelf_store.dart';
 import '../services/transient_retry.dart';
 import '../services/system_tts.dart';
