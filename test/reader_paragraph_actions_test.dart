@@ -9,10 +9,12 @@ import 'package:fqapp/services/text_replacement_store.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:fqapp/models/media_item.dart';
+import 'package:fqapp/models/audio_extra.dart';
 import 'package:fqapp/models/audio_time_track.dart';
 import 'package:fqapp/pages/audio_page.dart';
 import 'package:fqapp/pages/reader_page.dart';
 import 'package:fqapp/services/chapter_text_formatter.dart';
+import 'package:fqapp/services/listen_start_resolver.dart';
 import 'package:fqapp/services/reader_underline_store.dart';
 import 'package:fqapp/widgets/reader/reader_paged_view.dart';
 import 'package:fqapp/widgets/reader/reader_paragraph_menu.dart';
@@ -109,7 +111,7 @@ Widget _app(
   String? html,
   bool localOnly = false,
   TextReplacementStore? replacementStore,
-  TimePointLoader? timePointLoader,
+  ListenStartResolver? listenStartResolver,
 }) => MaterialApp(
   home: ReaderPage(
     bookId: 'reader-test',
@@ -123,7 +125,7 @@ Widget _app(
         parseChapterContent(html ?? _html).toCacheText(),
     underlineStore: store,
     replacementStore: replacementStore,
-    timePointLoader: timePointLoader,
+    listenStartResolver: listenStartResolver,
   ),
 );
 
@@ -703,11 +705,16 @@ void main() {
       _app(
         _MemoryUnderlines(),
         // No usable mapping: the request is made and an empty answer keeps the
-        // chapter-opening fallback.
-        timePointLoader: (itemId, toneId) {
-          timepointRequests.add('$itemId|$toneId');
-          return Future.value(AudioTimeTrack.empty);
-        },
+        // chapter-opening fallback. The tone list is pinned so the assertion
+        // below does not depend on the live `/tones` endpoint.
+        listenStartResolver: ListenStartResolver(
+          bookId: 'reader-test',
+          toneCandidatesLoader: (_) async => const [],
+          timePointLoader: (itemId, toneId) {
+            timepointRequests.add('$itemId|$toneId');
+            return Future.value(AudioTimeTrack.empty);
+          },
+        ),
       ),
     );
     await tester.pumpAndSettle();
@@ -737,15 +744,19 @@ void main() {
     await tester.pumpWidget(
       _app(
         _MemoryUnderlines(),
-        timePointLoader: (itemId, toneId) async => AudioTimeTrack([
-          const AudioSyncPoint(
-            startTime: 6800,
-            startPara: 0,
-            startParaOff: 0,
-            endPara: 0,
-            endParaOff: 6,
-          ),
-        ]),
+        listenStartResolver: ListenStartResolver(
+          bookId: 'reader-test',
+          toneCandidatesLoader: (_) async => const [],
+          timePointLoader: (itemId, toneId) async => AudioTimeTrack([
+            const AudioSyncPoint(
+              startTime: 6800,
+              startPara: 0,
+              startParaOff: 0,
+              endPara: 0,
+              endParaOff: 6,
+            ),
+          ]),
+        ),
       ),
     );
     await tester.pumpAndSettle();
@@ -760,6 +771,41 @@ void main() {
     await tester.pumpAndSettle();
     final audio = tester.widget<AudioPage>(find.byType(AudioPage));
     expect(audio.startPosition, const Duration(milliseconds: 6800));
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('a book without a paragraph mapping starts from the subtitle cue', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(400, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(
+      _app(
+        _MemoryUnderlines(),
+        html: _longHtml,
+        listenStartResolver: ListenStartResolver(
+          bookId: 'reader-test',
+          toneCandidatesLoader: (_) async => const [],
+          // No paragraph mapping at all…
+          timePointLoader: (itemId, toneId) async => AudioTimeTrack.empty,
+          // …but the 边听边读 track knows where each sentence starts.
+          timelineLoader: (itemId, toneId) async => const SubtitleTrack([
+            SubtitleCue(startMs: 900, text: '第一章'),
+            SubtitleCue(startMs: 3200, text: '前十八年，叶望川还以为自己'),
+          ]),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await _longPressParagraph(tester, 0);
+    await tester.tap(find.byKey(const ValueKey('reader-action-listen')));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('听书'));
+    await tester.pumpAndSettle();
+    final audio = tester.widget<AudioPage>(find.byType(AudioPage));
+    expect(audio.startPosition, const Duration(milliseconds: 3200));
     expect(tester.takeException(), isNull);
   });
 
