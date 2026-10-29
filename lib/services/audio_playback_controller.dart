@@ -217,6 +217,7 @@ class _AudioPlaybackController extends ChangeNotifier
           autoplay: request.autoplay,
           position: request.startPosition,
           paragraph: request.startParagraph,
+          fraction: request.startFraction,
         ),
       );
     }
@@ -456,6 +457,7 @@ class _AudioPlaybackController extends ChangeNotifier
     bool restoreHistory = false,
     Duration? position,
     ({int? paraIndex, int ordinal})? paragraph,
+    double? fraction,
     String? toneId,
     bool autoplay = true,
     bool? completed,
@@ -587,6 +589,7 @@ class _AudioPlaybackController extends ChangeNotifier
       }
       final restoredPosition =
           anchorPosition ??
+          _estimatedFromFraction(fraction, duration) ??
           introSeek ??
           _boundedPosition(resume, duration);
       if (restoredPosition > Duration.zero) {
@@ -874,6 +877,25 @@ class _AudioPlaybackController extends ChangeNotifier
     return duration > Duration.zero && position > duration
         ? duration
         : position;
+  }
+
+  /// 段落锚点查不到时间轴时，按正文读进度折算起播位置。
+  ///
+  /// [fraction] 是阅读页给的比例（该段在本章正文里的字符位置 / 全章字数）。
+  /// 折算假设音频平均语速，误差随章节长度增长；它的价值不在精度，而在
+  /// **不落到章首** —— 精确时间轴拿不到时，「差几十秒」远好于「整章重播」。
+  /// 时长未知（源没报 duration）或比例无效时返回 null，交给原有回落链。
+  static Duration? _estimatedFromFraction(double? fraction, Duration duration) {
+    if (fraction == null || !fraction.isFinite) return null;
+    if (duration <= Duration.zero) return null;
+    final clamped = fraction <= 0
+        ? 0.0
+        : (fraction >= 1 ? 1.0 : fraction);
+    if (clamped <= 0) return null;
+    return _boundedPosition(
+      Duration(milliseconds: (duration.inMilliseconds * clamped).round()),
+      duration,
+    );
   }
 
   void _subscribe(NativePlayer player, int generation) {

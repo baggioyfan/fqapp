@@ -389,6 +389,55 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  // 阅读页还会递上「这一段在正文里的比例」。时间轴查不到时按比例折算时长：
+  // 折算不精确，但锚定请求落到章首是用户看到的最坏结果。
+  testWidgets('an unresolvable anchor falls back to the read fraction', (
+    tester,
+  ) async {
+    final session = _Session(
+      startPosition: Duration.zero,
+      startParagraph: (paraIndex: null, ordinal: 9),
+      startFraction: 0.5,
+      timePoints: const AudioTimeTrack([]),
+      store: ControlledReaderStore(
+        entry: {
+          'id': 'book',
+          'kind': 'audio',
+          'chapterId': '1',
+          'position': 100,
+          'duration': 120,
+        },
+      ),
+    );
+    await _mount(tester, session);
+    await _flush(tester);
+    // 假片长 2 分钟，读到一半 ⇒ 1 分钟。
+    expect(session.players.single.position, const Duration(minutes: 1));
+    expect(tester.takeException(), isNull);
+  });
+
+  // 时间轴命中时比例不得抢先：精确锚点永远优先于折算。
+  testWidgets('a resolved anchor ignores the read fraction', (tester) async {
+    final session = _Session(
+      startPosition: Duration.zero,
+      startParagraph: (paraIndex: 2, ordinal: 2),
+      startFraction: 0.5,
+      timePoints: const AudioTimeTrack([
+        AudioSyncPoint(
+          startTime: 8000,
+          startPara: 2,
+          startParaOff: 0,
+          endPara: 2,
+          endParaOff: 9,
+        ),
+      ]),
+    );
+    await _mount(tester, session);
+    await _flush(tester);
+    expect(session.players.single.position, const Duration(seconds: 8));
+    expect(tester.takeException(), isNull);
+  });
+
   // 从本段听 hands in a paragraph's timeline position. It is a deliberate
   // start point, so a chapter already marked as played-to-the-end must neither
   // suppress playback nor turn the next play tap into a replay from zero.
@@ -1075,6 +1124,7 @@ class _Session {
   final List<Chapter> chapters;
   final Duration? startPosition;
   final ({int? paraIndex, int ordinal})? startParagraph;
+  final double? startFraction;
   final AudioTimeTrack? timePoints;
   final players = <_AudioPlayer>[];
   final requests = <String>[];
@@ -1086,6 +1136,7 @@ class _Session {
     this.factory,
     this.startPosition,
     this.startParagraph,
+    this.startFraction,
     this.timePoints,
     List<Chapter>? chapters,
   }) : store = store ?? ControlledReaderStore(),
@@ -1104,6 +1155,7 @@ class _Session {
       chapters: chapters,
       startPosition: startPosition,
       startParagraph: startParagraph,
+      startFraction: startFraction,
       historyStore: store,
       timePointLoader: timePoints == null
           ? null

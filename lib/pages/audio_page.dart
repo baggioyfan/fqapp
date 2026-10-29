@@ -77,6 +77,13 @@ class AudioPage extends StatefulWidget {
   /// opening — never at saved history, matching the [startPosition] contract.
   final ({int? paraIndex, int ordinal})? startParagraph;
 
+  /// 起播位置的最后一道估计：锚点段落在本章正文里的读进度（0..1）。
+  ///
+  /// `/timepoints` 查不到（这本书没有时间轴、段号对不上、请求超时）时，按
+  /// 字符位置把时长折算成毫秒。折算当然不如精确时间轴，但锚定请求要的是
+  /// 「这一段」——落到章首等于没答应请求，那是用户看到的最坏结果。
+  final double? startFraction;
+
   /// Reopening the current work keeps its live session. A chapter/paragraph
   /// request can opt out to seek deliberately instead.
   final bool resumeSession;
@@ -117,6 +124,7 @@ class AudioPage extends StatefulWidget {
     this.startIndex = 0,
     this.startPosition,
     this.startParagraph,
+    this.startFraction,
     this.initialToneId,
     this.initialRate,
     this.autoplay = true,

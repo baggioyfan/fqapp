@@ -178,6 +178,7 @@ class _AudioPlaybackScopeState extends State<AudioPlaybackScope> {
                   index,
                   position: request.startPosition,
                   paragraph: request.startParagraph,
+                  fraction: request.startFraction,
                   toneId: request.initialToneId,
                   restoreHistory: true,
                   autoplay: request.autoplay,

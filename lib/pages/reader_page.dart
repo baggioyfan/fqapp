@@ -2769,6 +2769,16 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
         );
         return;
       }
+      // 「听书」也是「从当前位置继续」：同一个锚点，区别只在回落。长按段落
+      // 进来时（textId 非空）按下的那一段更准，别拿页首顶掉它。
+      if (choice == 0 && textId == null) {
+        final anchor = _currentPageAnchor();
+        await _openUpstreamListening(
+          fromMs: anchor.startMs,
+          textId: anchor.textId,
+        );
+        return;
+      }
       system = choice == 2;
     }
     if (!system) {
@@ -2897,6 +2907,12 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
                 ? Duration(milliseconds: startMs ?? 0)
                 : null,
             startParagraph: paragraph,
+            // 没有精确毫秒、也没有 `/timepoints` 可查时的兜底：告诉播放页这
+            // 一段在正文里的位置比例，让它按时长折算。折算不精确，但它保证
+            // 锚定请求不会落到章首——那正是用户看到「还是从章首播」的样子。
+            startFraction: paragraphAnchored && startMs == null
+                ? _readFraction(textId)
+                : null,
             historyStore: widget.readerStore,
           ),
         ),
@@ -2930,6 +2946,30 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
       return (startMs: block.startMs, textId: block.textId);
     }
     return (startMs: null, textId: null);
+  }
+
+  /// 本章正文里 [textId] 那一段的读进度（0..1）。
+  ///
+  /// 播放页拿它当起播位置的最后一道估计：`/timepoints` 查不到时按字符位置
+  /// 折算毫秒。坐标取排版后的显示文本（与 [ReaderChapterLayout] 的
+  /// `block.start` 同一套），全章字数按最后一块的末尾算——标题也算在内，
+  /// 因为音频是从标题开始念的。
+  double? _readFraction(int? textId) {
+    final layout = _chapterLayout;
+    // 标题块的 textId 也是 null：没有锚点段落时不能拿它当「第一段」。
+    if (textId == null || layout == null || layout.blocks.isEmpty) return null;
+    int? offset;
+    for (final block in layout.blocks) {
+      if (block.textId == textId) {
+        offset = block.start;
+        break;
+      }
+    }
+    final last = layout.blocks.last;
+    final total = last.start + last.text.length;
+    if (offset == null || total <= 0) return null;
+    final fraction = offset / total;
+    return fraction <= 0 ? 0.0 : (fraction >= 1 ? 1.0 : fraction);
   }
 
   /// The spoken start of the paragraph identified by [textId], plus the keys
