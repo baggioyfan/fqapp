@@ -370,15 +370,17 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
   /// page holding the estimated playback position. Instant jumps — the
   /// narration keeps moving and an animated chase would always lag.
   ///
-  /// 用户接管闩锁: a manual page turn pauses following briefly, so the reader
-  /// does not yank the page back within a second.
+  /// 用户接管闩锁: a manual page turn pauses following for 15 seconds, so the
+  /// reader does not yank the page back within a second.
+  ///
+  /// 跟随本身不再需要开关：默认就跟随，唯一的总闸是阅读设置里的「听书跟随
+  /// 翻页」（[ReaderPreferences.listeningFollow]，默认开）。以前迷你栏还有个
+  /// 定位键要先按一下才跟随，按键已经去掉 —— 少一个「说不清自己开没开」的
+  /// 状态。
   DateTime _listenFollowPausedUntil = DateTime.fromMillisecondsSinceEpoch(0);
 
   void _pauseListenFollow() {
     _listenFollowPausedUntil = DateTime.now().add(const Duration(seconds: 15));
-    // 用户自己翻页 = 不想被拽回去，直接退出跟随（图标变回空心）。以前只
-    // 暂停 15 秒，按钮还显示「跟随中」，看着像坏了。
-    ListeningSession.instance.setFollowArmed(false);
   }
 
   /// 朗读句高亮：与跟随翻页独立同步，跟随关闭时高亮仍可显示；暂停、
@@ -597,8 +599,6 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     if (!_routeCurrent ||
         !_appActive ||
         !_preferences.listeningFollow ||
-        // 没按过定位键就是不跟随：老逻辑只认偏好，开着重播就会自己翻页。
-        !ListeningSession.instance.followArmed ||
         _loading ||
         _changingChapter ||
         _error != null) {
@@ -779,18 +779,8 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     // 已经暂停（或者从未播过）时手势得先就位。initState 里不能 setState，
     // 直接赋值。
     _doubleTapArmed = _listenDoubleTapArmed;
-    // 迷你栏的跟随键靠这个函数决定是否可点，而它挂在 Overlay 上、不随本页
-    // 重建；initState 正处于构建阶段，同步广播会撞上 markNeedsBuild 断言，
-    // 所以推到帧后再注册。
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) {
-        ListeningSession.instance.jumpToPlaybackHandler =
-            _jumpToPlaybackPosition;
-      }
-    });
     // 跟随用 10Hz 轮询，不走 ListeningSession 的监听（那条每秒最多通知一次，
-    // 只在结构性变化时才来，而且不管翻页）。定位键每次都准，所以轮询直接调
-    // 同一个函数。
+    // 只在结构性变化时才来，而且不管翻页）。
     _followPoll = Timer.periodic(
       const Duration(milliseconds: 100),
       (_) => _followPollTick(),
@@ -955,28 +945,14 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
       ..showSnackBar(SnackBar(content: Text(message)));
   }
 
-  /// Long press on a paragraph: select it whole and open the action bar.
-  ///
-  /// Identity comes from [ReaderContentBlock.textId], which falls back to the
-  /// paragraph's ordinal when the markup carried no `idx` (the plain-text
-  /// `/api/content` path). Requiring `idx` here is what used to make a long
-  /// press do literally nothing on those chapters.
-  ///
-  /// Note: .agents/notes/implemented/feature/2026-09-18-reader-paragraph-actions.md
-  /// 迷你听书栏的「跳到播放位置」：把页面跳到正在读的那一句。
-  ///
-  /// 与跟随走同一条寻址链（对照表 → 句内插值 → 第几页），区别只是它是用户
-  /// 主动按的，所以不受「跟随开关」和「用户接管闩锁」限制。
   /// 10Hz 跟随轮询：正在听本章、且用户没在主动翻页时，把页面挪到正在读的字。
   ///
-  /// 走 [_addressToPlayback]，与迷你栏的定位键**同一段代码**。闸门只留「什么
-  /// 时候不该抢」那几条：跟随关着、工具条展开、自动翻页进行中、用户刚手动
+  /// 走 [_addressToPlayback]，与双击跳读**同一段代码**。闸门只留「什么时候
+  /// 不该抢」那几条：设置总闸关着、工具条展开、自动翻页进行中、用户刚手动
   /// 翻过页。
   void _followPollTick() {
     if (!mounted || !_routeCurrent || !_appActive) return;
-    // 跟随开关由迷你栏那个按钮管：关着就是自由翻页，什么都不做。
-    if (!ListeningSession.instance.followArmed) return;
-    // 设置里的「跟随翻页」是总闸，关掉就永不跟。
+    // 设置里的「跟随翻页」是唯一总闸，关掉就永不跟。
     if (!_preferences.listeningFollow) return;
     // 工具条展开时不翻页（用户正在操作页面），自动翻页进行时也不抢。
     if (_controlsVisible || _autoTurnTimer != null) return;
@@ -1053,14 +1029,6 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
       }
     }
     return true;
-  }
-
-  /// 迷你听书栏的「跳到播放位置」：按键不受任何闸门限制。
-  void _jumpToPlaybackPosition() {
-    // 按键本身就是「回到朗读处」，回来之后要继续跟。不清闩锁的话轮询还要
-    // 被挡最多 15 秒 —— 按钮点得动，跟随却是死的。
-    _listenFollowPausedUntil = DateTime.fromMillisecondsSinceEpoch(0);
-    _addressToPlayback();
   }
 
   /// 双击正文：把朗读跳到手指所指的那一句，可以跨章。
@@ -1572,11 +1540,6 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     VolumeKeyService.instance.setOnVolumeKey(null);
     unawaited(VolumeKeyService.instance.setEnabled(false));
     ListeningSession.instance.removeListener(_onListeningTick);
-    // 只清自己注册的：换章重建时新实例已经接管。
-    if (ListeningSession.instance.jumpToPlaybackHandler ==
-        _jumpToPlaybackPosition) {
-      ListeningSession.instance.jumpToPlaybackHandler = null;
-    }
     _replacementStore.changes.removeListener(_onReplacementChanged);
     _replacementCancellation?.cancel();
     ++_replacementGeneration;

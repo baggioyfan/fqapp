@@ -432,7 +432,6 @@ class _AudioPlaybackScopeState extends State<AudioPlaybackScope> {
                         ),
                       ),
                     ),
-                    const FollowToggle(),
                     IconButton(
                       key: const ValueKey('audio-mini-toggle'),
                       tooltip: session._wantPlay && !session._completed

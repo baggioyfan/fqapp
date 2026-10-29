@@ -80,47 +80,11 @@ class ListeningSession extends ChangeNotifier {
   /// [sentenceRange] 是两套坐标系，不能混用：那个是 TTS 文本偏移。有这个
   /// 时高亮不需要在正文里做句子匹配，直接映射到布局偏移。
 
-  /// 迷你听书栏的「跳到播放位置」：由阅读页注册，指向正在读的那一句。
-  ///
-  /// 放在会话上是因为迷你栏在 AudioPlaybackScope 里，不认识阅读页；注册方
-  /// 换页/退出时要负责清掉。
-  ///
-  /// 用 [ValueNotifier] 存而不是普通字段：迷你栏挂在 Overlay 上，只随
-  /// AudioPlaybackScope 的结构性重建刷新 —— 「先起播、再打开书」时它压根
-  /// 不重建，阅读页注册完按钮还是灰的。值没变不通知，不会每帧刷。
-  final ValueNotifier<void Function()?> _jumpToPlaybackHandler =
-      ValueNotifier<void Function()?>(null);
-
-  /// 迷你栏监听这个来知道按钮该不该可点。
-  ValueListenable<void Function()?> get jumpToPlaybackHandlerListenable =>
-      _jumpToPlaybackHandler;
-
-  void Function()? get jumpToPlaybackHandler => _jumpToPlaybackHandler.value;
-
-  set jumpToPlaybackHandler(void Function()? handler) =>
-      _jumpToPlaybackHandler.value = handler;
-
-  /// 跟随开关：按一次定位键开跟随，再按一次放开自由翻页。
-  ///
   /// 当前正在用的音色 id（智能朗读的音色、或真人讲书的 narrator id）。
   ///
   /// 阅读页「从本页播放」要沿用同一个音色重新起播 —— 之前不传，播放页只能
   /// 拿历史记录或默认音色，于是听着真人讲书点一下就换成了内置 TTS 音色。
   String? toneId;
-
-  /// 跟随开关：按定位键开、手动翻页关。
-  bool followArmed = false;
-
-  /// 改跟随开关并广播。
-  ///
-  /// 迷你栏的图标要跟着变色/变实心，但它挂在 Overlay 上、不随阅读页重建，
-  /// 只能靠这条通知刷；阅读页自己退出跟随时也必须发一次，否则按钮会一直
-  /// 显示「跟随中」。
-  void setFollowArmed(bool value) {
-    if (followArmed == value) return;
-    followArmed = value;
-    notifyListeners();
-  }
 
   void update({
     required String bookId,
