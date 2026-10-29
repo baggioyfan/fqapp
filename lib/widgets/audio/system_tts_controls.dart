@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../../pages/system_tts_settings_page.dart';
 import '../../services/system_tts.dart';
+import 'follow_toggle.dart';
 
 class SystemTtsMiniBar extends StatelessWidget {
   const SystemTtsMiniBar({
@@ -42,6 +43,9 @@ class SystemTtsMiniBar extends StatelessWidget {
               onTap: onOpen,
             ),
           ),
+          // 与真人听书迷你栏同款的跟随键：系统朗读的逐句跟随此前没有任何
+          // 入口可以开启（跟随闸收紧后一直处于关闭），这里补上。
+          const FollowToggle(),
           IconButton(
             tooltip: session.wantPlay ? '暂停朗读' : '继续朗读',
             onPressed: () => unawaited(session.toggle()),
