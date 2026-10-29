@@ -75,7 +75,6 @@ class ListenKeepAliveService : Service() {
     override fun onCreate() {
         super.onCreate()
         isRunning = true
-        liveInstance = this
         createNotificationChannel()
     }
 
@@ -86,7 +85,6 @@ class ListenKeepAliveService : Service() {
 
     override fun onDestroy() {
         isRunning = false
-        liveInstance = null
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
             stopForeground(STOP_FOREGROUND_REMOVE)
         } else {
@@ -379,8 +377,6 @@ class ListenKeepAliveService : Service() {
             override fun onStop() = NativePlayerPlugin.dispatchNotificationAction(ACTION_NAME_STOP)
         })
         session.setSessionActivity(contentIntent())
-        // 蓝牙按键路由的资格证：没有它系统经常把按键丢给别的应用或直接丢弃。
-        session.setMediaButtonReceiver(FqMediaButtonReceiver.mediaButtonPendingIntent(this))
         session.isActive = true
         mediaSession = session
         return session
@@ -412,20 +408,7 @@ class ListenKeepAliveService : Service() {
     }
 
     /**
-     * 只重设播放状态（不动元数据），把会话顶到系统的「最近活跃」栈顶。
-     * 系统朗读每换一句调一次，所以不能带元数据——那会让媒体卡片跟着重绘。
-     */
-    internal fun refreshRouting() {
-        val session = ensureMediaSession()
-        // 重绑一次按键接收者：部分 ROM 在会话释放/重建后会丢掉 MediaButtonReceiver
-        // 的绑定，绑不上就退回「系统自己挑」，按键又会被丢给别人。
-        session.setMediaButtonReceiver(FqMediaButtonReceiver.mediaButtonPendingIntent(this))
-        pushPlaybackState(session, isPlaying, positionMs, speed)
-    }
-
-    /**
-     * 只重设播放状态（不动元数据）：系统据此把会话顶到「最近活跃」栈顶，
-     * 这是蓝牙按键路由唯一的抓手。
+     * 只重设播放状态（不动元数据）：系统据此把会话顶到「最近活跃」栈顶。
      */
     private fun pushPlaybackState(
         session: MediaSessionCompat,
@@ -472,26 +455,6 @@ class ListenKeepAliveService : Service() {
         var isRunning = false
             private set
 
-        /** 活着的服务实例：系统朗读刷新媒体按键路由时要借它重设播放状态。 */
-        @Volatile
-        private var liveInstance: ListenKeepAliveService? = null
-
-        /**
-         * 把媒体会话重新顶到系统的「最近活跃」栈顶。
-         *
-         * 系统挑蓝牙按键的接收者时按「谁最近活跃」（MediaSessionStack 栈顶）排，
-         * 而只有重设播放状态才会把会话顶上去。官方听书每次播放都这么做，所以它
-         * 一直稳定；系统朗读本身不发声（声音由 TTS 引擎应用输出），服务会话的栈顶
-         * 时间会停在服务启动那一刻，按键于是被路由到别处——实测「先播一次官方
-         * 听书，系统朗读的蓝牙按键就好了」正是这个机制。这里跟着朗读进度刷新。
-         *
-         * 必须回主线程：媒体会话的 callback 与状态更新都在创建它的 Looper 上。
-         */
-        fun refreshMediaButtonRouting() {
-            val service = liveInstance ?: return
-            Handler(Looper.getMainLooper()).post { service.refreshRouting() }
-        }
-
         const val EXTRA_TITLE = "title"
         const val EXTRA_EPISODE = "episode"
         const val EXTRA_PLAYING = "playing"
@@ -520,8 +483,7 @@ class ListenKeepAliveService : Service() {
         /** 封面下载的建连 / 读超时：后台服务里不能挂住太久。 */
         private const val COVER_TIMEOUT_MS = 8_000
 
-        /** Dart 侧 `_handleRemoteAction` 认识的动作名；通知按钮、媒体会话与
-         *  [FqMediaButtonReceiver]（蓝牙按键兜底）共用一份。 */
+        /** Dart 侧 `_handleRemoteAction` 认识的动作名；通知按钮与媒体会话共用一份。 */
         const val ACTION_NAME_PLAY_PAUSE = "playPause"
         const val ACTION_NAME_PREV = "prev"
         const val ACTION_NAME_NEXT = "next"

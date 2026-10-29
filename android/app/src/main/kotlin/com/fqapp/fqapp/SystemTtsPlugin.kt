@@ -99,8 +99,6 @@ class SystemTtsPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventCha
                 sink?.success(mapOf("type" to "media", "action" to "stop"))
             }
         })
-        // 蓝牙按键路由的资格证：没有它系统经常把按键丢给别的应用或直接丢弃。
-        session.setMediaButtonReceiver(FqMediaButtonReceiver.mediaButtonPendingIntent(context))
         session.isActive = true
         mediaSession = session
         return session
@@ -122,13 +120,6 @@ class SystemTtsPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventCha
         // 两者之间摇摆——实测蓝牙时灵时不灵。让路：服务在跑就不建、已建的释放。
         if (ListenKeepAliveService.isRunning) {
             releaseMediaSession()
-            // 让路之后还有一个坑：系统挑蓝牙按键的接收者时看「谁最近活跃」
-            // （MediaSessionStack 栈顶），而只有 setPlaybackState 才会把会话
-            // 顶上去。官方听书每次播放都重设播放状态，所以它一直稳定；系统
-            // 朗读本身不发声（声音由 TTS 引擎应用输出），服务会话的栈顶时间
-            // 停在服务启动那一刻，于是按键被路由到别处。实测「先播一次官方
-            // 听书，TTS 的蓝牙就好了」正是这个机制。这里跟着朗读进度一起刷新。
-            if (playing) ListenKeepAliveService.refreshMediaButtonRouting()
             return
         }
         // 停止态且会话从未建过就不建：只在真的开始朗读后才接管按键路由。
