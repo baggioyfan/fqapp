@@ -671,8 +671,8 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
   /// instead of landing on top of the controls.
   static const _bottomBarHeight = 74.0;
 
-  /// Set while 从本段听 is waiting on a timeline fetch, so a repeated long-press
-  /// cannot stack a second listening page (and a second player) on top.
+  /// Set while 听书 is waiting on a timeline fetch, so a repeated tap cannot
+  /// stack a second listening page (and a second player) on top.
   bool _openingListening = false;
   final LinkedHashMap<String, String> _chapterCache = LinkedHashMap();
   final Map<String, Future<_LoadedChapter>> _chapterRequests = {};
@@ -1264,7 +1264,6 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
       view: view,
       safeArea: safeArea,
       underlined: underlined,
-      showListening: true,
       avoidBottom: avoidBottom,
     );
     return Positioned(
@@ -1274,7 +1273,6 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
       child: ReaderParagraphMenu(
         underlined: underlined,
         paragraphScoped: selection.isWholeParagraph,
-        showListening: true,
         isDark: preset.isDark,
         belowAnchor: below,
         onAction: (action) {
@@ -1332,11 +1330,6 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
           ),
         );
         if (mounted) _showMessage('已复制');
-      case ReaderParagraphAction.listen:
-        final block = layout.blockAtOffset(selection.start);
-        final textId = block?.textId;
-        if (block == null || textId == null) return;
-        await _openListening(fromMs: block.startMs, textId: textId);
       case ReaderParagraphAction.underline:
       case ReaderParagraphAction.removeUnderline:
         await _toggleSelectionUnderline(
@@ -2681,21 +2674,19 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     if (selected != null && mounted) await _jumpToChapter(selected);
   }
 
-  /// 听书入口：只问一件事——用哪个引擎。
+  /// 唯一的听书入口：从当前页开始，只问用哪个引擎。
   ///
-  /// 起点不归菜单管：普通进来是当前页第一段，长按段落进来是按下的那一段。
-  /// 以前菜单把「引擎」和「起点」压成三条（听书 / 从本页播放 / 系统朗读），
-  /// 于是「听书」和「从本页播放」在没带段落锚点时是同一件事，而「系统朗读」
-  /// 永远从章首开始——两条轴挤成一条线，「系统朗读从本页起读」根本没有入口。
-  /// 本地书只有系统朗读一个来源，不弹菜单。
-  Future<void> _openListening({int? fromMs, int? textId}) async {
+  /// 没有「从上次的位置」也没有「从章首」这两个起点——起点永远是当前页
+  /// 第一段。菜单原来把「引擎」和「起点」压成三条（听书 / 从本页播放 /
+  /// 系统朗读），可「听书」和「从本页播放」在没带段落锚点时其实是同一件事，
+  /// 而「系统朗读」永远从章首开口，于是「用 TTS 从本页读」根本没有入口。
+  /// Local books only have the TTS source, so they skip the menu.
+  Future<void> _openListening() async {
     if (_openingListening || _loading || _error != null) return;
     final chapterId = _chapter.itemId;
-    // 长按段落带 textId 进来：起点就认按下的那一段，startMs 也只用它自己的，
-    // 不回落页首 —— 段落和页首是两个锚点，混着用会停在谁也不认的位置。
-    final ({int? startMs, int? textId}) anchor = textId != null
-        ? (startMs: fromMs, textId: textId)
-        : _currentPageAnchor();
+    // 起点只有一个来源：当前页第一段。查不到正文段时 (null, null) 才落到
+    // 播放页自己的兜底——纯图页、空章这类边界，正常书页走不到。
+    final anchor = _currentPageAnchor();
     var system = widget.localOnly;
     if (!system) {
       // 菜单是模态的，自己就挡住重复触发；不要在这里置 _openingListening，
@@ -2711,12 +2702,14 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
             mainAxisSize: MainAxisSize.min,
             children: [
               ListTile(
+                key: const ValueKey('listen-source-audio'),
                 leading: const Icon(Icons.headphones),
                 title: const Text('听书'),
                 subtitle: const Text('作品自带的真人音频，从当前位置开始'),
                 onTap: () => Navigator.pop(context, false),
               ),
               ListTile(
+                key: const ValueKey('listen-source-tts'),
                 leading: const Icon(Icons.record_voice_over),
                 title: const Text('系统朗读'),
                 subtitle: const Text('手机已装的 TTS 引擎，从当前位置开始'),

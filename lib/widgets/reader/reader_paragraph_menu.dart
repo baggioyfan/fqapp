@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
 
 /// What the reader can do with a long-pressed paragraph.
-enum ReaderParagraphAction { copy, listen, underline, removeUnderline }
+enum ReaderParagraphAction { copy, underline, removeUnderline }
 
 /// Floating action bar for a long-pressed paragraph or a dragged selection,
 /// matching the official one.
@@ -22,9 +22,10 @@ enum ReaderParagraphAction { copy, listen, underline, removeUnderline }
 /// selection toolbar (a sibling surface, `com/dragon/read/ui/paragraph/i.java`)
 /// offers 复制 / 划线 / 查询 / 写笔记 / 错字反馈. The account- and capability-gated
 /// items need endpoints the backend does not have, so this bar shows only the
-/// actions it can actually perform: a whole-paragraph selection (long press)
-/// gets 从本段听 when enabled, plus 复制 / 划线; a dragged character range gets
-/// 复制 / 划线. Local-only reading hides the listening item.
+/// actions it can actually perform: 复制 / 划线.
+///
+/// 听书不在这里：听书只有一个起点（当前页第一段），所以入口也只有一个
+/// （阅读工具栏那个按钮），长按段落不再单独给一个「从本段听」。
 ///
 /// Note: 官方长按工具的版式与颜色取自反编译 m.java / wt.xml / wr.xml，见
 /// .agents/notes/implemented/feature/2026-09-18-reader-paragraph-actions.md
@@ -63,11 +64,9 @@ class ReaderParagraphMenu extends StatelessWidget {
   final bool underlined;
   final bool isDark;
 
-  /// True for a whole-paragraph selection (long press): the bar keeps
-  /// 从本段听. A dragged character range drops it — the official selection
-  /// toolbar has no listen item either.
+  /// True for a whole-paragraph selection (long press). Both surfaces render
+  /// the same two actions; the flag only decides the underline label.
   final bool paragraphScoped;
-  final bool showListening;
 
   /// True when the bar sits below the touched line, so its tip points up at the
   /// paragraph (`m.java` shows downArrow instead once the popup flips above).
@@ -84,18 +83,13 @@ class ReaderParagraphMenu extends StatelessWidget {
     this.underlined = false,
     this.isDark = false,
     this.paragraphScoped = true,
-    this.showListening = true,
     this.belowAnchor = true,
   });
 
   Color get _background => isDark ? _barColorDark : _barColor;
 
   /// Number of items the bar will render; the caller sizes the anchor with it.
-  static int itemCount({
-    required bool underlined,
-    required bool paragraphScoped,
-    bool showListening = true,
-  }) => paragraphScoped ? (showListening ? 3 : 2) : 2;
+  static const int itemCount = 2;
 
   /// Clamped top-left for the bar anchored at [anchor] (window coordinates),
   /// plus which side of the anchor it ended up on — the geometry
@@ -117,15 +111,10 @@ class ReaderParagraphMenu extends StatelessWidget {
     required Size view,
     required EdgeInsets safeArea,
     required bool underlined,
-    bool showListening = true,
     double avoidBottom = 0,
   }) {
     const flipClearance = 10.0;
-    final count = itemCount(
-      underlined: underlined,
-      paragraphScoped: paragraphScoped,
-      showListening: showListening,
-    );
+    final count = itemCount;
     final barWidth = count * _itemWidth + _multiPadding * 2;
     // Only the tip facing the paragraph is laid out, exactly like `m.java`:
     // it calls `UIKt.gone` on the other arrow, which takes no space. Total
@@ -182,13 +171,6 @@ class ReaderParagraphMenu extends StatelessWidget {
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              if (paragraphScoped && showListening)
-                _Item(
-                  key: const ValueKey('reader-action-listen'),
-                  icon: LucideIcons.headphones,
-                  label: '从本段听',
-                  onTap: () => onAction(ReaderParagraphAction.listen),
-                ),
               _Item(
                 key: const ValueKey('reader-action-copy'),
                 icon: LucideIcons.copy,
