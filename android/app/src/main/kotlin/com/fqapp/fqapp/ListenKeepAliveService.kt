@@ -74,6 +74,7 @@ class ListenKeepAliveService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        isRunning = true
         createNotificationChannel()
     }
 
@@ -83,6 +84,7 @@ class ListenKeepAliveService : Service() {
     }
 
     override fun onDestroy() {
+        isRunning = false
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
             stopForeground(STOP_FOREGROUND_REMOVE)
         } else {
@@ -430,6 +432,11 @@ class ListenKeepAliveService : Service() {
     companion object {
         const val CHANNEL_ID = "listen_playback"
         const val NOTIFICATION_ID = 47
+
+        /** 系统朗读的裸会话（SystemTtsPlugin）借这条判断让路：保活服务在跑时它不得再激活第二个会话。 */
+        @Volatile
+        var isRunning = false
+            private set
 
         const val EXTRA_TITLE = "title"
         const val EXTRA_EPISODE = "episode"

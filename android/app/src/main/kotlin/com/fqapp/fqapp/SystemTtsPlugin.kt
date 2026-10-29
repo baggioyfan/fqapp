@@ -105,6 +105,18 @@ class SystemTtsPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventCha
     }
 
     private fun syncMediaState(playing: Boolean) {
+        // 保活服务（ListenKeepAliveService，系统朗读在「后台听书与保活」开启时
+        // 会借它挂通知）自带一个活跃媒体会话，通知按钮与蓝牙按键都由它承接。
+        // 此时若再激活本插件的裸会话，系统就有两个活跃会话可选，按键路由在
+        // 两者之间摇摆——实测蓝牙时灵时不灵。让路：服务在跑就不建、已建的释放。
+        if (ListenKeepAliveService.isRunning) {
+            mediaSession?.let {
+                it.isActive = false
+                it.release()
+            }
+            mediaSession = null
+            return
+        }
         // 停止态且会话从未建过就不建：只在真的开始朗读后才接管按键路由。
         if (!playing && mediaSession == null) return
         val session = ensureMediaSession()
