@@ -162,29 +162,28 @@ class _AudioPlaybackScopeState extends State<AudioPlaybackScope> {
       if (current != null &&
           !current._closed &&
           current._bookId == request.bookId) {
-          if ((!request.resumeSession || request.startPosition != null) &&
-              request.chapters.isNotEmpty) {
-            final chapter =
-                request.chapters[request.startIndex.clamp(
-                  0,
-                  request.chapters.length - 1,
-                )];
-            final index = current._chapters.indexWhere(
-              (c) => c.itemId == chapter.itemId,
+        if ((!request.resumeSession || request.startPosition != null) &&
+            request.chapters.isNotEmpty) {
+          final chapter =
+              request.chapters[request.startIndex.clamp(
+                0,
+                request.chapters.length - 1,
+              )];
+          final index = current._chapters.indexWhere(
+            (c) => c.itemId == chapter.itemId,
+          );
+          if (index >= 0) {
+            unawaited(
+              current._openChapter(
+                index,
+                position: request.startPosition,
+                toneId: request.initialToneId,
+                restoreHistory: true,
+                autoplay: request.autoplay,
+              ),
             );
-            if (index >= 0) {
-              unawaited(
-                current._openChapter(
-                  index,
-                  position: request.startPosition,
-                  paragraph: request.startParagraph,
-                  toneId: request.initialToneId,
-                  restoreHistory: true,
-                  autoplay: request.autoplay,
-                ),
-              );
-              return current;
-            }
+            return current;
+          }
           // A refreshed directory can remove an old chapter. Start the exact
           // requested directory instead of silently retaining another chapter.
         } else {

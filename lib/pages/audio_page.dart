@@ -19,7 +19,6 @@ import '../services/audio_page_theme.dart';
 import '../services/audio_play_error.dart';
 import '../services/audio_playback_choice.dart';
 import '../services/audio_subtitle_synth.dart';
-import '../services/audio_time_point_lookup.dart';
 import '../services/audio_preferences.dart';
 import '../services/chapter_cache_store.dart';
 import '../services/fair_memory.dart';
@@ -69,14 +68,6 @@ class AudioPage extends StatefulWidget {
   final double? initialRate;
   final bool autoplay;
 
-  /// Paragraph anchor for chapters whose body carries no `<span start_time>`
-  /// (plain-text 智能朗读 chapters): the reader cannot compute milliseconds,
-  /// so it hands over the paragraph and the player resolves the spoken start
-  /// from the chapter's own `/timepoints` timeline. Null when [startPosition]
-  /// already carries a real offset. A failed lookup starts at the chapter
-  /// opening — never at saved history, matching the [startPosition] contract.
-  final ({int? paraIndex, int ordinal})? startParagraph;
-
   /// Reopening the current work keeps its live session. A chapter/paragraph
   /// request can opt out to seek deliberately instead.
   final bool resumeSession;
@@ -116,7 +107,6 @@ class AudioPage extends StatefulWidget {
     required this.chapters,
     this.startIndex = 0,
     this.startPosition,
-    this.startParagraph,
     this.initialToneId,
     this.initialRate,
     this.autoplay = true,
