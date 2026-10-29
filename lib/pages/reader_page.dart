@@ -2762,6 +2762,10 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
         if (!mounted || choice == null || chapterId != _chapter.itemId) return;
         if (choice == 1) {
           final anchor = _currentPageAnchor();
+          // 先放行再转手：_openUpstreamListening 的防叠页闸与这里是同一把
+          // _openingListening，不先清它会把这次调用静默拒掉（上游同款
+          // bug：点「从本页播放」菜单收起后什么都不发生）。
+          _openingListening = false;
           await _openUpstreamListening(
             fromMs: anchor.startMs ?? fromMs,
             textId: anchor.textId ?? textId,
