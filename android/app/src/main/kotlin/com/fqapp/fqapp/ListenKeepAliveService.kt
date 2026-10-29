@@ -75,6 +75,7 @@ class ListenKeepAliveService : Service() {
     override fun onCreate() {
         super.onCreate()
         isRunning = true
+        liveInstance = this
         createNotificationChannel()
     }
 
@@ -85,6 +86,7 @@ class ListenKeepAliveService : Service() {
 
     override fun onDestroy() {
         isRunning = false
+        liveInstance = null
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
             stopForeground(STOP_FOREGROUND_REMOVE)
         } else {
@@ -117,6 +119,11 @@ class ListenKeepAliveService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // 服务已就位（或被通知按钮唤起）：插件里若已经建过裸会话，必须让路。
+        // Dart 侧 speak 可能先于 startForeground 落到插件，那一刻 isRunning 还是
+        // false，裸会话就建起来了——这里反向补一次，否则系统里长期并存两个活跃
+        // 会话，蓝牙按键在两者之间摇摆。
+        SystemTtsPlugin.dropBareMediaSession()
         val action = intent?.action
         if (action != null) {
             when (action) {
@@ -401,6 +408,31 @@ class ListenKeepAliveService : Service() {
             metadata.putBitmap(MediaMetadataCompat.METADATA_KEY_ALBUM_ART, it)
         }
         session.setMetadata(metadata.build())
+        pushPlaybackState(session, playing, positionMs, speed)
+    }
+
+    /**
+     * 只重设播放状态（不动元数据），把会话顶到系统的「最近活跃」栈顶。
+     * 系统朗读每换一句调一次，所以不能带元数据——那会让媒体卡片跟着重绘。
+     */
+    internal fun refreshRouting() {
+        val session = ensureMediaSession()
+        // 重绑一次按键接收者：部分 ROM 在会话释放/重建后会丢掉 MediaButtonReceiver
+        // 的绑定，绑不上就退回「系统自己挑」，按键又会被丢给别人。
+        session.setMediaButtonReceiver(FqMediaButtonReceiver.mediaButtonPendingIntent(this))
+        pushPlaybackState(session, isPlaying, positionMs, speed)
+    }
+
+    /**
+     * 只重设播放状态（不动元数据）：系统据此把会话顶到「最近活跃」栈顶，
+     * 这是蓝牙按键路由唯一的抓手。
+     */
+    private fun pushPlaybackState(
+        session: MediaSessionCompat,
+        playing: Boolean,
+        positionMs: Long,
+        speed: Float
+    ) {
         // NOTE: ACTION_SEEK_TO is deliberately NOT advertised. The session
         // previously claimed it without an onSeekTo override, so the system
         // media card offered a seek bar whose drags went nowhere. Real seek
@@ -439,6 +471,26 @@ class ListenKeepAliveService : Service() {
         @Volatile
         var isRunning = false
             private set
+
+        /** 活着的服务实例：系统朗读刷新媒体按键路由时要借它重设播放状态。 */
+        @Volatile
+        private var liveInstance: ListenKeepAliveService? = null
+
+        /**
+         * 把媒体会话重新顶到系统的「最近活跃」栈顶。
+         *
+         * 系统挑蓝牙按键的接收者时按「谁最近活跃」（MediaSessionStack 栈顶）排，
+         * 而只有重设播放状态才会把会话顶上去。官方听书每次播放都这么做，所以它
+         * 一直稳定；系统朗读本身不发声（声音由 TTS 引擎应用输出），服务会话的栈顶
+         * 时间会停在服务启动那一刻，按键于是被路由到别处——实测「先播一次官方
+         * 听书，系统朗读的蓝牙按键就好了」正是这个机制。这里跟着朗读进度刷新。
+         *
+         * 必须回主线程：媒体会话的 callback 与状态更新都在创建它的 Looper 上。
+         */
+        fun refreshMediaButtonRouting() {
+            val service = liveInstance ?: return
+            Handler(Looper.getMainLooper()).post { service.refreshRouting() }
+        }
 
         const val EXTRA_TITLE = "title"
         const val EXTRA_EPISODE = "episode"

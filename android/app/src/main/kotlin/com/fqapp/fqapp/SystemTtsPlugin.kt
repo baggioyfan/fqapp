@@ -106,17 +106,29 @@ class SystemTtsPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventCha
         return session
     }
 
+    /** 释放本插件的裸媒体会话（让路给保活服务，或引擎关闭时清理）。 */
+    private fun releaseMediaSession() {
+        mediaSession?.let {
+            it.isActive = false
+            it.release()
+        }
+        mediaSession = null
+    }
+
     private fun syncMediaState(playing: Boolean) {
         // 保活服务（ListenKeepAliveService，系统朗读在「后台听书与保活」开启时
         // 会借它挂通知）自带一个活跃媒体会话，通知按钮与蓝牙按键都由它承接。
         // 此时若再激活本插件的裸会话，系统就有两个活跃会话可选，按键路由在
         // 两者之间摇摆——实测蓝牙时灵时不灵。让路：服务在跑就不建、已建的释放。
         if (ListenKeepAliveService.isRunning) {
-            mediaSession?.let {
-                it.isActive = false
-                it.release()
-            }
-            mediaSession = null
+            releaseMediaSession()
+            // 让路之后还有一个坑：系统挑蓝牙按键的接收者时看「谁最近活跃」
+            // （MediaSessionStack 栈顶），而只有 setPlaybackState 才会把会话
+            // 顶上去。官方听书每次播放都重设播放状态，所以它一直稳定；系统
+            // 朗读本身不发声（声音由 TTS 引擎应用输出），服务会话的栈顶时间
+            // 停在服务启动那一刻，于是按键被路由到别处。实测「先播一次官方
+            // 听书，TTS 的蓝牙就好了」正是这个机制。这里跟着朗读进度一起刷新。
+            if (playing) ListenKeepAliveService.refreshMediaButtonRouting()
             return
         }
         // 停止态且会话从未建过就不建：只在真的开始朗读后才接管按键路由。
@@ -141,6 +153,7 @@ class SystemTtsPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventCha
 
     override fun onAttachedToEngine(binding: FlutterPlugin.FlutterPluginBinding) {
         context = binding.applicationContext
+        live = this
         methods = MethodChannel(binding.binaryMessenger, "fqapp/system_tts")
         events = EventChannel(binding.binaryMessenger, "fqapp/system_tts_events")
         methods.setMethodCallHandler(this)
@@ -350,11 +363,7 @@ class SystemTtsPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventCha
         reply?.error("cancelled", "已取消启动朗读", null)
         stop()
         focusTransient = false
-        mediaSession?.let {
-            it.isActive = false
-            it.release()
-        }
-        mediaSession = null
+        releaseMediaSession()
         ready = false
         try { tts?.shutdown() } catch (_: Exception) { }
         tts = null
@@ -364,7 +373,26 @@ class SystemTtsPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventCha
         shutdown()
         context.unregisterReceiver(noisyReceiver)
         sink = null
+        live = null
         methods.setMethodCallHandler(null)
         events.setStreamHandler(null)
+    }
+
+    companion object {
+        @Volatile private var live: SystemTtsPlugin? = null
+        private val dispatcher = Handler(Looper.getMainLooper())
+
+        /**
+         * 保活服务就位时回调：插件里若已经建过裸会话，立刻释放。
+         *
+         * 时序坑：Dart 侧 speak 先于 startListenForeground 落到插件，
+         * [syncMediaState] 执行那一刻 ListenKeepAliveService.isRunning 还是
+         * false，裸会话就建起来了；服务随后启动，再没有人通知它让路，系统里
+         * 长期并存两个活跃会话，蓝牙按键在两者之间摇摆。由服务反向回调这里，
+         * 「服务在跑时插件必让路」才算闭环。
+         */
+        fun dropBareMediaSession() {
+            dispatcher.post { live?.releaseMediaSession() }
+        }
     }
 }
