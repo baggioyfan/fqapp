@@ -11,7 +11,6 @@ import 'package:fqapp/services/native_player.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'support/controlled_player.dart';
-import 'support/fakes.dart';
 
 void main() {
   setUp(() {
