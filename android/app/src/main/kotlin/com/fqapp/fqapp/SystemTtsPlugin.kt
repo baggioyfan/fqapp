@@ -79,10 +79,23 @@ class SystemTtsPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventCha
     private fun transientPause() {
         focusTransient = true
         val id = activeId
+        pauseKeepingFocus()
+        sink?.success(mapOf("type" to "interrupted", "id" to id))
+    }
+
+    /**
+     * 只停引擎、**保留音频焦点**：暂停不是会话终止。走 [stop] 会 abandon
+     * 焦点并让焦点回调的代际失效，电话挂断后系统再也不会发 GAIN，自动续播
+     * 就永远等不到；用户手动暂停后点继续也不必重新申请焦点。
+     * 只有真正结束会话（[shutdown]、切章前的 [stop]）才弃焦点。
+     */
+    private fun pauseKeepingFocus() {
+        // 暂停后再出声就是「重新开始出声」的时刻，脉冲要重新打一次：
+        // 停下来这段时间里，「末次出声者」很可能已被别人抢走。
+        pulseArmed = true
         activeId = null
         liveIds.clear()
         try { tts?.stop() } catch (_: Exception) { }
-        sink?.success(mapOf("type" to "interrupted", "id" to id))
     }
 
     override fun onAttachedToEngine(binding: FlutterPlugin.FlutterPluginBinding) {
@@ -145,6 +158,8 @@ class SystemTtsPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventCha
                     }
                 }
                 "stop" -> { stop(); result.success(null) }
+                // 暂停：停引擎但保住焦点，等 focus_resume 或用户点继续。
+                "pause" -> { pauseKeepingFocus(); result.success(null) }
                 "shutdown" -> { shutdown(); result.success(null) }
                 "settings" -> {
                     try {
@@ -302,7 +317,9 @@ class SystemTtsPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventCha
                         if (epoch != focusEpoch || !focusTransient) return@post
                         focusTransient = false
                         // 电话抢走「末次出声者」之后，这里是明确的夺回时刻：
-                        // 先出声一瞬重建资格，再让 Dart 续播。
+                        // 先出声一瞬重建资格，再让 Dart 续播。紧随其后的
+                        // 首次 speak 不必再打一次（见 pulseArmed）。
+                        pulseArmed = false
                         playIdentityPulse()
                         sink?.success(mapOf("type" to "focus_resume"))
                     }
