@@ -95,7 +95,7 @@
     "test/reader_illustrations_test.dart": 1046,
     "test/reader_page_test.dart": 741,
     "test/reader_pagination_test.dart": 597,
-    "test/reader_paragraph_actions_test.dart": 1015,
+    "test/reader_paragraph_actions_test.dart": 1061,
     "test/search_page_test.dart": 865,
     "test/series_detail_page_test.dart": 865,
     "test/video_player_chrome_test.dart": 2142,
