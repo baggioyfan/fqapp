@@ -109,9 +109,14 @@ void main() {
     final layout = _pager(tester).layout;
     // 真实字幕常常不是从 0 开始（官方 `[3025, 0]`）：位置 0 查不到句。
     final track = _lateStartTrack();
-    // 1. 先让页面记下一个「残留高亮」：位置在最后一句，但播放是暂停的，
-    //    跟随轮询不抢页面，所以人还停在第 0 页。
-    _seed(positionMs: 21000, track: track, cue: '最后一段很短。', playing: false);
+    // 手动翻一页再翻回来：闩锁亮着才能「点亮高亮但不跟着翻页」——跟随现在
+    // 默认就开，没有别的办法让页面停在原处。
+    await _tapSide(tester, 1);
+    await _tapSide(tester, -1);
+    expect(_pager(tester).pageIndex, 0);
+
+    // 1. 先让页面记下一个「残留高亮」：位置在最后一句，但闩锁挡着不让页面跟。
+    _seed(positionMs: 21000, track: track, cue: '最后一段很短。');
     await tester.pump();
     final held = _pager(tester).narrationRange;
     expect(held, isNotNull, reason: '这一拍应已点亮最后一句');
@@ -199,14 +204,11 @@ void main() {
   testWidgets('被闩锁挡住的跟随换章不再每 100ms 存一次进度', (tester) async {
     final store = ControlledReaderStore();
     await _mount(tester, store: store);
-    // 播放器已经读完第 1 章进到第 2 章，人还停在第 1 章里。
+    // 先手动翻页制造闩锁（15 秒内不跟随），再把会话摆到第 2 章。反过来做的
+    // 话，会话一通知页面就先被带过去了，验不出闩锁挡不挡得住换章。
+    await _tapSide(tester, 1);
     _seed(positionMs: 5000, chapterId: 'c2', track: _track(), cue: '长句');
-    // 手动翻页制造闩锁（15 秒内不跟随）。
-    final rect = tester.getRect(_surface);
-    await tester.tapAt(Offset(rect.left + rect.width * .9, rect.center.dy));
-    // 挂上双击识别器后，单击要等双击超时才生效，pumpAndSettle 不推进时间。
-    await tester.pump(const Duration(milliseconds: 400));
-    await tester.pumpAndSettle();
+    await tester.pump(const Duration(milliseconds: 250));
     expect(_lastBlock(tester), _lastParagraph, reason: '闩锁期间仍留在第 1 章');
 
     // 闩锁与「跟随开着」同时成立：比的纯是轮询里两条分支的先后（闩锁在换章
@@ -348,6 +350,18 @@ Future<void> _mount(WidgetTester tester, {ReaderStore? store}) async {
   await tester.binding.setSurfaceSize(const Size(320, 480));
   addTearDown(() => tester.binding.setSurfaceSize(null));
   await tester.pumpWidget(_app(store: store));
+  await tester.pumpAndSettle();
+}
+
+/// 点左右两侧翻页。跟随现在默认开着，手动翻页是唯一能「让页面停在原处」
+/// 的开关（它会给 [_listenFollowPausedUntil] 打 15 秒闩锁）。
+Future<void> _tapSide(WidgetTester tester, int direction) async {
+  final rect = tester.getRect(_surface);
+  await tester.tapAt(
+    Offset(rect.left + rect.width * (direction > 0 ? .9 : .1), rect.center.dy),
+  );
+  // 挂上双击识别器后，单击要等双击超时才生效。
+  await tester.pump(const Duration(milliseconds: 400));
   await tester.pumpAndSettle();
 }
 
