@@ -2857,18 +2857,35 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
       await _persistProgress();
       if (!mounted) return;
       var startMs = fromMs;
-      if (startMs == null &&
-          paragraphAnchored &&
-          !_chapterContent.timelineChecked) {
-        _showMessage('正在获取本段音频…');
-        await _refreshCachedChapter(
-          chapter,
-        ).timeout(const Duration(seconds: 12), onTimeout: () {});
-        // The user may have turned the page while the timeline was in flight.
-        // Serving another chapter's paragraph position would start playback at
-        // a place nobody asked for.
-        if (!mounted || _chapter.itemId != chapter.itemId) return;
-        startMs = _paragraphStartMs(textId);
+      if (startMs == null && paragraphAnchored) {
+        if (!_chapterContent.timelineChecked) {
+          _showMessage('正在获取本段音频…');
+          await _refreshCachedChapter(
+            chapter,
+          ).timeout(const Duration(seconds: 12), onTimeout: () {});
+          // The user may have turned the page while the timeline was in flight.
+          // Serving another chapter's paragraph position would start playback at
+          // a place nobody asked for.
+          if (!mounted || _chapter.itemId != chapter.itemId) return;
+        }
+        final anchor = _paragraphAnchor(textId);
+        startMs = anchor.startMs;
+        // 章节内容不带 `<span start_time>` 时（源站并不是每本书都嵌），退一步
+        // 问 `/timepoints` —— 听书高亮用的那条「音频毫秒 ↔ 段落」映射，同一份
+        // 正文章节 id 直接可查。这条也没有的书仍是空，落到章首兜底。
+        if (startMs == null && anchor.paraIndex != null) {
+          final track = await ApiClient.instance.chapterTimePoints(
+            widget.bookId,
+            chapter.itemId,
+            toneId: _listeningToneId() ?? '0',
+          );
+          for (final point in track.points) {
+            if (point.isBody && point.startPara == anchor.paraIndex) {
+              startMs = point.startTime;
+              break;
+            }
+          }
+        }
       }
       if (!mounted) return;
       setState(() => _controlsVisible = false);
@@ -2925,8 +2942,8 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     return (startMs: null, textId: null);
   }
 
-  /// The spoken start of the paragraph identified by [textId], when the chapter
-  /// carries a timeline.
+  /// The spoken start of the paragraph identified by [textId], plus its
+  /// upstream `<p idx>` id for the `/timepoints` fallback.
   ///
   /// [textId] is [ReaderContentBlock.textId]: the upstream `idx` when present,
   /// otherwise the paragraph's ordinal. The ordinal fallback is resolved
@@ -2935,7 +2952,11 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
   /// counted — so a chapter without ids still maps. Walking the raw block
   /// list instead desynced from the layout by one (title) plus however many
   /// images precede a paragraph, and 从本段听 landed on the previous paragraph.
-  int? _paragraphStartMs(int textId) {
+  ///
+  /// [startMs] comes from the chapter's own timeline (`<span start_time>`),
+  /// the same source 从本段听 uses. [paraIndex] feeds the timepoints lookup
+  /// when the chapter content carries no spans of its own.
+  ({int? startMs, int? paraIndex}) _paragraphAnchor(int textId) {
     final body = _chapterContent.withoutLeadingTitle(_chapter.title);
     // Block 0 is the layout's synthetic title, so the first body element sits
     // at layout index 1 and its fallback id is -(1 + 0) — the same maths
@@ -2948,12 +2969,12 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
               blockIndex: layoutIndex - 1,
             ) ==
             textId) {
-          return element.startMs;
+          return (startMs: element.startMs, paraIndex: element.paraIndex);
         }
       }
       layoutIndex++;
     }
-    return null;
+    return (startMs: null, paraIndex: null);
   }
 
   Future<void> _showCache() {
