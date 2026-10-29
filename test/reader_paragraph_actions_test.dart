@@ -9,6 +9,7 @@ import 'package:fqapp/services/text_replacement_store.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:fqapp/models/media_item.dart';
+import 'package:fqapp/models/audio_time_track.dart';
 import 'package:fqapp/pages/audio_page.dart';
 import 'package:fqapp/pages/reader_page.dart';
 import 'package:fqapp/services/chapter_text_formatter.dart';
@@ -108,6 +109,7 @@ Widget _app(
   String? html,
   bool localOnly = false,
   TextReplacementStore? replacementStore,
+  TimePointLoader? timePointLoader,
 }) => MaterialApp(
   home: ReaderPage(
     bookId: 'reader-test',
@@ -121,6 +123,7 @@ Widget _app(
         parseChapterContent(html ?? _html).toCacheText(),
     underlineStore: store,
     replacementStore: replacementStore,
+    timePointLoader: timePointLoader,
   ),
 );
 
@@ -693,9 +696,20 @@ void main() {
   testWidgets('a paragraph without a timeline starts at the chapter opening', (
     tester,
   ) async {
+    final timepointRequests = <String>[];
     await tester.binding.setSurfaceSize(const Size(400, 800));
     addTearDown(() => tester.binding.setSurfaceSize(null));
-    await tester.pumpWidget(_app(_MemoryUnderlines()));
+    await tester.pumpWidget(
+      _app(
+        _MemoryUnderlines(),
+        // No usable mapping: the request is made and an empty answer keeps the
+        // chapter-opening fallback.
+        timePointLoader: (itemId, toneId) {
+          timepointRequests.add('$itemId|$toneId');
+          return Future.value(AudioTimeTrack.empty);
+        },
+      ),
+    );
     await tester.pumpAndSettle();
 
     // Paragraph 0 has no `<span start_time>`. This is still a paragraph-anchored
@@ -709,6 +723,43 @@ void main() {
     await tester.pumpAndSettle();
     final audio = tester.widget<AudioPage>(find.byType(AudioPage));
     expect(audio.startPosition, Duration.zero);
+    // The /timepoints fallback was consulted for this chapter with the default
+    // tone before falling back.
+    expect(timepointRequests, ['c1|0']);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('a paragraph without a chapter span takes its start from the timepoints mapping', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(400, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(
+      _app(
+        _MemoryUnderlines(),
+        timePointLoader: (itemId, toneId) async => AudioTimeTrack([
+          const AudioSyncPoint(
+            startTime: 6800,
+            startPara: 0,
+            startParaOff: 0,
+            endPara: 0,
+            endParaOff: 6,
+          ),
+        ]),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // Paragraph 0 has no `<span start_time>` of its own; the mapping's first
+    // body point for its upstream id supplies the spoken start instead.
+    await _longPressParagraph(tester, 0);
+    await tester.tap(find.byKey(const ValueKey('reader-action-listen')));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('听书'));
+    await tester.pumpAndSettle();
+    final audio = tester.widget<AudioPage>(find.byType(AudioPage));
+    expect(audio.startPosition, const Duration(milliseconds: 6800));
     expect(tester.takeException(), isNull);
   });
 

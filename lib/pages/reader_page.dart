@@ -104,6 +104,11 @@ class ReaderPage extends StatefulWidget {
   /// 保留作者/徽标等字段；其他入口省略，按 [bookId]/[title]/[cover] 兜底成小说。
   final MediaItem? shelfItem;
 
+  /// 从本段听/从本页播放的「音频毫秒 ↔ 段落」映射加载器（章节内容没有
+  /// `<span start_time>` 时的兜底）。省略时走 ApiClient 的 `/timepoints`；
+  /// 测试注入假数据以避免碰网络。
+  final TimePointLoader? timePointLoader;
+
   const ReaderPage({
     super.key,
     required this.bookId,
@@ -120,6 +125,7 @@ class ReaderPage extends StatefulWidget {
     this.ideasLoader,
     this.commentResolver,
     this.shelfItem,
+    this.timePointLoader,
     this.underlineStore,
     this.replacementStore,
     this.replacementEngine,
@@ -2874,17 +2880,23 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
         // 问 `/timepoints` —— 听书高亮用的那条「音频毫秒 ↔ 段落」映射，同一份
         // 正文章节 id 直接可查。这条也没有的书仍是空，落到章首兜底。
         if (startMs == null && anchor.paraIndex != null) {
-          final track = await ApiClient.instance.chapterTimePoints(
-            widget.bookId,
-            chapter.itemId,
-            toneId: _listeningToneId() ?? '0',
-          );
-          for (final point in track.points) {
-            if (point.isBody && point.startPara == anchor.paraIndex) {
-              startMs = point.startTime;
-              break;
+          // 任何失败（没有映射的书、网络不通）都保持章首兜底不变。
+          try {
+            final toneId = _listeningToneId() ?? '0';
+            final track =
+                await (widget.timePointLoader?.call(chapter.itemId, toneId) ??
+                    ApiClient.instance.chapterTimePoints(
+                      widget.bookId,
+                      chapter.itemId,
+                      toneId: toneId,
+                    ));
+            for (final point in track.points) {
+              if (point.isBody && point.startPara == anchor.paraIndex) {
+                startMs = point.startTime;
+                break;
+              }
             }
-          }
+          } catch (_) {}
         }
       }
       if (!mounted) return;
