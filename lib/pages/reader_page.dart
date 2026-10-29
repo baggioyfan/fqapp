@@ -2681,17 +2681,26 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     if (selected != null && mounted) await _jumpToChapter(selected);
   }
 
-  /// Local books use system TTS; online books offer both available sources.
+  /// 听书入口：只问一件事——用哪个引擎。
+  ///
+  /// 起点不归菜单管：普通进来是当前页第一段，长按段落进来是按下的那一段。
+  /// 以前菜单把「引擎」和「起点」压成三条（听书 / 从本页播放 / 系统朗读），
+  /// 于是「听书」和「从本页播放」在没带段落锚点时是同一件事，而「系统朗读」
+  /// 永远从章首开始——两条轴挤成一条线，「系统朗读从本页起读」根本没有入口。
+  /// 本地书只有系统朗读一个来源，不弹菜单。
   Future<void> _openListening({int? fromMs, int? textId}) async {
     if (_openingListening || _loading || _error != null) return;
     final chapterId = _chapter.itemId;
+    // 长按段落带 textId 进来：起点就认按下的那一段，startMs 也只用它自己的，
+    // 不回落页首 —— 段落和页首是两个锚点，混着用会停在谁也不认的位置。
+    final ({int? startMs, int? textId}) anchor = textId != null
+        ? (startMs: fromMs, textId: textId)
+        : _currentPageAnchor();
     var system = widget.localOnly;
     if (!system) {
-      // 菜单是模态的，自己就挡住重复触发；此前在这里置 _openingListening
-      // 反而把「从本页播放」挡死了——它要转手调 _openUpstreamListening，
-      // 而那里第一行也是同一个闸，于是点了没有任何反应。
-      // 0 = 从头/续播，1 = 从本页播放，2 = 系统朗读。
-      final choice = await showModalBottomSheet<int>(
+      // 菜单是模态的，自己就挡住重复触发；不要在这里置 _openingListening，
+      // 它和 _openUpstreamListening 首行是同一个闸，会把自己挡死。
+      final choice = await showModalBottomSheet<bool>(
         context: context,
         useSafeArea: true,
         showDragHandle: true,
@@ -2704,48 +2713,27 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
               ListTile(
                 leading: const Icon(Icons.headphones),
                 title: const Text('听书'),
-                subtitle: const Text('使用作品自带音频与音色'),
-                onTap: () => Navigator.pop(context, 0),
-              ),
-              ListTile(
-                leading: const Icon(Icons.my_location),
-                title: const Text('从本页播放'),
-                subtitle: const Text('从当前页第一段开始听'),
-                onTap: () => Navigator.pop(context, 1),
+                subtitle: const Text('作品自带的真人音频，从当前位置开始'),
+                onTap: () => Navigator.pop(context, false),
               ),
               ListTile(
                 leading: const Icon(Icons.record_voice_over),
                 title: const Text('系统朗读'),
-                subtitle: const Text('使用手机已安装的 TTS 引擎'),
-                onTap: () => Navigator.pop(context, 2),
+                subtitle: const Text('手机已装的 TTS 引擎，从当前位置开始'),
+                onTap: () => Navigator.pop(context, true),
               ),
             ],
           ),
         ),
       );
       if (!mounted || choice == null || chapterId != _chapter.itemId) return;
-      if (choice == 1) {
-        final anchor = _currentPageAnchor();
-        await _openUpstreamListening(
-          fromMs: anchor.startMs ?? fromMs,
-          textId: anchor.textId ?? textId,
-        );
-        return;
-      }
-      // 「听书」也是「从当前位置继续」：同一个锚点，区别只在回落。长按段落
-      // 进来时（textId 非空）按下的那一段更准，别拿页首顶掉它。
-      if (choice == 0 && textId == null) {
-        final anchor = _currentPageAnchor();
-        await _openUpstreamListening(
-          fromMs: anchor.startMs,
-          textId: anchor.textId,
-        );
-        return;
-      }
-      system = choice == 2;
+      system = choice;
     }
     if (!system) {
-      await _openUpstreamListening(fromMs: fromMs, textId: textId);
+      await _openUpstreamListening(
+        fromMs: anchor.startMs,
+        textId: anchor.textId,
+      );
       return;
     }
     _openingListening = true;
@@ -2760,15 +2748,18 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
       }
       final content = _chapterContent;
       final chapter = _chapter;
+      // TTS 的坐标是「正文字符偏移」：把锚点段落换算成朗读文本里的起点，
+      // 菜单进来（页首段）和长按进来（按住那段）走的是同一段换算。
+      final ttsTextId = anchor.textId;
       var offset = 0;
-      if (textId != null) {
+      if (ttsTextId != null) {
         final body = replacement.bodyBlocks(chapter.title);
         var found = false;
         for (var i = 0; i < body.length; i++) {
           final block = body[i];
           if (block is! ChapterParagraph) continue;
           if (paragraphUnderlineId(paraIndex: block.paraIndex, blockIndex: i) ==
-              textId) {
+              ttsTextId) {
             found = true;
             break;
           }
@@ -2858,7 +2849,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
             startIndex: chapterIndex,
             resumeSession: false,
             // 沿用正在听的那个音色：不传的话播放页只能挑默认音色，
-            // 「从本页播放」就会把真人讲书换成内置 TTS。
+            // 「听书」入口就会把真人讲书换成内置 TTS。
             initialToneId: _listeningToneId(),
             // A paragraph-anchored request always carries an explicit start:
             // Duration.zero means "this paragraph has no audio, begin at the
@@ -2893,10 +2884,12 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     return (tone == null || tone.isEmpty) ? null : tone;
   }
 
-  /// 「从本页播放」的锚点：当前页第一个正文段落的段落 ID 与它的起播时间。
+  /// 听书的起点锚点：当前页第一个正文段落的段落 ID 与它的起播时间。
   ///
+  /// 「听书」和「系统朗读」都用它当起点——菜单只决定引擎，不决定从哪读。
   /// 时间取 [ReaderContentBlock.startMs]（章节自带的 `<span start_time>`），
-  /// 与「从本段听」同源。没有时间轴的章返回 startMs 为 null，调用方退回续播。
+  /// 与「从本段听」同源。没有时间轴的章返回 startMs 为 null，官方听书会拿
+  /// [textId] 去 `/timepoints` 查，TTS 直接按字符偏移起读。
   ({int? startMs, int? textId}) _currentPageAnchor() {
     final layout = _chapterLayout;
     if (layout == null || layout.pages.isEmpty) {
