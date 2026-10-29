@@ -47,11 +47,13 @@ class SystemTtsPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventCha
     private var focusRequest: AudioFocusRequest? = null
     private var focusListener: AudioManager.OnAudioFocusChangeListener? = null
     private var focusEpoch = 0
-    // 电话等临时抢焦点时置位：焦点交还（GAIN）后打身份脉冲夺回「末次出声者」，
-    // 并通知 Dart 自动续播。永久丢失（LOSS）走 interrupt 全停，不需要这个标记。
+    // 电话等临时抢焦点时置位：焦点交还（GAIN）后通知 Dart 自动续播。
+    // 永久丢失（LOSS）走 interrupt 全停，不需要这个标记。
     private var focusTransient = false
     // 身份脉冲的「待发」闸：只有重新开始出声的时刻（会话启动、暂停后续播）
-    // 才允许打一次，朗读中途的常规 speak 不反复出声。
+    // 才允许打一次，朗读中途的常规 speak 不反复出声。只有 stop 与
+    // pauseKeepingFocus 会重新武装；焦点回调不得预支，否则真正出声的那次
+    // 反而打不出来（见 AUDIOFOCUS_GAIN）。
     private var pulseArmed = true
     private val attributes = AudioAttributes.Builder()
         .setUsage(AudioAttributes.USAGE_MEDIA)
@@ -316,11 +318,11 @@ class SystemTtsPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventCha
                     main.post {
                         if (epoch != focusEpoch || !focusTransient) return@post
                         focusTransient = false
-                        // 电话抢走「末次出声者」之后，这里是明确的夺回时刻：
-                        // 先出声一瞬重建资格，再让 Dart 续播。紧随其后的
-                        // 首次 speak 不必再打一次（见 pulseArmed）。
-                        pulseArmed = false
-                        playIdentityPulse()
+                        // 只通知 Dart 续播，这里不打身份脉冲：通话走 Telecom，
+                        // 不参与 media button 派发，夺不走按键归属（真机上
+                        // 「挂断后没脉冲按键照常有效」已经证实）。而在这个
+                        // 分支里预支 pulseArmed，会吃掉紧接着那次 speak 的
+                        // 脉冲配额——把唯一的保障提前用掉。
                         sink?.success(mapOf("type" to "focus_resume"))
                     }
                 AudioManager.AUDIOFOCUS_LOSS ->
