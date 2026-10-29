@@ -110,7 +110,10 @@ void main() {
     await _mount(tester, session);
     final current = find.byKey(const Key('audio-inline-subtitle-current'));
     final player = session.players.single;
-    // The player's initial duration is two minutes, not the cue fallback 6s.
+    // 本仓库假播放器默认「片长未知」（a29f2a7 起的约定：真实解码器 create
+    // 后才知道片长）；上游这条用例按基类隐式 2 分钟写的。显式报一次时长，
+    // 用例本身要验证的东西不变：窗口按播放器时长算，不吃字幕兜底 6s。
+    player.emitDuration(const Duration(minutes: 2));
     player.emitPosition(const Duration(seconds: 40));
     await _flush(tester);
     await tester.pump(const Duration(milliseconds: 650));
