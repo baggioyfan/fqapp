@@ -200,6 +200,10 @@ class SystemTtsPlayback extends ChangeNotifier with WidgetsBindingObserver {
   int index;
   bool loading = false;
   bool wantPlay = false;
+  // 上次暂停是被系统临时抢焦点（来电、导航）造成的：焦点交还时收到
+  // focus_resume 就自动续播。用户手动暂停会清掉它，电话里自己停下的
+  // 不会被误恢复。
+  bool _focusPaused = false;
   bool closed = false;
   bool completed = false;
   String? error;
@@ -457,7 +461,18 @@ class SystemTtsPlayback extends ChangeNotifier with WidgetsBindingObserver {
   void _event(dynamic value) {
     if (closed || value is! Map) return;
     if (value['type'] == 'interrupted' && value['id'] == null) {
+      final wasPlaying = wantPlay;
       unawaited(pause());
+      // pause() 内部会清 _focusPaused（那是"用户手动暂停"的语义），焦点被
+      // 抢走的暂停要在其后补记，否则 focus_resume 永远等不到它。
+      if (wasPlaying) _focusPaused = true;
+      return;
+    }
+    if (value['type'] == 'focus_resume') {
+      if (_focusPaused) {
+        _focusPaused = false;
+        unawaited(resume());
+      }
       return;
     }
     final id = value['id'];
@@ -506,7 +521,10 @@ class SystemTtsPlayback extends ChangeNotifier with WidgetsBindingObserver {
       case 'error':
         unawaited(_fail(StateError('引擎朗读失败，请检查音色或网络后重试')));
       case 'interrupted':
+        // 同上：先 pause（其内清标记）再按 pause 前的 wantPlay 补记。
+        final wasPlaying = wantPlay;
         unawaited(pause());
+        if (wasPlaying) _focusPaused = true;
     }
   }
 
@@ -534,6 +552,9 @@ class SystemTtsPlayback extends ChangeNotifier with WidgetsBindingObserver {
 
   Future<void> pause() async {
     if (closed) return;
+    // 用户（或任何非焦点路径）主动暂停：清除"被系统抢焦点"的语义，
+    // 电话里自己按停的，挂断后不会替用户自动开播。
+    _focusPaused = false;
     ++_generation;
     _loadRequest?.cancel();
     _resetQueue(_offset);
