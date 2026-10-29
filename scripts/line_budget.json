@@ -17,7 +17,7 @@
     "lib/pages/log_viewer_page.dart": 757,
     "lib/pages/player_page.dart": 2081,
     "lib/pages/rank_page.dart": 543,
-    "lib/pages/reader_page.dart": 4107,
+    "lib/pages/reader_page.dart": 4133,
     "lib/pages/search_page.dart": 1115,
     "lib/pages/series_detail_page.dart": 1927,
     "lib/pages/settings_page.dart": 818,
@@ -26,7 +26,7 @@
     "lib/services/api_client.dart": 1797,
     "lib/services/app_log.dart": 645,
     "lib/services/audio_downloader.dart": 568,
-    "lib/services/audio_playback_controller.dart": 1388,
+    "lib/services/audio_playback_controller.dart": 1423,
     "lib/services/chapter_text_formatter.dart": 690,
     "lib/services/desktop_platform.dart": 880,
     "lib/services/drama_download_store.dart": 503,
@@ -69,7 +69,7 @@
     "rust/src/endpoints/router.rs": 557,
     "rust/src/endpoints/video.rs": 3231,
     "scripts/verify_android_apk.py": 534,
-    "test/audio_page_test.dart": 1033,
+    "test/audio_page_test.dart": 1125,
     "test/chapter_cache_sheet_test.dart": 553,
     "test/comic_reader_page_test.dart": 750,
     "test/desktop_semantics_update_test.dart": 844,
@@ -215,7 +215,7 @@
       "symbol": "Widget build(BuildContext context) {"
     },
     "lib/pages/reader_page.dart::_ChapterDirectorySheetState.build": {
-      "line": 3985,
+      "line": 4011,
       "lines": 121,
       "symbol": "Widget build(BuildContext context) {"
     },

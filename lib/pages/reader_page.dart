@@ -2853,18 +2853,27 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
       await _persistProgress();
       if (!mounted) return;
       var startMs = fromMs;
-      if (startMs == null &&
-          paragraphAnchored &&
-          !_chapterContent.timelineChecked) {
-        _showMessage('正在获取本段音频…');
-        await _refreshCachedChapter(
-          chapter,
-        ).timeout(const Duration(seconds: 12), onTimeout: () {});
-        // The user may have turned the page while the timeline was in flight.
-        // Serving another chapter's paragraph position would start playback at
-        // a place nobody asked for.
-        if (!mounted || _chapter.itemId != chapter.itemId) return;
-        startMs = _paragraphStartMs(textId);
+      // The paragraph keys for the player's /timepoints lookup, used when the
+      // chapter body carries no `<span start_time>` (plain-text 智能朗读
+      // chapters): the reader cannot compute milliseconds, so it hands the
+      // player the paragraph instead of giving up to the chapter opening.
+      ({int? paraIndex, int ordinal})? paragraph;
+      if (startMs == null && paragraphAnchored) {
+        if (!_chapterContent.timelineChecked) {
+          _showMessage('正在获取本段音频…');
+          await _refreshCachedChapter(
+            chapter,
+          ).timeout(const Duration(seconds: 12), onTimeout: () {});
+          // The user may have turned the page while the timeline was in flight.
+          // Serving another chapter's paragraph position would start playback at
+          // a place nobody asked for.
+          if (!mounted || _chapter.itemId != chapter.itemId) return;
+        }
+        final anchor = _paragraphAnchor(textId);
+        startMs = anchor.startMs;
+        if (startMs == null) {
+          paragraph = (paraIndex: anchor.paraIndex, ordinal: anchor.ordinal);
+        }
       }
       if (!mounted) return;
       setState(() => _controlsVisible = false);
@@ -2883,9 +2892,13 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
             // A paragraph-anchored request always carries an explicit start:
             // Duration.zero means "this paragraph has no audio, begin at the
             // chapter opening" and must not fall back to saved history.
+            // startParagraph hands the paragraph to the player when the body
+            // has no spans of its own; the player resolves it from
+            // /timepoints and only falls back to that Duration.zero.
             startPosition: paragraphAnchored
                 ? Duration(milliseconds: startMs ?? 0)
                 : null,
+            startParagraph: paragraph,
             historyStore: widget.readerStore,
           ),
         ),
@@ -2921,8 +2934,9 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     return (startMs: null, textId: null);
   }
 
-  /// The spoken start of the paragraph identified by [textId], when the chapter
-  /// carries a timeline.
+  /// The spoken start of the paragraph identified by [textId], plus the keys
+  /// the player needs to resolve it from `/timepoints` when the chapter body
+  /// carries no `<span start_time>` of its own.
   ///
   /// [textId] is [ReaderContentBlock.textId]: the upstream `idx` when present,
   /// otherwise the paragraph's ordinal. The ordinal fallback is resolved
@@ -2931,12 +2945,19 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
   /// counted — so a chapter without ids still maps. Walking the raw block
   /// list instead desynced from the layout by one (title) plus however many
   /// images precede a paragraph, and 从本段听 landed on the previous paragraph.
-  int? _paragraphStartMs(int textId) {
+  ///
+  /// [startMs] comes from the chapter's own timeline (`<span start_time>`).
+  /// [paraIndex] (the upstream `<p idx>` id) and [ordinal] (position among the
+  /// body paragraphs, title stripped, zero-based) feed the player's
+  /// `/timepoints` lookup — plain-text chapters carry no `idx` at all, and the
+  /// ordinal covers the two title-numbering conventions in one try each.
+  ({int? startMs, int? paraIndex, int ordinal}) _paragraphAnchor(int textId) {
     final body = _chapterContent.withoutLeadingTitle(_chapter.title);
     // Block 0 is the layout's synthetic title, so the first body element sits
     // at layout index 1 and its fallback id is -(1 + 0) — the same maths
     // ReaderChapterLayout uses for textId.
     var layoutIndex = 1;
+    var ordinal = 0;
     for (final element in body.blocks) {
       if (element is ChapterParagraph) {
         if (paragraphUnderlineId(
@@ -2944,12 +2965,17 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
               blockIndex: layoutIndex - 1,
             ) ==
             textId) {
-          return element.startMs;
+          return (
+            startMs: element.startMs,
+            paraIndex: element.paraIndex,
+            ordinal: ordinal,
+          );
         }
+        ordinal++;
       }
       layoutIndex++;
     }
-    return null;
+    return (startMs: null, paraIndex: null, ordinal: -1);
   }
 
   Future<void> _showCache() {
