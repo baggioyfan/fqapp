@@ -22,6 +22,15 @@
             android:name=".ListenKeepAliveService"
             android:exported="false"
             android:foregroundServiceType="mediaPlayback"/>
+        <!-- 蓝牙/耳机媒体按键兜底：系统路由按键时优先认注册了
+             MediaButtonReceiver 的应用，没有它按键经常被直接丢弃。 -->
+        <receiver
+            android:name=".FqMediaButtonReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MEDIA_BUTTON"/>
+            </intent-filter>
+        </receiver>
         <service
             android:name=".FloatingVideoService"
             android:exported="false"

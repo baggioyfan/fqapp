@@ -99,6 +99,8 @@ class SystemTtsPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventCha
                 sink?.success(mapOf("type" to "media", "action" to "stop"))
             }
         })
+        // 蓝牙按键路由的资格证：没有它系统经常把按键丢给别的应用或直接丢弃。
+        session.setMediaButtonReceiver(FqMediaButtonReceiver.mediaButtonPendingIntent(context))
         session.isActive = true
         mediaSession = session
         return session

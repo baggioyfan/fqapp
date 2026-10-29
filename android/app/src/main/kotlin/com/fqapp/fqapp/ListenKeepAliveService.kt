@@ -372,6 +372,8 @@ class ListenKeepAliveService : Service() {
             override fun onStop() = NativePlayerPlugin.dispatchNotificationAction(ACTION_NAME_STOP)
         })
         session.setSessionActivity(contentIntent())
+        // 蓝牙按键路由的资格证：没有它系统经常把按键丢给别的应用或直接丢弃。
+        session.setMediaButtonReceiver(FqMediaButtonReceiver.mediaButtonPendingIntent(this))
         session.isActive = true
         mediaSession = session
         return session
@@ -466,10 +468,11 @@ class ListenKeepAliveService : Service() {
         /** 封面下载的建连 / 读超时：后台服务里不能挂住太久。 */
         private const val COVER_TIMEOUT_MS = 8_000
 
-        /** Dart 侧 `_handleRemoteAction` 认识的动作名；通知按钮与媒体会话共用一份。 */
-        private const val ACTION_NAME_PLAY_PAUSE = "playPause"
-        private const val ACTION_NAME_PREV = "prev"
-        private const val ACTION_NAME_NEXT = "next"
-        private const val ACTION_NAME_STOP = "stop"
+        /** Dart 侧 `_handleRemoteAction` 认识的动作名；通知按钮、媒体会话与
+         *  [FqMediaButtonReceiver]（蓝牙按键兜底）共用一份。 */
+        const val ACTION_NAME_PLAY_PAUSE = "playPause"
+        const val ACTION_NAME_PREV = "prev"
+        const val ACTION_NAME_NEXT = "next"
+        const val ACTION_NAME_STOP = "stop"
     }
 }
