@@ -2724,54 +2724,52 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     final chapterId = _chapter.itemId;
     var system = widget.localOnly;
     if (!system) {
-      _openingListening = true;
-      try {
-        // 0 = 从头/续播，1 = 从本页播放，2 = 系统朗读。
-        final choice = await showModalBottomSheet<int>(
-          context: context,
-          useSafeArea: true,
-          showDragHandle: true,
-          backgroundColor: _effectivePreset.panelColor,
-          builder: (context) => Theme(
-            data: _effectivePreset.theme(Theme.of(context)),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                ListTile(
-                  leading: const Icon(Icons.headphones),
-                  title: const Text('听书'),
-                  subtitle: const Text('使用作品自带音频与音色'),
-                  onTap: () => Navigator.pop(context, 0),
-                ),
-                ListTile(
-                  leading: const Icon(Icons.my_location),
-                  title: const Text('从本页播放'),
-                  subtitle: const Text('从当前页第一段开始听'),
-                  onTap: () => Navigator.pop(context, 1),
-                ),
-                ListTile(
-                  leading: const Icon(Icons.record_voice_over),
-                  title: const Text('系统朗读'),
-                  subtitle: const Text('使用手机已安装的 TTS 引擎'),
-                  onTap: () => Navigator.pop(context, 2),
-                ),
-              ],
-            ),
+      // 菜单是模态的，自己就挡住重复触发；此前在这里置 _openingListening
+      // 反而把「从本页播放」挡死了——它要转手调 _openUpstreamListening，
+      // 而那里第一行也是同一个闸，于是点了没有任何反应。
+      // 0 = 从头/续播，1 = 从本页播放，2 = 系统朗读。
+      final choice = await showModalBottomSheet<int>(
+        context: context,
+        useSafeArea: true,
+        showDragHandle: true,
+        backgroundColor: _effectivePreset.panelColor,
+        builder: (context) => Theme(
+          data: _effectivePreset.theme(Theme.of(context)),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(
+                leading: const Icon(Icons.headphones),
+                title: const Text('听书'),
+                subtitle: const Text('使用作品自带音频与音色'),
+                onTap: () => Navigator.pop(context, 0),
+              ),
+              ListTile(
+                leading: const Icon(Icons.my_location),
+                title: const Text('从本页播放'),
+                subtitle: const Text('从当前页第一段开始听'),
+                onTap: () => Navigator.pop(context, 1),
+              ),
+              ListTile(
+                leading: const Icon(Icons.record_voice_over),
+                title: const Text('系统朗读'),
+                subtitle: const Text('使用手机已安装的 TTS 引擎'),
+                onTap: () => Navigator.pop(context, 2),
+              ),
+            ],
           ),
+        ),
+      );
+      if (!mounted || choice == null || chapterId != _chapter.itemId) return;
+      if (choice == 1) {
+        final anchor = _currentPageAnchor();
+        await _openUpstreamListening(
+          fromMs: anchor.startMs ?? fromMs,
+          textId: anchor.textId ?? textId,
         );
-        if (!mounted || choice == null || chapterId != _chapter.itemId) return;
-        if (choice == 1) {
-          final anchor = _currentPageAnchor();
-          await _openUpstreamListening(
-            fromMs: anchor.startMs ?? fromMs,
-            textId: anchor.textId ?? textId,
-          );
-          return;
-        }
-        system = choice == 2;
-      } finally {
-        _openingListening = false;
+        return;
       }
+      system = choice == 2;
     }
     if (!system) {
       await _openUpstreamListening(fromMs: fromMs, textId: textId);
