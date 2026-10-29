@@ -74,7 +74,6 @@ class ListenKeepAliveService : Service() {
 
     override fun onCreate() {
         super.onCreate()
-        isRunning = true
         createNotificationChannel()
     }
 
@@ -84,7 +83,6 @@ class ListenKeepAliveService : Service() {
     }
 
     override fun onDestroy() {
-        isRunning = false
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
             stopForeground(STOP_FOREGROUND_REMOVE)
         } else {
@@ -117,11 +115,6 @@ class ListenKeepAliveService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        // 服务已就位（或被通知按钮唤起）：插件里若已经建过裸会话，必须让路。
-        // Dart 侧 speak 可能先于 startForeground 落到插件，那一刻 isRunning 还是
-        // false，裸会话就建起来了——这里反向补一次，否则系统里长期并存两个活跃
-        // 会话，蓝牙按键在两者之间摇摆。
-        SystemTtsPlugin.dropBareMediaSession()
         val action = intent?.action
         if (action != null) {
             when (action) {
@@ -404,18 +397,6 @@ class ListenKeepAliveService : Service() {
             metadata.putBitmap(MediaMetadataCompat.METADATA_KEY_ALBUM_ART, it)
         }
         session.setMetadata(metadata.build())
-        pushPlaybackState(session, playing, positionMs, speed)
-    }
-
-    /**
-     * 只重设播放状态（不动元数据）：系统据此把会话顶到「最近活跃」栈顶。
-     */
-    private fun pushPlaybackState(
-        session: MediaSessionCompat,
-        playing: Boolean,
-        positionMs: Long,
-        speed: Float
-    ) {
         // NOTE: ACTION_SEEK_TO is deliberately NOT advertised. The session
         // previously claimed it without an onSeekTo override, so the system
         // media card offered a seek bar whose drags went nowhere. Real seek
@@ -450,11 +431,6 @@ class ListenKeepAliveService : Service() {
         const val CHANNEL_ID = "listen_playback"
         const val NOTIFICATION_ID = 47
 
-        /** 系统朗读的裸会话（SystemTtsPlugin）借这条判断让路：保活服务在跑时它不得再激活第二个会话。 */
-        @Volatile
-        var isRunning = false
-            private set
-
         const val EXTRA_TITLE = "title"
         const val EXTRA_EPISODE = "episode"
         const val EXTRA_PLAYING = "playing"
@@ -484,9 +460,9 @@ class ListenKeepAliveService : Service() {
         private const val COVER_TIMEOUT_MS = 8_000
 
         /** Dart 侧 `_handleRemoteAction` 认识的动作名；通知按钮与媒体会话共用一份。 */
-        const val ACTION_NAME_PLAY_PAUSE = "playPause"
-        const val ACTION_NAME_PREV = "prev"
-        const val ACTION_NAME_NEXT = "next"
-        const val ACTION_NAME_STOP = "stop"
+        private const val ACTION_NAME_PLAY_PAUSE = "playPause"
+        private const val ACTION_NAME_PREV = "prev"
+        private const val ACTION_NAME_NEXT = "next"
+        private const val ACTION_NAME_STOP = "stop"
     }
 }

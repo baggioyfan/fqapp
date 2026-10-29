@@ -116,8 +116,6 @@ class NativePlayerPlugin internal constructor(
     private var floatingFocusRequest: Any? = null
     private var floatingFocusListener: AudioManager.OnAudioFocusChangeListener? = null
     private var floatingVolumeBeforeDuck: Float? = null
-    // 来电等临时抢焦点时暂停：GAIN 后自动续播。永久丢失（LOSS）不置位。
-    private var floatingFocusTransientPaused = false
 
     /**
      * 播放页「上下滑动调亮度」覆盖的窗口亮度。null = 当前没有覆盖；存起来
@@ -1063,23 +1061,8 @@ class NativePlayerPlugin internal constructor(
             val id = floatingPlayerId ?: return@OnAudioFocusChangeListener
             val instance = players[id] ?: return@OnAudioFocusChangeListener
             when (change) {
-                AudioManager.AUDIOFOCUS_LOSS -> {
-                    floatingFocusTransientPaused = false
-                    try {
-                        instance.player.pause()
-                    } catch (_: Throwable) {
-                    }
-                    FloatingVideoService.update(
-                        context,
-                        mapOf(FloatingVideoService.EXTRA_PLAYING to false)
-                    )
-                }
-
-                // 来电等临时打断：只暂停，焦点交还时自动续播。
-                // 电话前本来暂停着的（playWhenReady=false）不置位，
-                // 挂断后保持暂停，不替用户做主。
+                AudioManager.AUDIOFOCUS_LOSS,
                 AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> {
-                    floatingFocusTransientPaused = instance.player?.playWhenReady == true
                     try {
                         instance.player.pause()
                     } catch (_: Throwable) {
@@ -1108,17 +1091,6 @@ class NativePlayerPlugin internal constructor(
                             instance.player.volume = volume
                         } catch (_: Throwable) {
                         }
-                    }
-                    if (floatingFocusTransientPaused) {
-                        floatingFocusTransientPaused = false
-                        try {
-                            instance.player.play()
-                        } catch (_: Throwable) {
-                        }
-                        FloatingVideoService.update(
-                            context,
-                            mapOf(FloatingVideoService.EXTRA_PLAYING to true)
-                        )
                     }
                 }
             }

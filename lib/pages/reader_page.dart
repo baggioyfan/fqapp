@@ -13,7 +13,6 @@ import '../models/audio_extra.dart';
 import '../models/comment_reply.dart';
 import '../models/media_item.dart';
 import '../services/api_client.dart';
-import '../services/listen_start_resolver.dart';
 import '../services/app_theme.dart';
 import '../services/backend_transport.dart';
 import '../services/chapter_cache_store.dart';
@@ -105,11 +104,6 @@ class ReaderPage extends StatefulWidget {
   /// 保留作者/徽标等字段；其他入口省略，按 [bookId]/[title]/[cover] 兜底成小说。
   final MediaItem? shelfItem;
 
-  /// 从本段听/从本页播放的起播定位器（章节内容没有 `<span start_time>` 时的
-  /// 兜底）。省略时按 [bookId] 现建一个走 ApiClient 的；测试注入假数据以避免
-  /// 碰网络。
-  final ListenStartResolver? listenStartResolver;
-
   const ReaderPage({
     super.key,
     required this.bookId,
@@ -126,7 +120,6 @@ class ReaderPage extends StatefulWidget {
     this.ideasLoader,
     this.commentResolver,
     this.shelfItem,
-    this.listenStartResolver,
     this.underlineStore,
     this.replacementStore,
     this.replacementEngine,
@@ -2769,10 +2762,6 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
         if (!mounted || choice == null || chapterId != _chapter.itemId) return;
         if (choice == 1) {
           final anchor = _currentPageAnchor();
-          // 先放行再转手：_openUpstreamListening 的防叠页闸与这里是同一把
-          // _openingListening，不先清它会把这次调用静默拒掉（上游同款
-          // bug：点「从本页播放」菜单收起后什么都不发生）。
-          _openingListening = false;
           await _openUpstreamListening(
             fromMs: anchor.startMs ?? fromMs,
             textId: anchor.textId ?? textId,
@@ -2864,49 +2853,18 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
       await _persistProgress();
       if (!mounted) return;
       var startMs = fromMs;
-      // 定位命中的音色：播放页要用同一条录音，否则 seek 到的毫秒属于另一条。
-      String? startToneId;
-      if (startMs == null && paragraphAnchored) {
-        if (!_chapterContent.timelineChecked) {
-          _showMessage('正在获取本段音频…');
-          await _refreshCachedChapter(
-            chapter,
-          ).timeout(const Duration(seconds: 12), onTimeout: () {});
-          // The user may have turned the page while the timeline was in flight.
-          // Serving another chapter's paragraph position would start playback at
-          // a place nobody asked for.
-          if (!mounted || _chapter.itemId != chapter.itemId) return;
-        }
-        final anchor = _paragraphAnchor(textId);
-        startMs = anchor.startMs;
-        // 章节内容不带 `<span start_time>` 时（源站并不是每本书都嵌），交给
-        // [ListenStartResolver]：先按候选音色问 `/timepoints` —— 听书高亮用的
-        // 那条「音频毫秒 ↔ 段落」映射按音色分开存，问错 tone_id 只会拿到空表；
-        // 再退到逐句字幕轨。都没命中才落回章首。
-        if (startMs == null) {
-          final resolver =
-              widget.listenStartResolver ??
-              ListenStartResolver(
-                bookId: widget.bookId,
-                preferredToneId: _listeningToneId(),
-              );
-          try {
-            final start = await resolver.resolve(
-              itemId: chapter.itemId,
-              paragraphText: anchor.text,
-              paraIndex: anchor.paraIndex,
-              ordinal: anchor.ordinal,
-            );
-            if (!mounted) return;
-            startMs = start.startMs;
-            if (start.found) startToneId = start.toneId;
-            if (startMs == null && start.note != null) {
-              _showMessage(start.note!);
-            }
-          } on Exception {
-            // 定位失败不影响起播：落回章首。
-          }
-        }
+      if (startMs == null &&
+          paragraphAnchored &&
+          !_chapterContent.timelineChecked) {
+        _showMessage('正在获取本段音频…');
+        await _refreshCachedChapter(
+          chapter,
+        ).timeout(const Duration(seconds: 12), onTimeout: () {});
+        // The user may have turned the page while the timeline was in flight.
+        // Serving another chapter's paragraph position would start playback at
+        // a place nobody asked for.
+        if (!mounted || _chapter.itemId != chapter.itemId) return;
+        startMs = _paragraphStartMs(textId);
       }
       if (!mounted) return;
       setState(() => _controlsVisible = false);
@@ -2921,7 +2879,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
             resumeSession: false,
             // 沿用正在听的那个音色：不传的话播放页只能挑默认音色，
             // 「从本页播放」就会把真人讲书换成内置 TTS。
-            initialToneId: startToneId ?? _listeningToneId(),
+            initialToneId: _listeningToneId(),
             // A paragraph-anchored request always carries an explicit start:
             // Duration.zero means "this paragraph has no audio, begin at the
             // chapter opening" and must not fall back to saved history.
@@ -2963,8 +2921,8 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     return (startMs: null, textId: null);
   }
 
-  /// The spoken start of the paragraph identified by [textId], plus its
-  /// upstream `<p idx>` id for the `/timepoints` fallback.
+  /// The spoken start of the paragraph identified by [textId], when the chapter
+  /// carries a timeline.
   ///
   /// [textId] is [ReaderContentBlock.textId]: the upstream `idx` when present,
   /// otherwise the paragraph's ordinal. The ordinal fallback is resolved
@@ -2973,22 +2931,12 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
   /// counted — so a chapter without ids still maps. Walking the raw block
   /// list instead desynced from the layout by one (title) plus however many
   /// images precede a paragraph, and 从本段听 landed on the previous paragraph.
-  ///
-  /// [startMs] comes from the chapter's own timeline (`<span start_time>`),
-  /// the same source 从本段听 uses. [paraIndex] feeds the timepoints lookup
-  /// when the chapter content carries no spans of its own; [ordinal] (position
-  /// among the body paragraphs, title stripped, zero-based) is the second key
-  /// for the same lookup, because plain-text chapters carry no `idx` at all.
-  /// [text] is the paragraph itself, the needle for the subtitle fallback.
-  ({int? startMs, int? paraIndex, int ordinal, String text}) _paragraphAnchor(
-    int textId,
-  ) {
+  int? _paragraphStartMs(int textId) {
     final body = _chapterContent.withoutLeadingTitle(_chapter.title);
     // Block 0 is the layout's synthetic title, so the first body element sits
     // at layout index 1 and its fallback id is -(1 + 0) — the same maths
     // ReaderChapterLayout uses for textId.
     var layoutIndex = 1;
-    var ordinal = 0;
     for (final element in body.blocks) {
       if (element is ChapterParagraph) {
         if (paragraphUnderlineId(
@@ -2996,18 +2944,12 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
               blockIndex: layoutIndex - 1,
             ) ==
             textId) {
-          return (
-            startMs: element.startMs,
-            paraIndex: element.paraIndex,
-            ordinal: ordinal,
-            text: element.text,
-          );
+          return element.startMs;
         }
-        ordinal++;
       }
       layoutIndex++;
     }
-    return (startMs: null, paraIndex: null, ordinal: -1, text: '');
+    return null;
   }
 
   Future<void> _showCache() {

@@ -13,8 +13,6 @@ import android.os.Looper
 import android.provider.Settings
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
-import android.support.v4.media.session.MediaSessionCompat
-import android.support.v4.media.session.PlaybackStateCompat
 import androidx.core.content.ContextCompat
 import io.flutter.embedding.engine.plugins.FlutterPlugin
 import io.flutter.plugin.common.EventChannel
@@ -42,12 +40,6 @@ class SystemTtsPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventCha
     private var focusRequest: AudioFocusRequest? = null
     private var focusListener: AudioManager.OnAudioFocusChangeListener? = null
     private var focusEpoch = 0
-    // 电话等临时抢焦点时置位：焦点交还（GAIN）后通知 Dart 自动续播。
-    // 永久丢失（LOSS）走 interrupt 全停，不需要这个标记。
-    private var focusTransient = false
-    // 蓝牙耳机/锁屏的按键路由：TTS 听书没有前台服务，用插件内注册的
-    // MediaSession 承接（进程活着它就有效，与朗读会话同生命周期）。
-    private var mediaSession: MediaSessionCompat? = null
     private val attributes = AudioAttributes.Builder()
         .setUsage(AudioAttributes.USAGE_MEDIA)
         .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build()
@@ -65,86 +57,8 @@ class SystemTtsPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventCha
         sink?.success(mapOf("type" to "interrupted", "id" to id))
     }
 
-    /**
-     * 焦点被临时抢走（来电、导航提示）时只停朗读，不清 epoch、不弃焦点：
-     * 系统在对方放完时会发 GAIN，我们据此通知 Dart 自动续播。
-     * 走 [stop] 的话焦点已交还，GAIN 永远不会再来，电话后就永远停在暂停态。
-     */
-    private fun transientPause() {
-        focusTransient = true
-        val id = activeId
-        activeId = null
-        liveIds.clear()
-        try { tts?.stop() } catch (_: Exception) { }
-        syncMediaState(false)
-        sink?.success(mapOf("type" to "interrupted", "id" to id))
-    }
-
-    /** 蓝牙耳机/锁屏按键与系统媒体卡片的路由会话。 */
-    private fun ensureMediaSession(): MediaSessionCompat {
-        mediaSession?.let { return it }
-        val session = MediaSessionCompat(context, "fqapp_system_tts")
-        session.setCallback(object : MediaSessionCompat.Callback() {
-            // 耳机单键是 PLAY/PAUSE 语义二选一，朗读会话只有"读/不读"两态，
-            // 统一交 toggle 处理；STOP 交给 Dart 暂停会话。
-            override fun onPlay() {
-                sink?.success(mapOf("type" to "media", "action" to "playPause"))
-            }
-
-            override fun onPause() {
-                sink?.success(mapOf("type" to "media", "action" to "playPause"))
-            }
-
-            override fun onStop() {
-                sink?.success(mapOf("type" to "media", "action" to "stop"))
-            }
-        })
-        session.isActive = true
-        mediaSession = session
-        return session
-    }
-
-    /** 释放本插件的裸媒体会话（让路给保活服务，或引擎关闭时清理）。 */
-    private fun releaseMediaSession() {
-        mediaSession?.let {
-            it.isActive = false
-            it.release()
-        }
-        mediaSession = null
-    }
-
-    private fun syncMediaState(playing: Boolean) {
-        // 保活服务（ListenKeepAliveService，系统朗读在「后台听书与保活」开启时
-        // 会借它挂通知）自带一个活跃媒体会话，通知按钮与蓝牙按键都由它承接。
-        // 此时若再激活本插件的裸会话，系统就有两个活跃会话可选，按键路由在
-        // 两者之间摇摆——实测蓝牙时灵时不灵。让路：服务在跑就不建、已建的释放。
-        if (ListenKeepAliveService.isRunning) {
-            releaseMediaSession()
-            return
-        }
-        // 停止态且会话从未建过就不建：只在真的开始朗读后才接管按键路由。
-        if (!playing && mediaSession == null) return
-        val session = ensureMediaSession()
-        val actions = PlaybackStateCompat.ACTION_PLAY or
-            PlaybackStateCompat.ACTION_PAUSE or
-            PlaybackStateCompat.ACTION_PLAY_PAUSE or
-            PlaybackStateCompat.ACTION_STOP
-        session.setPlaybackState(
-            PlaybackStateCompat.Builder()
-                .setActions(actions)
-                .setState(
-                    if (playing) PlaybackStateCompat.STATE_PLAYING
-                    else PlaybackStateCompat.STATE_PAUSED,
-                    0L,
-                    1f,
-                )
-                .build(),
-        )
-    }
-
     override fun onAttachedToEngine(binding: FlutterPlugin.FlutterPluginBinding) {
         context = binding.applicationContext
-        live = this
         methods = MethodChannel(binding.binaryMessenger, "fqapp/system_tts")
         events = EventChannel(binding.binaryMessenger, "fqapp/system_tts_events")
         methods.setMethodCallHandler(this)
@@ -187,18 +101,16 @@ class SystemTtsPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventCha
                             activeId = id
                             val mode = if (queue) TextToSpeech.QUEUE_ADD else TextToSpeech.QUEUE_FLUSH
                             if (tts?.speak(text, mode, null, id) == TextToSpeech.SUCCESS) {
-                                syncMediaState(true)
                                 result.success(null)
                             } else {
                                 liveIds.remove(id)
                                 stop()
-                                syncMediaState(false)
                                 result.error("speak_failed", "引擎无法朗读，请检查引擎设置或网络", null)
                             }
                         }
                     }
                 }
-                "stop" -> { stop(); syncMediaState(false); result.success(null) }
+                "stop" -> { stop(); result.success(null) }
                 "shutdown" -> { shutdown(); result.success(null) }
                 "settings" -> {
                     try {
@@ -298,21 +210,8 @@ class SystemTtsPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventCha
         if (focusListener != null) return true
         val epoch = ++focusEpoch
         val listener = AudioManager.OnAudioFocusChangeListener { change ->
-            when (change) {
-                AudioManager.AUDIOFOCUS_LOSS ->
-                    main.post { if (epoch == focusEpoch) interrupt() }
-                // CAN_DUCK（导航提示等短暂压低）对语音朗读没有"压低"可言，
-                // 与来电同样处理：暂停并等 GAIN 恢复。
-                AudioManager.AUDIOFOCUS_LOSS_TRANSIENT,
-                AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK ->
-                    main.post { if (epoch == focusEpoch) transientPause() }
-                AudioManager.AUDIOFOCUS_GAIN ->
-                    main.post {
-                        if (epoch == focusEpoch && focusTransient) {
-                            focusTransient = false
-                            sink?.success(mapOf("type" to "focus_resume"))
-                        }
-                    }
+            if (change != AudioManager.AUDIOFOCUS_GAIN) {
+                main.post { if (epoch == focusEpoch) interrupt() }
             }
         }
         val status = if (Build.VERSION.SDK_INT >= 26) {
@@ -353,8 +252,6 @@ class SystemTtsPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventCha
         pending = null
         reply?.error("cancelled", "已取消启动朗读", null)
         stop()
-        focusTransient = false
-        releaseMediaSession()
         ready = false
         try { tts?.shutdown() } catch (_: Exception) { }
         tts = null
@@ -364,26 +261,7 @@ class SystemTtsPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventCha
         shutdown()
         context.unregisterReceiver(noisyReceiver)
         sink = null
-        live = null
         methods.setMethodCallHandler(null)
         events.setStreamHandler(null)
-    }
-
-    companion object {
-        @Volatile private var live: SystemTtsPlugin? = null
-        private val dispatcher = Handler(Looper.getMainLooper())
-
-        /**
-         * 保活服务就位时回调：插件里若已经建过裸会话，立刻释放。
-         *
-         * 时序坑：Dart 侧 speak 先于 startListenForeground 落到插件，
-         * [syncMediaState] 执行那一刻 ListenKeepAliveService.isRunning 还是
-         * false，裸会话就建起来了；服务随后启动，再没有人通知它让路，系统里
-         * 长期并存两个活跃会话，蓝牙按键在两者之间摇摆。由服务反向回调这里，
-         * 「服务在跑时插件必让路」才算闭环。
-         */
-        fun dropBareMediaSession() {
-            dispatcher.post { live?.releaseMediaSession() }
-        }
     }
 }
