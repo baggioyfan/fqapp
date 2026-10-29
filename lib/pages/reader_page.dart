@@ -10,9 +10,11 @@ import 'package:flutter_lucide/flutter_lucide.dart';
 import '../models/book_comment.dart';
 import '../models/chapter_ideas.dart';
 import '../models/audio_extra.dart';
+import '../models/audio_time_track.dart';
 import '../models/comment_reply.dart';
 import '../models/media_item.dart';
 import '../services/api_client.dart';
+import '../services/audio_time_point_lookup.dart';
 import '../services/app_theme.dart';
 import '../services/backend_transport.dart';
 import '../services/chapter_cache_store.dart';
@@ -2879,7 +2881,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
         // 章节内容不带 `<span start_time>` 时（源站并不是每本书都嵌），退一步
         // 问 `/timepoints` —— 听书高亮用的那条「音频毫秒 ↔ 段落」映射，同一份
         // 正文章节 id 直接可查。这条也没有的书仍是空，落到章首兜底。
-        if (startMs == null && anchor.paraIndex != null) {
+        if (startMs == null) {
           // 任何失败（没有映射的书、网络不通）都保持章首兜底不变。
           try {
             final toneId = _listeningToneId() ?? '0';
@@ -2890,11 +2892,16 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
                       chapter.itemId,
                       toneId: toneId,
                     ));
-            for (final point in track.points) {
-              if (point.isBody && point.startPara == anchor.paraIndex) {
-                startMs = point.startTime;
-                break;
-              }
+            if (!mounted) return;
+            startMs = _timePointStartMs(track, anchor);
+            if (startMs == null) {
+              // 落回章首必须给出理由：静默兜底让「点了没反应」无法区分是这本
+              // 书没有时间轴，还是我们没对上段落——两种情况的修法完全不同。
+              _showMessage(
+                track.isEmpty
+                    ? '本章没有听书时间轴，只能从章首开始'
+                    : '时间轴有 ${track.points.length} 段但没对上本段，只能从章首开始',
+              );
             }
           } catch (_) {}
         }
@@ -2967,13 +2974,16 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
   ///
   /// [startMs] comes from the chapter's own timeline (`<span start_time>`),
   /// the same source 从本段听 uses. [paraIndex] feeds the timepoints lookup
-  /// when the chapter content carries no spans of its own.
-  ({int? startMs, int? paraIndex}) _paragraphAnchor(int textId) {
+  /// when the chapter content carries no spans of its own; [ordinal] (position
+  /// among the body paragraphs, title stripped, zero-based) is the second key
+  /// for the same lookup, because plain-text chapters carry no `idx` at all.
+  ({int? startMs, int? paraIndex, int ordinal}) _paragraphAnchor(int textId) {
     final body = _chapterContent.withoutLeadingTitle(_chapter.title);
     // Block 0 is the layout's synthetic title, so the first body element sits
     // at layout index 1 and its fallback id is -(1 + 0) — the same maths
     // ReaderChapterLayout uses for textId.
     var layoutIndex = 1;
+    var ordinal = 0;
     for (final element in body.blocks) {
       if (element is ChapterParagraph) {
         if (paragraphUnderlineId(
@@ -2981,13 +2991,30 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
               blockIndex: layoutIndex - 1,
             ) ==
             textId) {
-          return (startMs: element.startMs, paraIndex: element.paraIndex);
+          return (
+            startMs: element.startMs,
+            paraIndex: element.paraIndex,
+            ordinal: ordinal,
+          );
         }
+        ordinal++;
       }
       layoutIndex++;
     }
-    return (startMs: null, paraIndex: null);
+    return (startMs: null, paraIndex: null, ordinal: -1);
   }
+
+  /// 把段落锚点落到 `/timepoints` 时间轴上的起播毫秒。
+  ///
+  /// 段号口径（上游 `idx` / 纯文本按段序）的取舍见 [startMsForParagraph]。
+  int? _timePointStartMs(
+    AudioTimeTrack track,
+    ({int? startMs, int? paraIndex, int ordinal}) anchor,
+  ) => startMsForParagraph(
+    track,
+    paraIndex: anchor.paraIndex,
+    ordinal: anchor.ordinal,
+  );
 
   Future<void> _showCache() {
     setState(() => _controlsVisible = false);
