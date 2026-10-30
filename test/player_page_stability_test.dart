@@ -564,7 +564,7 @@ Future<void> _mount(WidgetTester tester, _Session session) async {
 /// 兜到失败页。
 class _CreateFailsPlayer extends ControlledNativePlayer {
   @override
-  Future<int> create(String cdnUrl, String keyHex) async {
+  Future<int> create(String cdnUrl, String keyHex, {int? startMs}) async {
     calls.add('create:$cdnUrl');
     throw StateError('create failed');
   }

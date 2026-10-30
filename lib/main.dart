@@ -1,6 +1,5 @@
 import 'services/api_client.dart';
 import 'services/audio_downloader.dart';
-import 'widgets/audio/audio_floating_capsule.dart' show loadRecentListen;
 import 'widgets/desktop_app_frame.dart';
 import 'services/native_player.dart';
 import 'services/desktop_platform.dart';
