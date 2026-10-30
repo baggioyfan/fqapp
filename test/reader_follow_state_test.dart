@@ -325,14 +325,6 @@ Future<void> _mount(WidgetTester tester, {ReaderStore? store}) async {
   await tester.pumpAndSettle();
 }
 
-Future<void> _tapSide(WidgetTester tester, int direction) async {
-  final rect = tester.getRect(_surface);
-  await tester.tapAt(
-    Offset(rect.left + rect.width * (direction > 0 ? .9 : .1), rect.center.dy),
-  );
-  await tester.pumpAndSettle();
-}
-
 /// 直接把会话摆成某个状态（播放器那边写入的等价物）。
 void _seed({
   required int positionMs,
