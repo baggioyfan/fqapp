@@ -1,5 +1,6 @@
 import 'services/api_client.dart';
 import 'services/audio_downloader.dart';
+import 'widgets/audio/audio_floating_capsule.dart' show loadRecentListen;
 import 'widgets/desktop_app_frame.dart';
 import 'services/native_player.dart';
 import 'services/desktop_platform.dart';
@@ -25,6 +26,7 @@ import 'pages/mine_page.dart';
 import 'services/app_log.dart';
 import 'services/app_theme.dart';
 import 'services/audio_download_store.dart';
+import 'services/audio_floating_routes.dart';
 import 'services/drama_cache_preferences.dart';
 import 'services/audio_preferences.dart';
 import 'services/player_preferences.dart';
@@ -240,9 +242,22 @@ class FqApp extends StatefulWidget {
 }
 
 class _FqAppState extends State<FqApp> {
+  // Official tabbar + 18dp applies on every page. Our floating dock is 64
+  // high with an 8px gap; the desktop shell has no bottom bar.
+  final _audioRoutes = AudioFloatingRoutes(
+    defaultBottomInset: isDesktopHost ? 0 : 72,
+  );
+  // Desktop fullscreen reparents the content; keep the playback owner alive.
+  final _audioScopeKey = GlobalKey();
   final _navigatorKey = isDesktopHost
       ? DesktopPlatform.navigatorKey
       : GlobalKey<NavigatorState>();
+
+  @override
+  void dispose() {
+    _audioRoutes.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -260,14 +275,21 @@ class _FqAppState extends State<FqApp> {
               builder: (context, oled, _) {
                 return MaterialApp(
                   navigatorKey: _navigatorKey,
-                  builder: (context, child) => AudioPlaybackScope(
-                    navigatorKey: _navigatorKey,
-                    child: isDesktopHost
-                        ? DesktopAppFrame(
-                            child: child ?? const SizedBox.shrink(),
-                          )
-                        : child ?? const SizedBox.shrink(),
-                  ),
+                  navigatorObservers: [_audioRoutes],
+                  builder: (context, child) {
+                    final playback = AudioPlaybackScope(
+                      key: _audioScopeKey,
+                      navigatorKey: _navigatorKey,
+                      recentListen: loadRecentListen,
+                      child: child ?? const SizedBox.shrink(),
+                    );
+                    return AudioFloatingRouteScope(
+                      routes: _audioRoutes,
+                      child: isDesktopHost
+                          ? DesktopAppFrame(child: playback)
+                          : playback,
+                    );
+                  },
                   title: '什锦铺',
                   debugShowCheckedModeBanner: false,
                   // OLED 纯黑只在深色下生效（浅色时 createTheme 直接忽略）。
@@ -653,20 +675,24 @@ class _RootShellState extends State<RootShell> with WidgetsBindingObserver {
     if (isDesktopHost) {
       return ValueListenableBuilder<int>(
         valueListenable: desktopTab,
-        builder: (context, index, _) => LazyIndexedStack(
-          index: index,
-          children: [
-            HomePage(cueLoader: () => ApiClient.instance.searchCue()),
-            const DramaPage(),
-            LibraryPage(
-              onBrowse: () => desktopTab.value = 0,
-              onFindDrama: () => desktopTab.value = 1,
-            ),
-            const MinePage(),
-          ],
-        ),
+        builder: (context, index, _) {
+          AudioFloatingRouteScope.configure(context, hidden: index == 1);
+          return LazyIndexedStack(
+            index: index,
+            children: [
+              HomePage(cueLoader: () => ApiClient.instance.searchCue()),
+              const DramaPage(),
+              LibraryPage(
+                onBrowse: () => desktopTab.value = 0,
+                onFindDrama: () => desktopTab.value = 1,
+              ),
+              const MinePage(),
+            ],
+          );
+        },
       );
     }
+    AudioFloatingRouteScope.configure(context, hidden: _index == 1);
     final palette = HomePalette.of(context);
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final isDramaTab = _index == 1;

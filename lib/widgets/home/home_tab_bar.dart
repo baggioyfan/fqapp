@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 
-import '../../services/desktop_platform.dart';
 import 'home_design.dart';
 
 class HomeCategory {
@@ -19,17 +18,20 @@ const homeCategories = [
   HomeCategory('听书', Icons.circle),
 ];
 
-/// 官方书城顶部 tab 条（`res/layout/alx.xml` 的 `SlidingTabLayout aj0`）。
+/// 书城顶部 tab 条。官方对照（`res/layout/alx.xml` 的 `SlidingTabLayout
+/// aj0`）留在这里，当前实现已经按首页重做时的方向改过：
 ///
-/// 尺寸取自反编译布局，只有左右内边距按用户要求收口：
+/// 官方尺寸如下，只有左右内边距按用户要求收口：
 /// * 高度 38dp，paddingBottom 10dp；
-/// * 选中字号 `av5` = 24sp，未选中字号 `avq` = 16sp；
+/// * 选中字号 `av5` = 24sp，未选中字号 `avq` = 16sp（现为 17/15）；
 /// * 选中色 `aui` 与未选中色 `avn` 都是 `skin_color_black_light`(#000000)
 ///   —— 官方不靠颜色区分，只靠字号、字重（两态都粗体）和未选中 0.4 透明度；
+///   现版改用墨色 / 次级灰两级；
 /// * tab 间距 `avb` = 20dp（`SlidingTabLayout.O()` 里
 ///   `setMargins(0, 0, this.K, 0)`，`this.K` 就是 `avb`），tab 高 `avc` = 34dp；
 /// * 指示器：`aup` = 0dp（高度 0）。`onDraw` 里 `if (this.s > 0.0f)` 才绘制，
-///   所以官方书城顶栏**没有下划线**。`auw` = 16dp 是宽度，高度为 0 时无效。
+///   所以官方书城顶栏**没有下划线**。`auw` = 16dp 是宽度，高度为 0 时无效；
+///   现版取其 16dp 宽，补一条 2.5dp 的墨色短线。
 ///
 /// 左右内边距官方是 `paddingStart` 20dp / `paddingEnd` 13dp——**本来就不对称**，
 /// 贴上去后「推荐」左侧的空隙明显大于末位 tab 右侧（用户 2026-10-25 指出）。
@@ -41,21 +43,18 @@ const homeCategories = [
 /// 得下时会把富余按间隔平摊（见 [_gapWidth]），两端才同时落在 [sidePadding] 那
 /// 条竖线上。
 ///
-/// 桌面端另走一套（见 [desktopBarHeight] 起的一组常量）：上面那套几何是为
-/// 375dp 竖屏调的，搬到 1280dp 窗口里会同时踩三个坑——
-/// 1. 选中项 24sp、未选中 16sp，点一下整行文字就重排跳动；
-/// 2. 灰色 0.4 透明度的 16sp 字和下方排行榜条（16/14sp 全粗体）撞成同一个
-///    层级，两行看不出谁是一级；
-/// 3. 没有 hover、没有指针光标，桌面上摸不出「这是可点的」。
-/// 所以桌面改成等字号胶囊：选中项 accent 淡底 + accentStrong 文字，未选中
-/// muted 文字、hover 出浅底、光标变手型。手机端保持官方形态不动。
+/// 上一版是圆角胶囊 + 图标 + 橙色选中底，和官方完全不是一种东西。
+///
+/// 2026-10-26 首页重做：字号从官方的 24/16 收到 17/15，未选中不再是同一
+/// 墨色的 40% 透明，而是次级灰；选中项下方补一条 16×2.5dp 的墨色短线。
+/// 字号跳变太大时条带会「一顿一顿」地变宽，这是新版的另一处改动。
 class HomeTabBarDelegate extends SliverPersistentHeaderDelegate {
-  static const double barHeight = 38;
+  static const double barHeight = 40;
   // `alx.xml` 为 10dp；2026-10-24 用户拍板不对齐官方——顶栏与排行榜条
   // 的距离按视觉收紧（与区块头 margin 联动，见 _rankStripTopMargin）。
-  static const double bottomPadding = 4;
-  static const double selectedSize = 24;
-  static const double unselectedSize = 16;
+  static const double bottomPadding = 6;
+  static const double selectedSize = 17;
+  static const double unselectedSize = 15;
   static const double tabSpacing = 20;
 
   /// 条带的左右栏距：与 [HomeHero] 搜索框一致（官方 20/13 的不对称见类注释）。
@@ -64,24 +63,6 @@ class HomeTabBarDelegate extends SliverPersistentHeaderDelegate {
   /// 放得下时每个间隔最多再撑这么多：桌面宽窗里若按富余等比摊开，六个分类会被
   /// 摊到整屏两端，比留白更难看。
   static const double maxExtraSpacing = 12;
-
-  /// 未选中项的透明度 `avr`（`SlidingTabLayout.a6`，`L2048 getFloat(55, 0.4f)`）。
-  static const double unselectedAlpha = 0.4;
-
-  // ---- 桌面（我们的适配，不对齐官方）----
-  static const double desktopBarHeight = 46;
-  static const double desktopBottomPadding = 8;
-  static const double desktopFontSize = 14;
-
-  /// 胶囊间距。比手机端的 20dp 小：有了底色之后不需要靠留白分组。
-  static const double desktopTabGap = 6;
-
-  /// 左右内边距：与上方搜索行（16）、下方排行榜区块（16）对齐成一条竖线。
-  /// 官方是 20，桌面按这三层的共同左线收敛到 16。
-  static const double desktopSidePadding = 16;
-  static const double desktopPillRadius = 9;
-  static const double desktopPillPaddingH = 14;
-  static const double desktopPillPaddingV = 6;
 
   final int selectedIndex;
   final ValueChanged<int> onSelect;
@@ -97,10 +78,6 @@ class HomeTabBarDelegate extends SliverPersistentHeaderDelegate {
   final bool eink;
   final bool oled;
 
-  /// 强制走某一端的形态。null 表示按运行平台判断（[isDesktopHost]）。
-  /// 只为测试可断言，生产路径不要传。
-  final bool? desktop;
-
   HomeTabBarDelegate({
     required this.selectedIndex,
     required this.onSelect,
@@ -109,20 +86,7 @@ class HomeTabBarDelegate extends SliverPersistentHeaderDelegate {
     this.dark = false,
     this.eink = false,
     this.oled = false,
-    this.desktop,
   });
-
-  bool get _wide => desktop ?? isDesktopHost;
-
-  /// pinned 头的总高。字号放大时必须同步长高：header 的 layoutExtent 要
-  /// 等于 extent，否则 Flutter 报 "layoutExtent exceeds paintExtent"。
-  static double extentFor(double textScale, {bool? desktop}) {
-    final wide = desktop ?? isDesktopHost;
-    final base = wide
-        ? desktopBarHeight + desktopBottomPadding
-        : barHeight + bottomPadding;
-    return base + (textScale - 1).clamp(0, 2) * 16;
-  }
 
   @override
   double get minExtent => extent;
@@ -137,103 +101,38 @@ class HomeTabBarDelegate extends SliverPersistentHeaderDelegate {
     bool overlapsContent,
   ) {
     final palette = HomePalette.of(context);
-    final wide = _wide;
-    // pinned header 的 layoutExtent 必须等于 extent，否则 Flutter 报
-    // "layoutExtent exceeds paintExtent"。字号随 textScale 长大时 extent
-    // 同步变大，所以这里的高度必须从 extent 反推（见 [extentFor]）。
-    final bottom = wide ? desktopBottomPadding : bottomPadding;
-    final rowHeight = (extent - bottom).clamp(
-      wide ? desktopBarHeight : barHeight,
-      200.0,
-    );
-    return DecoratedBox(
-      decoration: BoxDecoration(color: palette.canvas),
-      child: wide
-          ? _desktopBar(context, palette, rowHeight, bottom, overlapsContent)
-          : _mobileBar(context, palette, rowHeight, bottom),
-    );
-  }
-
-  /// 桌面形态：等字号胶囊 + hover，吸顶时补一条分隔线。
-  Widget _desktopBar(
-    BuildContext context,
-    HomePalette palette,
-    double rowHeight,
-    double bottom,
-    bool overlapsContent,
-  ) => Stack(
-    fit: StackFit.expand,
-    children: [
-      Padding(
-        padding: EdgeInsets.fromLTRB(
-          desktopSidePadding,
-          0,
-          desktopSidePadding,
-          bottom,
-        ),
-        child: SizedBox(
-          height: rowHeight,
-          child: ListView.separated(
-            padding: EdgeInsets.zero,
-            scrollDirection: Axis.horizontal,
-            itemCount: categories.length,
-            separatorBuilder: (_, _) => const SizedBox(width: desktopTabGap),
-            itemBuilder: (context, index) => Center(
-              child: _DesktopTab(
-                tabKey: ValueKey('home_category_$index'),
-                label: categories[index].label,
-                selected: index == selectedIndex,
-                onTap: () => onSelect(index),
-              ),
-            ),
-          ),
-        ),
-      ),
-      // 吸顶时内容从胶囊底下穿过，没有分隔线会显得两行粘在一起。
-      if (overlapsContent)
-        Positioned(
-          left: 0,
-          right: 0,
-          bottom: 0,
-          child: SizedBox(
-            height: 0.6,
-            child: ColoredBox(color: palette.line),
-          ),
-        ),
-    ],
-  );
-
-  /// 手机形态：官方字号/透明度两态，间隔按剩余宽度平摊（见 [_gapWidth]）。
-  Widget _mobileBar(
-    BuildContext context,
-    HomePalette palette,
-    double rowHeight,
-    double bottom,
-  ) {
     final duration = MediaQuery.disableAnimationsOf(context)
         ? Duration.zero
         : const Duration(milliseconds: 180);
-    return Padding(
-      padding: EdgeInsets.only(bottom: bottom),
-      child: SizedBox(
-        height: rowHeight,
-        child: LayoutBuilder(
-          builder: (context, constraints) {
-            final gap = _gapWidth(context, constraints.maxWidth, palette);
-            return SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.symmetric(horizontal: sidePadding),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  for (var index = 0; index < categories.length; index++) ...[
-                    if (index > 0) SizedBox(width: gap),
-                    _tab(index, rowHeight, duration, palette),
+    // pinned header 的 layoutExtent 必须等于 extent，否则 Flutter 报
+    // "layoutExtent exceeds paintExtent"。字号随 textScale 长大时 extent
+    // 同步变大，所以这里的高度必须从 extent 反推，不能用写死的 38。
+    final rowHeight = (extent - bottomPadding).clamp(barHeight, 200.0);
+
+    return DecoratedBox(
+      decoration: BoxDecoration(color: palette.canvas),
+      child: Padding(
+        padding: const EdgeInsets.only(bottom: bottomPadding),
+        child: SizedBox(
+          height: rowHeight,
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final gap = _gapWidth(context, constraints.maxWidth, palette);
+              return SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                padding: const EdgeInsets.symmetric(horizontal: sidePadding),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    for (var index = 0; index < categories.length; index++) ...[
+                      if (index > 0) SizedBox(width: gap),
+                      _tab(index, rowHeight, duration, palette),
+                    ],
                   ],
-                ],
-              ),
-            );
-          },
+                ),
+              );
+            },
+          ),
         ),
       ),
     );
@@ -281,8 +180,8 @@ class HomeTabBarDelegate extends SliverPersistentHeaderDelegate {
 
   TextStyle _labelStyle(bool selected, HomePalette palette) => TextStyle(
     fontSize: selected ? selectedSize : unselectedSize,
-    fontWeight: FontWeight.w700,
-    color: palette.ink.withValues(alpha: selected ? 1 : unselectedAlpha),
+    fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+    color: selected ? palette.ink : palette.muted,
     height: 1,
   );
 
@@ -312,13 +211,27 @@ class HomeTabBarDelegate extends SliverPersistentHeaderDelegate {
         // `alpha = a6` = 0.4（`avr`，`L2048 getFloat(55, 0.4f)`）。
         child: SizedBox(
           height: rowHeight,
-          child: Center(
-            child: AnimatedDefaultTextStyle(
-              duration: duration,
-              curve: Curves.easeOutCubic,
-              style: _labelStyle(selected, palette),
-              child: Text(category.label),
-            ),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              AnimatedDefaultTextStyle(
+                duration: duration,
+                curve: Curves.easeOutCubic,
+                style: _labelStyle(selected, palette),
+                child: Text(category.label),
+              ),
+              const SizedBox(height: 5),
+              AnimatedContainer(
+                duration: duration,
+                curve: Curves.easeOutCubic,
+                width: 16,
+                height: 2.5,
+                decoration: BoxDecoration(
+                  color: selected ? palette.ink : Colors.transparent,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+            ],
           ),
         ),
       ),
@@ -335,95 +248,5 @@ class HomeTabBarDelegate extends SliverPersistentHeaderDelegate {
       categories != oldDelegate.categories ||
       dark != oldDelegate.dark ||
       eink != oldDelegate.eink ||
-      oled != oldDelegate.oled ||
-      desktop != oldDelegate.desktop;
-}
-
-/// 桌面分类胶囊。
-///
-/// 与手机端刻意不同：两态字号一致（14sp），只靠底色 / 字重 / 颜色区分，
-/// 切换时整行不会重排；hover 有浅底反馈、光标是手型。
-class _DesktopTab extends StatefulWidget {
-  const _DesktopTab({
-    required this.tabKey,
-    required this.label,
-    required this.selected,
-    required this.onTap,
-  });
-
-  final Key tabKey;
-  final String label;
-  final bool selected;
-  final VoidCallback onTap;
-
-  @override
-  State<_DesktopTab> createState() => _DesktopTabState();
-}
-
-class _DesktopTabState extends State<_DesktopTab> {
-  bool _hover = false;
-
-  @override
-  Widget build(BuildContext context) {
-    final palette = HomePalette.of(context);
-    final duration = MediaQuery.disableAnimationsOf(context)
-        ? Duration.zero
-        : const Duration(milliseconds: 140);
-    final selected = widget.selected;
-    final Color background;
-    if (selected) {
-      background = HomePalette.accent.withValues(
-        alpha: palette.dark ? 0.22 : 0.11,
-      );
-    } else if (_hover) {
-      background = palette.soft;
-    } else {
-      background = Colors.transparent;
-    }
-    return Semantics(
-      selected: selected,
-      button: true,
-      label: widget.label,
-      excludeSemantics: true,
-      onTap: widget.onTap,
-      child: MouseRegion(
-        cursor: SystemMouseCursors.click,
-        onEnter: (_) => setState(() => _hover = true),
-        onExit: (_) => setState(() => _hover = false),
-        child: GestureDetector(
-          key: widget.tabKey,
-          behavior: HitTestBehavior.opaque,
-          onTap: widget.onTap,
-          child: AnimatedContainer(
-            duration: duration,
-            curve: Curves.easeOutCubic,
-            padding: const EdgeInsets.symmetric(
-              horizontal: HomeTabBarDelegate.desktopPillPaddingH,
-              vertical: HomeTabBarDelegate.desktopPillPaddingV,
-            ),
-            decoration: BoxDecoration(
-              color: background,
-              borderRadius: BorderRadius.circular(
-                HomeTabBarDelegate.desktopPillRadius,
-              ),
-            ),
-            child: AnimatedDefaultTextStyle(
-              duration: duration,
-              curve: Curves.easeOutCubic,
-              style: TextStyle(
-                fontSize: HomeTabBarDelegate.desktopFontSize,
-                // 墨水屏没有 accent 区分，选中项靠字重加粗补齐。
-                fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
-                color: selected
-                    ? (palette.eink ? palette.ink : palette.accentText)
-                    : palette.muted,
-                height: 1.1,
-              ),
-              child: Text(widget.label),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
+      oled != oldDelegate.oled;
 }

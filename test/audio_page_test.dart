@@ -1089,9 +1089,9 @@ class _AudioPlayer extends ControlledNativePlayer {
   }
 
   @override
-  Future<int> create(String cdnUrl, String keyHex) {
+  Future<int> create(String cdnUrl, String keyHex, {int? startMs}) {
     keys.add(keyHex);
-    return super.create(cdnUrl, keyHex);
+    return super.create(cdnUrl, keyHex, startMs: startMs);
   }
 }
 
