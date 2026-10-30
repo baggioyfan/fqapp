@@ -818,6 +818,15 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     // 已经暂停（或者从未播过）时手势得先就位。initState 里不能 setState，
     // 直接赋值。
     _doubleTapArmed = _listenDoubleTapArmed;
+    // 迷你栏的跟随键靠这个函数决定是否可点，而它挂在 Overlay 上、不随本页
+    // 重建；initState 正处于构建阶段，同步广播会撞上 markNeedsBuild 断言，
+    // 所以推到帧后再注册。
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        ListeningSession.instance.jumpToPlaybackHandler =
+            _jumpToPlaybackPosition;
+      }
+    });
     // 跟随用 10Hz 轮询，不走 ListeningSession 的监听（那条每秒最多通知一次，
     // 只在结构性变化时才来，而且不管翻页）。
     _followPoll = Timer.periodic(
@@ -1607,6 +1616,11 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     VolumeKeyService.instance.setOnVolumeKey(null);
     unawaited(VolumeKeyService.instance.setEnabled(false));
     ListeningSession.instance.removeListener(_onListeningTick);
+    // 只清自己注册的：换章重建时新实例已经接管。
+    if (ListeningSession.instance.jumpToPlaybackHandler ==
+        _jumpToPlaybackPosition) {
+      ListeningSession.instance.jumpToPlaybackHandler = null;
+    }
     _replacementStore.changes.removeListener(_onReplacementChanged);
     _replacementCancellation?.cancel();
     ++_replacementGeneration;
