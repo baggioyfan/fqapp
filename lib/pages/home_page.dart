@@ -252,9 +252,9 @@ class _HomePageState extends ConsumerState<HomePage> {
         // 桌面不再共用这一档。原先写的是 `isWindowsDesktop ? 1440 : 840`，
         // 于是 macOS 跟手机一样吃 840——2560 的窗口里内容只占三分之一，
         // 两侧各空出 860dp，全屏看着像没铺开。桌面把宽度交给窗口本身，
-        // 能铺几列由 homeShelfColumns 按「一张卡 ~180dp」反推（见
-        // `widgets/home/home_shelf.dart`），所以窗口再宽也只是多几列，
-        // 不会把封面拉成海报，也不会留下大片空白。
+        // 能铺几列由 homeShelfColumns 按「一格 190dp，钳 6–9 列」反推（见
+        // `widgets/home/home_shelf.dart`）：默认窗口六列、全屏九列，窗口再宽
+        // 就把卡片放大，不会再往格子里塞更多小封面。
         child: ConstrainedBox(
           constraints: BoxConstraints(
             maxWidth: isDesktopHost ? double.infinity : 840,
