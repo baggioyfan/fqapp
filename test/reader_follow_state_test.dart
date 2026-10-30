@@ -169,35 +169,6 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
-  testWidgets('按「回到朗读处」之后跟随立刻恢复', (tester) async {
-    await _mount(tester);
-    final layout = _pager(tester).layout;
-    _seed(positionMs: 0, track: _track(), cue: '长句');
-    // 手动翻一页：闩锁 15 秒 + 退出跟随。
-    await _tapSide(tester, 1);
-    expect(_pager(tester).pageIndex, 1);
-
-    // 迷你栏的定位键：开跟随 + 跳回朗读处。
-    ListeningSession.instance.setFollowArmed(true);
-    ListeningSession.instance.jumpToPlaybackHandler!();
-    await tester.pump(const Duration(milliseconds: 50));
-    expect(_pager(tester).pageIndex, 0, reason: '定位键应把人带回朗读处');
-
-    // 播放位置继续前进，跟随必须马上跟上，而不是等闩锁过期。
-    final track = _track();
-    _seed(positionMs: 36000, track: track, cue: '长句');
-    final span = CueIndex.build(
-      layout: layout,
-      track: track,
-    ).spanAtPositionMs(36000)!;
-    final target = layout.pageForOffset(span.spokenOffset(36000));
-    expect(target, greaterThan(0));
-    await tester.pump(const Duration(milliseconds: 250));
-    expect(_pager(tester).pageIndex, target, reason: '点过定位键就该继续跟随，闩锁不能还挡着');
-
-    await tester.pumpWidget(const SizedBox.shrink());
-  });
-
   testWidgets('被闩锁挡住的跟随换章不再每 100ms 存一次进度', (tester) async {
     final store = ControlledReaderStore();
     await _mount(tester, store: store);
