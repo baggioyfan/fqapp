@@ -375,7 +375,8 @@ class HomeNotifier extends Notifier<HomeState> {
   /// 顶栏下标的口径：`true` 表示这一页的分类条由本地 [tabs] 表驱动。
   ///
   /// 短剧页（[dramaProvider]）的频道条是本地表下标拼的
-  /// （`drama_page.dart` 的 `dramaChannels` 全用 `HomeNotifier.tabs.indexOf`），
+  /// （`drama/drama_channels.dart` 这个 part 里的 `dramaChannels` 全用
+  /// `HomeNotifier.tabs.indexOf`），
   /// 而它的 `state.tabs` 同样会被服务端那 11 项填满。若跟着服务端下标解析，
   /// 它的「短剧」（本地下标 2）就会变成服务端的「经典」——所以这一页必须
   /// 固定走本地表，不能靠 `state.tabs` 空不空来猜。
