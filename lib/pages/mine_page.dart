@@ -82,9 +82,14 @@ class _MinePageState extends State<MinePage> {
     _reloadTimer = null;
     _storeDirty = false;
     final store = LibraryStore.instance;
+    // 读时长在本仓库存成两张表（按天 / 按书，见 ReadTimeStore），而不是上游
+    // 那张「书 × 天」交叉表 —— 交叉表在 `ReadTimeStore.migrateFromLegacy`
+    // 里折叠掉了逐日明细，重建不回来。统计只要这两张表的合计，见
+    // `ReadingStats.from`。
     final stats = ReadingStats.from(
       history: store.historySnapshot(),
-      readTime: store.readTimeSnapshot(),
+      readTimeDays: store.readTimeDailyTotals(),
+      readTimeBooks: store.readTimeBookTotals(),
       readTimeKinds: store.readTimeKindSnapshot(),
     );
     setState(() {

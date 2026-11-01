@@ -202,7 +202,6 @@ extension _ReaderPageSelection on _ReaderPageState {
       view: view,
       safeArea: safeArea,
       underlined: underlined,
-      showListening: true,
       avoidBottom: avoidBottom,
     );
     return Positioned(
@@ -212,7 +211,6 @@ extension _ReaderPageSelection on _ReaderPageState {
       child: ReaderParagraphMenu(
         underlined: underlined,
         paragraphScoped: selection.isWholeParagraph,
-        showListening: true,
         isDark: preset.isDark,
         belowAnchor: below,
         onAction: (action) {
@@ -270,11 +268,8 @@ extension _ReaderPageSelection on _ReaderPageState {
           ),
         );
         if (mounted) _showMessage('已复制');
-      case ReaderParagraphAction.listen:
-        final block = layout.blockAtOffset(selection.start);
-        final textId = block?.textId;
-        if (block == null || textId == null) return;
-        await _openListening(fromMs: block.startMs, textId: textId);
+      // 长按段落不给「从本段听」：听书只有一个起点（当前页第一段），
+      // 入口也只有工具栏那一个按钮，见 reader_paragraph_menu.dart 的说明。
       case ReaderParagraphAction.underline:
       case ReaderParagraphAction.removeUnderline:
         await _toggleSelectionUnderline(

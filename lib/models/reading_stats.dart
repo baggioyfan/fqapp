@@ -29,11 +29,12 @@ class ReadingStats {
 
   factory ReadingStats.from({
     required List<Map<String, dynamic>> history,
-    required Map<String, Map<String, double>> readTime,
+    required Map<String, double> readTimeDays,
+    required Map<String, double> readTimeBooks,
     Map<String, String> readTimeKinds = const {},
   }) => ReadingStats._(
-    _dayMinutesOf(history, readTime),
-    _rankOf(history, readTime, readTimeKinds),
+    _dayMinutesOf(history, readTimeDays, readTimeBooks),
+    _rankOf(history, readTimeBooks, readTimeKinds),
   );
 
   bool get isEmpty => dayMinutes.isEmpty;
@@ -104,18 +105,18 @@ String formatReadingDuration(double minutes) {
 
 Map<String, double> _dayMinutesOf(
   List<Map<String, dynamic>> history,
-  Map<String, Map<String, double>> readTime,
+  Map<String, double> daySeconds,
+  Map<String, double> bookSeconds,
 ) {
   final map = <String, double>{};
   void add(String day, double minutes) => map[day] = (map[day] ?? 0) + minutes;
-  // Real recorded reading time (seconds → minutes).
-  for (final days in readTime.values) {
-    days.forEach((day, secs) => add(day, secs / 60));
-  }
+  // Real recorded reading time (seconds → minutes). The day table is already
+  // summed across devices and carries the legacy fold, so no second pass.
+  daySeconds.forEach((day, secs) => add(day, secs / 60));
   // Fallback estimates for books without real data yet, so older history
   // still shows up during the transition. Drops out once real data exists.
   for (final entry in history) {
-    if (readTime.containsKey(historyStatisticsId(entry))) continue;
+    if (bookSeconds.containsKey(historyStatisticsId(entry))) continue;
     final time = (entry['time'] as num?)?.toInt() ?? 0;
     add(
       readingDayKey(DateTime.fromMillisecondsSinceEpoch(time)),
@@ -127,7 +128,7 @@ Map<String, double> _dayMinutesOf(
 
 List<ReadingRankItem> _rankOf(
   List<Map<String, dynamic>> history,
-  Map<String, Map<String, double>> readTime,
+  Map<String, double> bookSeconds,
   Map<String, String> readTimeKinds,
 ) {
   final byBook = <String, ReadingRankItem>{};
@@ -137,8 +138,8 @@ List<ReadingRankItem> _rankOf(
   for (final entry in history) {
     historyById.putIfAbsent(historyStatisticsId(entry), () => entry);
   }
-  readTime.forEach((bookId, days) {
-    final minutes = days.values.fold<double>(0, (a, b) => a + b) / 60;
+  bookSeconds.forEach((bookId, secs) {
+    final minutes = secs / 60;
     if (minutes <= 0) return;
     final entry =
         historyById[bookId] ??
@@ -147,7 +148,7 @@ List<ReadingRankItem> _rankOf(
   });
   for (final entry in history) {
     final id = historyStatisticsId(entry);
-    if (readTime.containsKey(id)) continue;
+    if (bookSeconds.containsKey(id)) continue;
     final existing = byBook[id];
     byBook[id] = ReadingRankItem(
       entry: existing?.entry ?? entry,

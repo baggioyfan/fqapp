@@ -18,8 +18,15 @@ void main() {
     }
   });
 
-  ReadingStats statsOf(Map<String, double> secondsByDay) =>
-      ReadingStats.from(history: const [], readTime: {'book': secondsByDay});
+  // 仓库里读时长是两张表（按天 / 按书），不是「书 × 天」交叉表；日表已经
+  // 跨设备求和，书表只用来判断「这本书有没有真实时长」。
+  ReadingStats statsOf(Map<String, double> secondsByDay) => ReadingStats.from(
+    history: const [],
+    readTimeDays: secondsByDay,
+    readTimeBooks: {
+      'book': secondsByDay.values.fold<double>(0, (a, b) => a + b),
+    },
+  );
 
   test('this week runs Monday through today across a month boundary', () {
     // 2026-10-01 is a Thursday; its week started on Monday 2026-09-28.
@@ -54,9 +61,8 @@ void main() {
         {'id': 'old', 'bookId': 'old', 'title': '旧书', 'time': time},
         {'id': 'new', 'bookId': 'new', 'title': '新书', 'time': time},
       ],
-      readTime: {
-        'new': {'2026-3-4': 3600},
-      },
+      readTimeDays: const {'2026-3-4': 3600},
+      readTimeBooks: const {'new': 3600},
     );
     expect(stats.minutesOn(DateTime(2026, 3, 4)), 60 + flatBookMinutes);
     expect(stats.rank.map((item) => item.title), ['新书', '旧书']);
@@ -70,10 +76,8 @@ void main() {
         {'id': 'y', 'bookId': 'book-1', 'title': '第二次', 'time': 2},
         {'id': 'other', 'bookId': 'book-2', 'title': '另一本', 'time': 3},
       ],
-      readTime: {
-        'book-1': {'2026-3-4': 120},
-        'book-2': {'2026-3-4': 60},
-      },
+      readTimeDays: const {'2026-3-4': 180},
+      readTimeBooks: const {'book-1': 120, 'book-2': 60},
     );
     expect(stats.rank.map((item) => item.title), ['第一次', '另一本']);
   });
@@ -81,10 +85,8 @@ void main() {
   test('read time without history keeps its content id and kind', () {
     final stats = ReadingStats.from(
       history: const [],
-      readTime: {
-        'audio:42': {'2026-3-4': 120},
-        'orphan': {'2026-3-4': 60},
-      },
+      readTimeDays: const {'2026-3-4': 180},
+      readTimeBooks: const {'audio:42': 120, 'orphan': 60},
       readTimeKinds: {'orphan': 'video'},
     );
     final audio = stats.rank.first.entry;
