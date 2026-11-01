@@ -237,11 +237,9 @@ void main() {
     expect(frame.preset, ReaderThemePreset.light);
     expect(find.text('听书方式'), findsOneWidget);
     final sheet = find.byType(ReaderSettingsSheetFrame);
-    for (final icon in [
-      LucideIcons.headphones,
-      LucideIcons.locate_fixed,
-      LucideIcons.mic,
-    ]) {
+    // 面板只有引擎两项：「从本页播放」这种第二轴已经去掉，起点固定是当前页
+    // 第一段（见 reader_page_listening_launch.dart）。
+    for (final icon in [LucideIcons.headphones, LucideIcons.mic]) {
       expect(
         find.descendant(of: sheet, matching: find.byIcon(icon)),
         findsOneWidget,

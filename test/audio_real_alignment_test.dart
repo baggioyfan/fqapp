@@ -768,5 +768,7 @@ class _RealSession {
 }
 
 class _AudioPlayer extends ControlledNativePlayer {
-  _AudioPlayer();
+  // 真人讲书的样稿按 2 分钟片长摆进度药丸；`ControlledNativePlayer` 的默认
+  // 片长是 0（等 durationStream 报），这里显式给一个。
+  _AudioPlayer() : super(duration: const Duration(minutes: 2));
 }

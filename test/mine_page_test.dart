@@ -182,6 +182,9 @@ void main() {
     final page = await _openRankedTitle(tester, 'orphan-video');
     expect(page.item.id, 'orphan-video');
     expect(page.item.kind, 'video');
+    // 视频详情页会给目录请求挂一个 20 秒预算定时器；这里没有注入 loader，
+    // 不把它走掉的话测试结束会报 pending timer。
+    await tester.pump(const Duration(seconds: 21));
   });
 
   testWidgets('全部 lists every ranked book and opens the tapped one', (

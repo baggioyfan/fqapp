@@ -64,7 +64,7 @@
     "rust/src/endpoints/video.rs": 3555,
     "scripts/verify_android_apk.py": 534,
     "test/audio_page_test.dart": 1177,
-    "test/audio_real_alignment_test.dart": 772,
+    "test/audio_real_alignment_test.dart": 774,
     "test/chapter_cache_sheet_test.dart": 553,
     "test/comic_reader_page_test.dart": 859,
     "test/desktop_semantics_update_test.dart": 844,

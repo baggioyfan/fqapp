@@ -102,6 +102,10 @@ void main() {
         ),
       ),
     );
+    // 短剧目录空会再取一次（_directoryWithRetry），中间隔 300ms；轮询一次
+    // pumpAndSettle 在没有动画的骨架上会立刻返回，得把这 300ms 显式走掉。
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
     await tester.pumpAndSettle();
     // 目录为空说明取目录失败（pseries 对单集 id 回 code=101104 + 空列表），
     // 不能把它渲染成「这部剧只有正在看的这一集」：页面要给失败态和重试，
