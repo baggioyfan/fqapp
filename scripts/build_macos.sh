@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# fqapp macOS 构建入口（默认跟随宿主架构：Apple Silicon → arm64，Intel → x86_64）。
+# fqapp macOS 构建入口（默认出 universal 包：arm64 + x86_64 合在一个 .app 里）。
 #
 # 上游没有 macos/ 目录：本脚本首次运行时用 `flutter create --platforms=macos`
 # 生成平台壳，然后覆盖两份 entitlements。上游模板默认开启 App Sandbox，而本
@@ -7,8 +7,8 @@
 # 沙盒会把这三件事全部拦掉，所以这里显式关掉沙盒、关闭库校验。
 #
 # 用法：
-#   scripts/build_macos.sh                          # 完整构建（宿主架构）+ 校验 + 打 zip
-#   FQAPP_MACOS_ARCH=arm64 scripts/build_macos.sh   # 指定目标架构（arm64 / x86_64）
+#   scripts/build_macos.sh                          # 完整构建（universal）+ 校验 + 打 zip
+#   FQAPP_MACOS_ARCH=arm64 scripts/build_macos.sh   # 只出单架构（排障 / 省时间用）
 #   FQAPP_MACOS_CODEGEN=1 scripts/build_macos.sh    # 先重跑 FRB codegen
 #   FQAPP_MACOS_SKIP_PACKAGE=1 scripts/build_macos.sh
 set -euo pipefail
@@ -21,29 +21,40 @@ PROJECT_NAME="fqapp"
 die() { echo "错误：$*" >&2; exit 1; }
 
 # --- 目标架构 ---------------------------------------------------------------
+# 默认出 universal（arm64 + x86_64 同在一个 .app 内）：用户不用挑包，Intel 与
+# Apple Silicon 装同一个 zip 都能跑。两份 slice 只在磁盘上共存，运行时 dyld 只
+# 映射当前架构那一份（实测 universal 与 thin 的物理内存、启动耗时一致），所以
+# 「合一」的代价只有下载量与占盘，没有运行开销。
+#
 # arm64 与 x86_64 共用同一份源码，差异只有三处：Rust target triple、Xcode 的
 # ARCHS、产物名。Dart 侧不需要改：全仓库都用 Platform.isMacOS 判断平台。
 HOST_ARCH="$(uname -m)"
-TARGET_ARCH="${FQAPP_MACOS_ARCH:-$HOST_ARCH}"
+TARGET_ARCH="${FQAPP_MACOS_ARCH:-universal}"
 case "$TARGET_ARCH" in
+  universal)
+    # universal 走 `flutter build macos` 的默认路径（Xcode ARCHS_STANDARD 在
+    # macOS 上就是 arm64 + x86_64）；那条路径只在 Apple Silicon 宿主上验证过，
+    # 在 Intel 宿主上会因 ARCHS_STANDARD 退化成单架构，所以这里直接挡住。
+    [ "$HOST_ARCH" = "arm64" ] ||
+      die "universal 包只能在 Apple Silicon 上构建（当前宿主 ${HOST_ARCH}）；要交叉出包请显式传 FQAPP_MACOS_ARCH=arm64 / x86_64"
+    RUST_TRIPLES=(aarch64-apple-darwin x86_64-apple-darwin)
+    PKG_SUFFIX=""
+    ;;
   arm64)
-    RUST_TRIPLE="aarch64-apple-darwin"
-    PKG_SUFFIX="arm64"
+    RUST_TRIPLES=(aarch64-apple-darwin)
+    PKG_SUFFIX="-arm64"
     ;;
   x86_64)
-    RUST_TRIPLE="x86_64-apple-darwin"
-    PKG_SUFFIX="x64"
+    RUST_TRIPLES=(x86_64-apple-darwin)
+    PKG_SUFFIX="-x64"
     ;;
   *)
-    die "不支持的架构「${TARGET_ARCH}」，只支持 arm64 / x86_64"
+    die "不支持的架构「${TARGET_ARCH}」，只支持 universal / arm64 / x86_64"
     ;;
 esac
 
-# 一律显式 --target，产物固定落在 rust/target/<triple>/release，避免宿主默认
-# target 目录和交叉编译目录互相串味。
-CORE_DYLIB="rust/target/${RUST_TRIPLE}/release/libfqapi_core.dylib"
 APP="build/macos/Build/Products/Release/${PROJECT_NAME}.app"
-ZIP="fqapp-macos-${PKG_SUFFIX}.zip"
+ZIP="fqapp-macos${PKG_SUFFIX}.zip"
 
 # 最低系统版本（单一可调点）。取 13.0 = Ventura：
 #   - 技术下限：arm64 要求 ≥ 11.0，低于这个 Xcode 直接报
@@ -190,13 +201,39 @@ echo "    Podfile platform :osx → ${POD_PLATFORM}"
 echo "==> 3/6 flutter pub get"
 flutter pub get
 
-echo "==> 4/6 编译 Rust 核心（${RUST_TRIPLE}）"
-cargo build --release --manifest-path rust/Cargo.toml --target "$RUST_TRIPLE"
-[ -s "$CORE_DYLIB" ] || die "Rust 未产出 $CORE_DYLIB"
+echo "==> 4/6 编译 Rust 核心（${RUST_TRIPLES[*]}）"
+# 一律显式 --target，产物固定落在 rust/target/<triple>/release，避免宿主默认
+# target 目录和交叉编译目录互相串味。universal 时两条都编，再 lipo 合成一份
+# ——注意这里是唯一需要手工合并的地方：Flutter 的 Runner / App.framework 与
+# Pods 的 framework 在 macOS 上本来就按 ARCHS_STANDARD 出双架构，只有 Rust
+# 核心是按单一 triple 产的（历史产物里 dylib 就是 arm64-only，Intel 上会在
+# dlopen 阶段挂掉）。
+DYLIB_REL="release/libfqapi_core.dylib"
+for triple in "${RUST_TRIPLES[@]}"; do
+  cargo build --release --manifest-path rust/Cargo.toml --target "$triple"
+  [ -s "rust/target/$triple/$DYLIB_REL" ] ||
+    die "Rust 未产出 rust/target/$triple/$DYLIB_REL"
+done
+if [ "${#RUST_TRIPLES[@]}" -eq 1 ]; then
+  CORE_DYLIB="rust/target/${RUST_TRIPLES[0]}/$DYLIB_REL"
+else
+  CORE_DYLIB="rust/target/universal/$DYLIB_REL"
+  mkdir -p "$(dirname "$CORE_DYLIB")"
+  slices=()
+  for triple in "${RUST_TRIPLES[@]}"; do
+    slices+=("rust/target/$triple/$DYLIB_REL")
+  done
+  lipo -create "${slices[@]}" -output "$CORE_DYLIB"
+  echo "    lipo -create → $(lipo -archs "$CORE_DYLIB")"
+fi
 
 echo "==> 5/6 flutter build macos --release（ARCHS=${TARGET_ARCH}）"
-if [ "$TARGET_ARCH" = "$HOST_ARCH" ]; then
-  # 最常见路径：宿主与目标同架构，Flutter 直接按宿主出包。
+if [ "$TARGET_ARCH" = "universal" ] || [ "$TARGET_ARCH" = "$HOST_ARCH" ]; then
+  # 宿主与目标同架构（或要 universal）：走 Flutter 默认路径。macOS 工程的
+  # Release.xcconfig 是 ARCHS_STANDARD，在 Apple Silicon 上就等于 arm64 +
+  # x86_64 —— universal 正是靠这一点，再由下面 6/6 的严格校验兜底：万一哪天
+  # ARCHS_STANDARD 退化成单架构，构建会当场失败，而不是悄悄发出一个 Intel 上
+  # 起不来的包。
   flutter build macos --release --no-pub
 else
   # 宿主 ≠ 目标（例如在 Apple Silicon 上要 x86_64）：`flutter build macos` 没有
@@ -231,26 +268,46 @@ archs_norm() {
     /usr/bin/sed -E 's/ +$//'
 }
 
+# 目标架构集：universal 要求两条 slice 都在；单架构只要求含目标那一条（不禁止
+# 超集 —— x64 包里的 framework 历史上本来就是 universal，多一份 slice 无害）。
+# 注意 universal 的判断必须是「都在」而不是「含其一」：旧版脚本按「包含即通过」
+# 校验 arm64 包，结果 dylib 单片、Intel 上 dlopen 才暴露，构建期一句警告都没有。
+case "$TARGET_ARCH" in
+  universal) WANT_ARCHS="arm64 x86_64" ;;
+  *)         WANT_ARCHS="$TARGET_ARCH" ;;
+esac
+
+missing_archs() {
+  local got="$1" miss="" w
+  shift
+  for w in "$@"; do
+    case " $got " in
+      *" $w "*) ;;
+      *) miss="$miss $w" ;;
+    esac
+  done
+  printf '%s' "$miss"
+}
+
 assert_arch() {
-  local file="$1" want="$2" got
+  local file="$1" got miss
   got="$(archs_norm "$(lipo -archs "$file")")"
-  case " $got " in
-    *" $want "*) echo "    $(basename "$file") → $got" ;;
-    *) die "$file 架构为「${got}」，缺少 $want" ;;
-  esac
+  miss="$(missing_archs "$got" $WANT_ARCHS)"
+  [ -z "$miss" ] || die "$file 架构为「${got}」，缺少${miss}"
+  echo "    $(basename "$file") → $got"
 }
 
 # 主可执行文件与 Rust 核心的架构必须与目标一致。宿主与目标不同架构时最容易在
 # 这里露馅（Flutter 会静默按宿主出包）。
-assert_arch "$BIN" "$TARGET_ARCH"
-assert_arch "$APP/Contents/MacOS/libfqapi_core.dylib" "$TARGET_ARCH"
+assert_arch "$BIN"
+assert_arch "$APP/Contents/MacOS/libfqapi_core.dylib"
 
 # 再扫一遍包内的二进制目录：第三方预编译产物（libmpv 等）如果缺目标 slice，症状
 # 是运行到播放页才崩，构建期先抓出来更省事。只看 Contents/MacOS 与
 # Contents/Frameworks —— flutter_assets 里上万个资源文件不是 Mach-O，
 # 对整个 .app 逐个 `file` 只是白等。
 assert_arch_tree() {
-  local root="$1" bad=0 f archs
+  local root="$1" bad=0 f archs miss
   [ -d "$root" ] || return 0
   while IFS= read -r f; do
     case "$(file -b "$f" 2>/dev/null)" in
@@ -258,38 +315,43 @@ assert_arch_tree() {
       *) continue ;;
     esac
     archs="$(archs_norm "$(lipo -archs "$f" 2>/dev/null || true)")"
-    case " $archs " in
-      *" $TARGET_ARCH "*) ;;
-      *)
-        echo "    缺少 ${TARGET_ARCH}：${f#"$APP"/}（${archs:-未知}）" >&2
-        bad=1
-        ;;
-    esac
+    miss="$(missing_archs "$archs" $WANT_ARCHS)"
+    if [ -n "$miss" ]; then
+      echo "    缺少${miss}：${f#"$APP"/}（${archs:-未知}）" >&2
+      bad=1
+    fi
   done < <(find "$root" -type f)
-  [ "$bad" -eq 0 ] || die "包内存在缺少 ${TARGET_ARCH} slice 的 Mach-O"
+  [ "$bad" -eq 0 ] || die "包内存在缺少 ${WANT_ARCHS} slice 的 Mach-O"
 }
 assert_arch_tree "$APP/Contents/MacOS"
 assert_arch_tree "$APP/Contents/Frameworks"
-echo "    包内全部 Mach-O 均含 ${TARGET_ARCH}"
+echo "    包内全部 Mach-O 均含 ${WANT_ARCHS}"
 
+# universal 二进制会有两条 slice，必须逐条打印：只看第一条的话，第二条悄悄按
+# 更高 SDK 编也查不出来（Intel 用户会在 Ventura 上加载失败）。
 min_os() {
   otool -l "$1" |
-    awk '/LC_BUILD_VERSION|LC_VERSION_MIN_MACOSX/ {found=1}
-         found && /minos|version/ {print $2; exit}'
+    awk '/LC_BUILD_VERSION|LC_VERSION_MIN_MACOSX/ {found=1; next}
+         found && /minos|version/ {print $2; found=0}'
 }
-# 主可执行文件的 minos 必须正好等于基线：低了说明 2e 步的改写没生效（模板结构
-# 变了或 sed 没匹配上），高了说明某个 pod 把下限顶起来了 —— 两种情况 Ventura 都不对。
-MINOS="$(min_os "$BIN")"
-[ -n "$MINOS" ] || die "读不出 $BIN 的最低系统版本"
-if ! awk -v m="$MINOS" -v want="$DEPLOY_MAJOR" 'BEGIN {
-      split(m, a, ".");
-      exit !(a[1] + 0 == want + 0)
-    }'; then
-  die "最低系统版本 ${MINOS} 与基线 ${DEPLOY_MIN} 不一致（高于基线则 Ventura 跑不了，低于基线说明 2e 步没生效）"
-fi
-# 必须用 ${MINOS} 大括号：紧跟全角括号时，bash 在 UTF-8 locale 下会把
-# 「（」的首字节当成变量名的一部分，set -u 于是报 "MINOS?: unbound variable"。
-echo "    最低系统版本 → ${MINOS}（基线 ${DEPLOY_MIN}，Ventura 可用）"
+# 主可执行文件每条 slice 的 minos 都必须正好等于基线：低了说明 2e 步的改写没
+# 生效（模板结构变了或 sed 没匹配上），高了说明某个 pod 把下限顶起来了 ——
+# 两种情况 Ventura 都不对。
+MINOS_LIST="$(min_os "$BIN")"
+[ -n "$MINOS_LIST" ] || die "读不出 $BIN 的最低系统版本"
+BAD_MINOS=""
+while IFS= read -r m; do
+  [ -n "$m" ] || continue
+  awk -v m="$m" -v want="$DEPLOY_MAJOR" 'BEGIN {
+        split(m, a, ".");
+        exit !(a[1] + 0 == want + 0)
+      }' || BAD_MINOS="${BAD_MINOS} ${m}"
+done <<< "$MINOS_LIST"
+[ -z "$BAD_MINOS" ] ||
+  die "最低系统版本${BAD_MINOS} 与基线 ${DEPLOY_MIN} 不一致（高于基线则 Ventura 跑不了，低于基线说明 2e 步没生效）"
+# 必须用 ${...} 大括号：紧跟全角括号时，bash 在 UTF-8 locale 下会把「（」的
+# 首字节当成变量名的一部分，set -u 于是报 "VAR?: unbound variable"。
+echo "    最低系统版本 → ${MINOS_LIST//$'\n'/+}（基线 ${DEPLOY_MIN}，Ventura 可用）"
 
 # 随包 framework / dylib 各自带着自己的 minos。主可执行文件是 13.0 不代表
 # libmpv 之类也是 —— 某个 pod 若悄悄按 Sonoma 编，Ventura 上会在 dlopen 阶段
@@ -304,15 +366,19 @@ assert_minos_tree() {
     esac
     m="$(min_os "$f")"
     [ -n "$m" ] || continue
-    # awk 用退出码表达「超标」：> 基线时退 1，配合下面的 || 分支记为失败。
-    # 注意不要写成 exit !(...) —— 那样正好反过来，正常库会被判成超标。
-    awk -v m="$m" -v want="$DEPLOY_MAJOR" 'BEGIN {
-          split(m, a, ".");
-          exit (a[1] + 0 > want + 0)
-        }' || {
-      echo "    minos ${m} 高于基线 ${DEPLOY_MIN}：${f#"$APP"/}" >&2
-      bad=1
-    }
+    # 逐条 slice 判断（universal 下每条 framework 也有两行）。awk 用退出码
+    # 表达「超标」：> 基线时退 1，配合下面的 || 分支记为失败。注意不要写成
+    # exit !(...) —— 那样正好反过来，正常库会被判成超标。
+    while IFS= read -r one; do
+      [ -n "$one" ] || continue
+      awk -v m="$one" -v want="$DEPLOY_MAJOR" 'BEGIN {
+            split(m, a, ".");
+            exit (a[1] + 0 > want + 0)
+          }' || {
+        echo "    minos ${one} 高于基线 ${DEPLOY_MIN}：${f#"$APP"/}" >&2
+        bad=1
+      }
+    done <<< "$m"
   done < <(find "$root" -type f)
   [ "$bad" -eq 0 ] ||
     die "包内存在最低系统版本高于 ${DEPLOY_MIN} 的 Mach-O，Ventura 上会加载失败"

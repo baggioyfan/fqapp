@@ -1,31 +1,39 @@
-name: macOS build (Apple Silicon arm64 / Intel x86_64)
+name: macOS build (universal arm64 + x86_64)
 
-# 产出可在 macOS 13 Ventura 及以上运行的 .app，两个架构各一个包：
-#   arm64  → Apple Silicon 原生（macos-15 是 GitHub 的标准 arm64 runner）
-#   x86_64 → Intel 原生；Apple Silicon 上也能经 Rosetta 跑
+# 产出可在 macOS 13 Ventura 及以上运行的 .app，默认**一个 universal 包**：
+# 同一个 fqapp.app 里同时带 arm64（Apple Silicon 原生）与 x86_64（Intel 原生，
+# Apple Silicon 上也能经 Rosetta 跑）两份 slice，用户不用挑包。
+#
+# 为什么不是两个包：两个 slice 只在磁盘/下载上各占一份，运行时 dyld 只映射
+# 当前架构那一份（实测 universal 与 lipo -thin 的物理内存、启动耗时一致），
+# 所以「合一」没有运行开销；而分两个包时，「选错包 → 打不开 / Rosetta 提示」
+# 是每次都要人工解释一遍的支持成本。
+# 想临时只出单架构排障，dispatch 时把 arch 选成 arm64 / x86_64 即可。
+#
 # 最低系统由 scripts/build_macos.sh 的 DEPLOY_MIN 决定（当前 13.0）。
 # 上游没有 macos/ 平台目录，构建前由 scripts/build_macos.sh 用
 # `flutter create --platforms=macos` 生成。
 #
-# runner 选择：
-#   arm64  → macos-15（M1，3 vCPU / 7 GB，GA）。macos-26 已可用但仍是新镜像，
-#            且 Xcode 26 的 macOS 26 SDK 会让 connectivity_plus 的 7.0.0 覆盖
-#            失去必要性 —— 稳定优先，先钉 macos-15。
-#   x86_64 → macos-15-intel（GitHub 唯一的 x86_64 macOS runner，2027-08 退役）。
-#            原生 x86_64 构建比在 Apple Silicon 上交叉编译稳。
+# runner 选择：universal 只能在 Apple Silicon 上构建（macos-15，M1，3 vCPU /
+# 7 GB，GA）—— Xcode 的 ARCHS_STANDARD 在 macOS 上就是双架构，单跑一次即得
+# 两条 slice，比另起一台 Intel runner 各编一遍省一整个 job 的墙钟。macos-26
+# 已可用但仍是新镜像，且 Xcode 26 的 macOS 26 SDK 会让 connectivity_plus 的
+# 7.0.0 覆盖失去必要性 —— 稳定优先，先钉 macos-15。
+# macos-15-intel（GitHub 唯一的 x86_64 macOS runner，2027-08 退役）只在显式
+# 选 arch=x86_64 时才用。
 # macos-14 已于 2026-11-02 退役，不要再用。
 
 on:
   workflow_dispatch:
     inputs:
       arch:
-        description: 目标架构
+        description: 目标架构（universal = 一个包内含 arm64 + x86_64）
         type: choice
         options:
-          - both
+          - universal
           - arm64
           - x86_64
-        default: both
+        default: universal
       run_codegen:
         description: 先重跑 flutter_rust_bridge codegen（仅 Rust API 层变更后需要）
         type: boolean
@@ -35,9 +43,9 @@ on:
   workflow_call:
     inputs:
       arch:
-        description: 目标架构（both / arm64 / x86_64）
+        description: 目标架构（universal / arm64 / x86_64）
         type: string
-        default: both
+        default: universal
       run_codegen:
         description: 先重跑 flutter_rust_bridge codegen
         type: boolean
@@ -77,23 +85,23 @@ jobs:
       - name: Resolve the architecture matrix
         id: set
         env:
-          EVENT: ${{ github.event_name }}
           REQUESTED: ${{ inputs.arch }}
         run: |
-          want="${REQUESTED:-both}"
-          # PR 只验 arm64：这是新增路径，也是绝大多数用户会装的包；x64 由发布
-          # 流程覆盖。否则每次 PR 都要烧两倍 macOS runner 分钟。
-          if [ "$EVENT" = "pull_request" ]; then
-            want="arm64"
-          fi
-          arm64_leg='{"arch":"arm64","runner":"macos-15","triple":"aarch64-apple-darwin","artifact":"fqapp-macos-arm64"}'
-          x64_leg='{"arch":"x86_64","runner":"macos-15-intel","triple":"x86_64-apple-darwin","artifact":"fqapp-macos-x64"}'
+          want="${REQUESTED:-universal}"
+          # universal 用一台 Apple Silicon runner 出包（Xcode 的 ARCHS_STANDARD
+          # 在 macOS 上就是双架构），PR 与发布都只跑这一个 leg。历史上「arm64
+          # leg 跑 PR、x64 交给发布」的省机器做法，正好让「Rust dylib 只有
+          # arm64 一条 slice」这种问题一路留到用户机器上 —— 单 leg 反而更安全，
+          # 顺带省掉一整台 Intel runner。
+          universal_leg='{"arch":"universal","runner":"macos-15","triples":"aarch64-apple-darwin,x86_64-apple-darwin","artifact":"fqapp-macos-universal"}'
+          arm64_leg='{"arch":"arm64","runner":"macos-15","triples":"aarch64-apple-darwin","artifact":"fqapp-macos-arm64"}'
+          x64_leg='{"arch":"x86_64","runner":"macos-15-intel","triples":"x86_64-apple-darwin","artifact":"fqapp-macos-x64"}'
           case "$want" in
-            both)   legs="[$arm64_leg,$x64_leg]" ;;
-            arm64)  legs="[$arm64_leg]" ;;
-            x86_64) legs="[$x64_leg]" ;;
+            universal) legs="[$universal_leg]" ;;
+            arm64)     legs="[$arm64_leg]" ;;
+            x86_64)    legs="[$x64_leg]" ;;
             *)
-              echo "::error::arch 只能是 both / arm64 / x86_64（收到 '$want'）" >&2
+              echo "::error::arch 只能是 universal / arm64 / x86_64（收到 '$want'）" >&2
               exit 1
               ;;
           esac
@@ -115,7 +123,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec
         with:
           toolchain: '1.99.1'
-          targets: ${{ matrix.triple }}
+          targets: ${{ matrix.triples }}
 
       - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
         with:
@@ -161,8 +169,8 @@ jobs:
 
       - name: Build macOS app (${{ matrix.arch }})
         env:
-          # 目标架构由脚本据此选 Rust triple 与 Xcode ARCHS；这里必须显式传，
-          # 不能靠宿主推断 —— x86_64 leg 虽然宿主也是 x86_64，但显式更不容易错。
+          # 目标架构由脚本据此选 Rust triple 集合与 Xcode ARCHS；必须显式传，
+          # 不能靠宿主推断。universal 时脚本会编两条 triple 再 lipo 合成 dylib。
           FQAPP_MACOS_ARCH: ${{ matrix.arch }}
           FQAPP_MACOS_CODEGEN: ${{ inputs.run_codegen && '1' || '0' }}
         run: |
@@ -174,7 +182,7 @@ jobs:
         with:
           name: ${{ matrix.artifact }}
           path: |
-            fqapp-macos-*.zip
+            fqapp-macos*.zip
             build/macos-build-*.log
           if-no-files-found: error
           retention-days: 14
