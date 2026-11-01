@@ -37,6 +37,7 @@ const _allowedSources = <String>{
   'prefetchHit',
   'prefetchPending',
   'offline',
+  'warm',
 };
 
 String _safeLabel(String value, Set<String> allowed) =>

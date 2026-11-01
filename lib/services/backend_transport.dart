@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:io' show File, Platform;
 import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart';
+
 // ExternalLibrary 只从这个入口导出（flutter_rust_bridge.dart 仅导出
 // loadExternalLibrary）；本仓库生成的 frb_generated.dart 用的也是它。
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart'
@@ -10,6 +12,7 @@ import 'package:http/http.dart' as http;
 
 import '../src/rust/api.dart' as rust;
 import '../src/rust/frb_generated.dart';
+import 'app_log.dart';
 import 'desktop_media.dart' show desktopCoreLibraryPath;
 import 'secure_key_provider.dart';
 
@@ -164,9 +167,54 @@ class RustBackendTransport implements BackendTransport {
   bool _coreRunning = false;
 
   /// Loads the bridge runtime once per process.
-  static Future<void> ensureRuntime() => _runtimeReady ??= RustLib.init(
-    externalLibrary: _desktopExternalLibrary(),
-  );
+  ///
+  /// A failed load is not cached: caching the rejected future would rethrow the
+  /// same error on every later [start], so one bad native init would leave the
+  /// app unable to reach the core for the rest of the process. Only this
+  /// attempt's own handle is cleared on failure, so a concurrent retry that
+  /// already installed a new future is never dropped.
+  ///
+  /// `RustLib.init` is not atomic: it installs FRB's process-wide state before
+  /// running the Rust initializers, so a failure in that second half leaves a
+  /// half-initialized bridge behind. A blind retry would then throw
+  /// `Should not initialize flutter_rust_bridge twice` from FRB itself, so the
+  /// half state is reset through FRB's own [RustLib.dispose] before the next
+  /// attempt. A runtime that is already up is reused instead of re-initialized.
+  static Future<void> ensureRuntime() {
+    final cached = _runtimeReady;
+    if (cached != null) return cached;
+    if (runtimeInitialized()) return _runtimeReady = Future<void>.value();
+    late final Future<void> attempt;
+    attempt = Future<void>.sync(runtimeInitializer).catchError(
+      (Object error, StackTrace stack) {
+        if (identical(_runtimeReady, attempt)) _runtimeReady = null;
+        if (runtimeInitialized()) {
+          try {
+            disposeRuntime();
+          } catch (resetError, resetStack) {
+            // FRB could not release the half-initialized state. There is no
+            // other reset entry point, so the process cannot retry cleanly;
+            // make that actionable instead of looping on the same StateError.
+            AppLog.e(
+              'backend',
+              'Flutter Rust Bridge 运行时复位失败，需要重启应用',
+              error: resetError,
+              stack: resetStack,
+            );
+          }
+        }
+        AppLog.e(
+          'backend',
+          'Flutter Rust Bridge 运行时初始化失败，下次启动重试',
+          error: error,
+          stack: stack,
+        );
+        Error.throwWithStackTrace(error, stack);
+      },
+    );
+    _runtimeReady = attempt;
+    return attempt;
+  }
 
   /// Desktop hosts ship the core beside the executable (`fqapi_core.dll` on
   /// Windows, `libfqapi_core.dylib` inside the macOS bundle). Windows resolves
@@ -181,6 +229,38 @@ class RustBackendTransport implements BackendTransport {
     // host-test skip path) stays exactly as before.
     if (!File(path).existsSync()) return null;
     return ExternalLibrary.open(path);
+  }
+
+  /// The loader [ensureRuntime] runs on first use; production goes through the
+  /// desktop path above so macOS can find the bundled dylib. A seam rather than
+  /// a direct call, so the retry behavior can be tested without loading the
+  /// shared library.
+  @visibleForTesting
+  static Future<void> Function() runtimeInitializer = () => RustLib.init(
+    externalLibrary: _desktopExternalLibrary(),
+  );
+
+  /// Whether FRB already installed its process-wide state.
+  ///
+  /// Read before initializing (a runtime loaded by the host is reused) and
+  /// after a failure (only a half-initialized bridge needs [disposeRuntime]).
+  @visibleForTesting
+  static bool Function() runtimeInitialized = () =>
+      RustLib.instance.initialized;
+
+  /// FRB's own reset entry point (`disposeImpl` clears the singleton state).
+  @visibleForTesting
+  static void Function() disposeRuntime = RustLib.dispose;
+
+  /// Forgets the process-wide runtime handle. Only for tests.
+  @visibleForTesting
+  static void resetRuntimeForTest() {
+    _runtimeReady = null;
+    runtimeInitializer = () => RustLib.init(
+      externalLibrary: _desktopExternalLibrary(),
+    );
+    runtimeInitialized = () => RustLib.instance.initialized;
+    disposeRuntime = RustLib.dispose;
   }
 
   /// Records that the runtime is already initialized, for hosts that load the

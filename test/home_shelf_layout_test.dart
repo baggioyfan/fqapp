@@ -186,10 +186,10 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('桌面宽窗铺满窗口，不再居中留出 840 的固定空白', (tester) async {
-    // 这条守的是页面级宽度上限：原先 macOS 跟手机一样吃 840（只有 Windows
-    // 放宽到 1440），2560 的窗口里内容只占三分之一，两侧各空 860dp。
-    debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
+  testWidgets('桌面宽窗铺满窗口，不再居中留出固定空白', (tester) async {
+    // 这条守的是页面级宽度上限：原先桌面固定吃 1440，2560 的窗口里内容只占
+    // 一半多，两侧各空 560dp。
+    debugDefaultTargetPlatformOverride = TargetPlatform.windows;
     await tester.binding.setSurfaceSize(const Size(2560, 1200));
     addTearDown(() => tester.binding.setSurfaceSize(null));
     MediaItem book(int index) => MediaItem(
@@ -228,8 +228,8 @@ void main() {
 
       // 页面本身不再被夹住：宽度等于窗口宽度。
       expect(tester.getSize(find.byType(HomePage)).width, 2560);
-      // 网格按短剧那套口径铺列（一格 190dp），封在 9 列。840 时代这里只有
-      // 4 列；按卡宽反推而不封顶的话会给 13 列，一屏四十本小书扫起来只剩色块。
+      // 网格按短剧那套口径铺列（一格 190dp），封在 9 列。固定断点时代这里只有
+      // 5 列；按卡宽反推而不封顶的话会给 13 列，一屏四十本小书扫起来只剩色块。
       final grid = tester.widget<SliverGrid>(find.byType(SliverGrid).first);
       final columns =
           (grid.gridDelegate as SliverGridDelegateWithFixedCrossAxisCount)

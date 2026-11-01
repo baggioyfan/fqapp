@@ -2,7 +2,6 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:fqapp/models/audio_extra.dart';
 import 'package:fqapp/models/book_comment.dart';
@@ -14,7 +13,6 @@ import 'package:fqapp/pages/audio_page.dart';
 import 'package:fqapp/pages/reader_page.dart';
 import 'package:fqapp/widgets/audio/audio_sections.dart';
 import 'package:fqapp/widgets/detail/detail_reviews.dart';
-import 'package:fqapp/widgets/detail/detail_sections.dart';
 import 'package:fqapp/widgets/reader/reader_paged_view.dart';
 import 'package:fqapp/widgets/reader/reader_status_bar.dart';
 
@@ -29,7 +27,7 @@ const _nextTrack = SubtitleTrack([SubtitleCue(startMs: 0, text: '下一章同步
 
 void main() {
   setUp(() {
-    SharedPreferences.setMockInitialValues({});
+    setSingleChapterPrefs({});
     TestWidgetsFlutterBinding.instance.handleAppLifecycleStateChanged(
       AppLifecycleState.resumed,
     );
@@ -337,9 +335,8 @@ void main() {
     );
   }
 
-  testWidgets('a six out of ten aggregate rating renders three filled stars', (
-    tester,
-  ) async {
+  testWidgets('书评区不再重复汇总评分', (tester) async {
+    // 改版后评分只在 hero 出现一次；书评区不再放「轻点评分」卡。
     await tester.pumpWidget(
       const MaterialApp(
         home: Scaffold(
@@ -350,12 +347,8 @@ void main() {
         ),
       ),
     );
-    final stars = find.descendant(
-      of: find.byKey(const Key('detail_score_card')),
-      matching: find.byType(DetailStarRow),
-    );
-    expect(tester.widget<DetailStarRow>(stars).stars, 3);
-    expect(find.text('6.0'), findsOneWidget);
+    expect(find.byKey(const Key('detail_score_card')), findsNothing);
+    expect(find.text('6.0'), findsNothing);
   });
 }
 
@@ -403,7 +396,7 @@ Future<void> _mountReader(
   bool longFirstChapter = false,
   List<String>? comments,
 }) async {
-  SharedPreferences.setMockInitialValues({
+  setSingleChapterPrefs({
     'reader_page_mode': scroll ? 'scroll' : 'paged',
     'reader_auto_turn_seconds': 3,
   });
@@ -491,10 +484,9 @@ class _AudioSession {
   );
 }
 
-/// Expands the 设置 section of the reading menu. The section keeps its state
-/// across chapter changes, so this is a no-op while it is already open.
+/// 从阅读菜单的「设置」直接打开阅读设置面板。
 Future<void> _openSettings(WidgetTester tester) async {
-  if (find.byTooltip('上一章').evaluate().isNotEmpty) return;
+  if (find.text('阅读设置').evaluate().isNotEmpty) return;
   await tester.tap(find.byKey(const ValueKey('reader-settings')));
   await tester.pumpAndSettle();
 }

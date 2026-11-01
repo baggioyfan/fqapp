@@ -1,5 +1,8 @@
 // The desktop player receives clear bytes over a per-player loopback capability.
 // Keys and original URLs stay inside the process; no decrypted movie is written.
+use crate::desktop_fetch::{
+    content_range, fetch_range, with_retries, FetchError, OpenError, CHUNK_TIMEOUT, PROBE_TIMEOUT,
+};
 use reqwest::{blocking::Client, header};
 use serde::Deserialize;
 use std::{
@@ -57,12 +60,35 @@ fn ipv4_first(addrs: Vec<SocketAddr>) -> Vec<SocketAddr> {
     ordered
 }
 
-fn media_client(url: &str) -> Result<Client, String> {
+/// 每个 host 一个媒体 client。
+///
+/// 上游把它做成一个全局 `shared_client()`，但 `resolve_to_addrs` 是 **build 期
+/// 按 host 绑定的**：一个 client 只能固定一份地址表，装不下「每个 host 都把
+/// A 记录排到 AAAA 前面」这条修（家宽 IPv6 突发丢 SYN：成功 249–310ms、失败
+/// 8051–8112ms，中间没有值）。按 host 缓存既保住这条修，又照样跨会话复用
+/// 连接池，代价只是每个 host 泄漏一个 `Client`（数量 = 不同 CDN 域名数）。
+fn media_client(url: &str) -> Result<&'static Client, OpenError> {
+    static CLIENTS: OnceLock<Mutex<HashMap<String, &'static Client>>> = OnceLock::new();
+    let parsed = url::Url::parse(url).ok();
+    let host = parsed
+        .as_ref()
+        .and_then(|parsed| parsed.domain().map(str::to_string))
+        .unwrap_or_default();
+    let cache = CLIENTS.get_or_init(|| Mutex::new(HashMap::new()));
+    {
+        let guard = cache
+            .lock()
+            .map_err(|_| OpenError::new("无法初始化媒体连接", "other"))?;
+        if let Some(client) = guard.get(&host) {
+            return Ok(client);
+        }
+    }
     let mut builder = Client::builder()
         .connect_timeout(Duration::from_secs(8))
-        .timeout(Duration::from_secs(15));
+        .timeout(Duration::from_secs(15))
+        .pool_idle_timeout(Duration::from_secs(120));
     // `domain()` is None for IP literals, which must keep the default resolver.
-    if let Ok(parsed) = url::Url::parse(url) {
+    if let Some(parsed) = &parsed {
         if let Some(host) = parsed.domain() {
             let port = parsed.port_or_known_default().unwrap_or(443);
             if let Ok(addrs) = (host, port).to_socket_addrs() {
@@ -73,9 +99,54 @@ fn media_client(url: &str) -> Result<Client, String> {
             }
         }
     }
-    builder
+    let built = builder
         .build()
-        .map_err(|_| "无法初始化媒体连接".to_string())
+        .map_err(|_| OpenError::new("无法初始化媒体连接", "other"))?;
+    let leaked: &'static Client = Box::leak(Box::new(built));
+    let mut guard = cache
+        .lock()
+        .map_err(|_| OpenError::new("无法初始化媒体连接", "other"))?;
+    Ok(*guard.entry(host).or_insert(leaked))
+}
+
+/// 探测首字节并取回总长度。
+///
+/// 与 `fetch_range` 的差别只有一处：非 206 时把响应体前 128 个字符打到 stderr。
+/// CDN 对约 35% 的取流请求返 403，而拒绝理由（签名无效 / 防盗链 / 限流）只写在
+/// 响应体里，单看状态码分不清是哪一种。诊断完把 `CAPTURE_ERROR_BODY` 置 false
+/// 即退回「只有状态码」，连同这个函数一起去掉。
+fn probe(client: &Client, url: &str) -> Result<(Vec<u8>, u64), FetchError> {
+    let mut response = client
+        .get(url)
+        .header(header::RANGE, "bytes=0-0")
+        .header(header::ACCEPT_ENCODING, "identity")
+        .timeout(PROBE_TIMEOUT)
+        .send()
+        .map_err(|error| FetchError::from_reqwest(&error))?;
+    let status = response.status().as_u16();
+    if status != 206 {
+        if CAPTURE_ERROR_BODY {
+            // 只读前 256 字节：错误页可能是一整页 HTML，没必要为诊断把整个
+            // body 拖下来。`&mut` 借出去，response 留在原地。
+            let mut buf = Vec::new();
+            let _ = (&mut response).take(256).read_to_end(&mut buf);
+            let body = String::from_utf8_lossy(&buf).into_owned();
+            if !body.is_empty() {
+                eprintln!("取流失败 status={status} body={}", body_snippet(&body));
+            }
+        }
+        return Err(FetchError::Status(status));
+    }
+    let (start, end, total) = response
+        .headers()
+        .get(header::CONTENT_RANGE)
+        .and_then(|value| value.to_str().ok())
+        .and_then(content_range)
+        .ok_or(FetchError::Protocol)?;
+    if start != 0 || end != 0 {
+        return Err(FetchError::Protocol);
+    }
+    Ok((Vec::new(), total))
 }
 
 /// TEMP(error-body)：一次性诊断开关。实测定点（2026-10-24，Air）里 CDN 对
@@ -104,73 +175,45 @@ fn body_snippet(body: &str) -> String {
 
 struct Source {
     file: Option<File>,
-    client: Client,
+    client: Option<&'static Client>,
     url: String,
     size: u64,
     cache_start: u64,
     cache: Vec<u8>,
+    /// Set when the session closes, so a stalled read stops retrying.
+    cancelled: Arc<AtomicBool>,
+    /// The last network failure, kept for classifying a failed decrypt open.
+    last_error: Arc<Mutex<Option<FetchError>>>,
 }
 impl Source {
-    fn open(url: String) -> Result<Self, String> {
+    fn open(url: String) -> Result<Self, OpenError> {
         let _ = rustls::crypto::ring::default_provider().install_default();
-        let client = media_client(&url)?;
         let file = if url.starts_with("file:") {
             let path = url::Url::parse(&url)
-                .map_err(|_| "离线文件地址无效")?
+                .map_err(|_| OpenError::new("离线文件地址无效", "file"))?
                 .to_file_path()
-                .map_err(|_| "离线文件地址无效")?;
-            Some(File::open(path).map_err(|_| "离线文件不存在或无法读取")?)
+                .map_err(|_| OpenError::new("离线文件地址无效", "file"))?;
+            Some(File::open(path).map_err(|_| OpenError::new("离线文件不存在或无法读取", "file"))?)
         } else if !url.starts_with("https://") && !url.starts_with("http://") {
-            Some(File::open(&url).map_err(|_| "离线文件不存在或无法读取")?)
+            Some(File::open(&url).map_err(|_| OpenError::new("离线文件不存在或无法读取", "file"))?)
         } else {
             None
         };
-        let size = if let Some(file) = &file {
-            file.metadata().map_err(|_| "无法读取文件长度")?.len()
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let (client, size) = if let Some(file) = &file {
+            let size = file
+                .metadata()
+                .map_err(|_| OpenError::new("无法读取文件长度", "file"))?
+                .len();
+            (None, size)
         } else {
-            let mut response = client
-                .get(&url)
-                .header(header::RANGE, "bytes=0-0")
-                .header(header::ACCEPT_ENCODING, "identity")
-                .send()
-                .map_err(|_| "媒体连接失败或超时")?;
-            if response.status() != 206 {
-                // 带上真实状态码：403/404 是地址或节点被拒，200 是服务端忽略
-                // Range，两者处理方式完全不同，只报「不支持分段读取」分不清。
-                let status = response.status().as_u16();
-                // TEMP(error-body)：CDN 的 403 响应体通常写明拒绝原因（签名无效 /
-                // 防盗链 / 限流 / 回源失败），只有状态码只能靠猜。诊断完把
-                // `CAPTURE_ERROR_BODY` 置 false 即退回「只有状态码」。
-                let body = if CAPTURE_ERROR_BODY {
-                    // 只读前 256 字节：错误页可能是一整页 HTML，没必要为诊断把
-                    // 整个 body 拖下来。用 `&mut` 借出去，response 留在原地，
-                    // 正常路径后面还要读它的响应头。
-                    let mut buf = Vec::new();
-                    let _ = (&mut response).take(256).read_to_end(&mut buf);
-                    String::from_utf8_lossy(&buf).into_owned()
-                } else {
-                    String::new()
-                };
-                if body.is_empty() {
-                    return Err(format!("取流失败 status={status}"));
-                }
-                let snippet = body_snippet(&body);
-                let detail = format!("取流失败 status={status} body={snippet}");
-                return Err(detail);
-            }
-            let range = response
-                .headers()
-                .get(header::CONTENT_RANGE)
-                .and_then(|v| v.to_str().ok())
-                .ok_or("媒体长度未知")?;
-            let (start, end, total) = content_range(range).ok_or("媒体范围响应无效")?;
-            if start != 0 || end != 0 {
-                return Err("媒体范围响应无效".into());
-            }
-            total
+            let client = media_client(&url)?;
+            let (_, total) = with_retries(&cancelled, || probe(client, &url))
+                .map_err(OpenError::fetch)?;
+            (Some(client), total)
         };
         if size == 0 || size > i64::MAX as u64 {
-            return Err("媒体文件长度无效".into());
+            return Err(OpenError::new("媒体文件长度无效", "range"));
         }
         Ok(Self {
             file,
@@ -179,6 +222,8 @@ impl Source {
             size,
             cache_start: 0,
             cache: Vec::new(),
+            cancelled,
+            last_error: Arc::default(),
         })
     }
     fn read_at(&mut self, offset: u64, bytes: &mut [u8]) -> Result<usize, ()> {
@@ -192,39 +237,23 @@ impl Source {
         let cache_end = self.cache_start + self.cache.len() as u64;
         if offset < self.cache_start || offset >= cache_end {
             let end = (offset + 1024 * 1024 - 1).min(self.size - 1);
-            let response = self
-                .client
-                .get(&self.url)
-                .header(header::RANGE, format!("bytes={offset}-{end}"))
-                .header(header::ACCEPT_ENCODING, "identity")
-                .send()
-                .map_err(|_| ())?;
-            if response.status() != 206 {
-                return Err(());
-            }
-            let actual = response
-                .headers()
-                .get(header::CONTENT_RANGE)
-                .and_then(|v| v.to_str().ok())
-                .and_then(content_range)
-                .ok_or(())?;
-            if actual != (offset, end, self.size)
-                || response
-                    .headers()
-                    .get(header::CONTENT_ENCODING)
-                    .is_some_and(|v| v != "identity")
-            {
-                return Err(());
-            }
-            let expected = end - offset + 1;
-            let mut data = Vec::new();
-            response
-                .take(expected + 1)
-                .read_to_end(&mut data)
-                .map_err(|_| ())?;
-            if data.len() as u64 != expected {
-                return Err(());
-            }
+            let client = self.client.ok_or(())?;
+            let result = with_retries(&self.cancelled, || {
+                let (data, total) = fetch_range(client, &self.url, offset, end, CHUNK_TIMEOUT)?;
+                if total != self.size {
+                    return Err(FetchError::Protocol);
+                }
+                Ok(data)
+            });
+            let data = match result {
+                Ok(data) => data,
+                Err(error) => {
+                    if let Ok(mut last) = self.last_error.lock() {
+                        *last = Some(error);
+                    }
+                    return Err(());
+                }
+            };
             self.cache_start = offset;
             self.cache = data;
         }
@@ -233,11 +262,6 @@ impl Source {
         bytes[..count].copy_from_slice(&self.cache[start..start + count]);
         Ok(count)
     }
-}
-fn content_range(value: &str) -> Option<(u64, u64, u64)> {
-    let (range, total) = value.strip_prefix("bytes ")?.split_once('/')?;
-    let (start, end) = range.split_once('-')?;
-    Some((start.parse().ok()?, end.parse().ok()?, total.parse().ok()?))
 }
 extern "C" fn io_size(user: *mut c_void) -> i64 {
     unsafe { (*(user as *mut Source)).size as i64 }
@@ -252,6 +276,8 @@ extern "C" fn io_read(user: *mut c_void, offset: u64, buffer: *mut u8, length: u
     })
     .unwrap_or(-1)
 }
+// sp_stream calls this on every seek to abandon the old position, so it must
+// not end the source; closing the session sets `Source::cancelled` instead.
 extern "C" fn io_cancel(_: *mut c_void) {}
 extern "C" fn io_close(user: *mut c_void) {
     unsafe {
@@ -305,6 +331,8 @@ impl Reader {
 struct Session {
     reader: Mutex<Reader>,
     stop: AtomicBool,
+    /// Shared with the network source: closing ends its pending retries.
+    cancelled: Option<Arc<AtomicBool>>,
     size: u64,
     authority: String,
     path: String,
@@ -433,14 +461,17 @@ struct OpenRequest {
     #[serde(default)]
     key: String,
 }
-fn open(request: OpenRequest) -> Result<serde_json::Value, String> {
+fn open(request: OpenRequest) -> Result<serde_json::Value, OpenError> {
     let source = Box::new(Source::open(request.url)?);
+    let cancelled = source.client.map(|_| source.cancelled.clone());
+    let last_error = source.last_error.clone();
     let reader = if request.key.is_empty() {
         Reader::Clear(source)
     } else {
-        let key = hex::decode(&request.key).map_err(|_| "媒体密钥无效")?;
+        let key =
+            hex::decode(&request.key).map_err(|_| OpenError::new("媒体密钥无效", "decrypt"))?;
         if key.len() != 16 {
-            return Err("媒体密钥无效".into());
+            return Err(OpenError::new("媒体密钥无效", "decrypt"));
         }
         let user = Box::into_raw(source) as *mut c_void;
         let io = SpIo {
@@ -457,17 +488,24 @@ fn open(request: OpenRequest) -> Result<serde_json::Value, String> {
         let stream = unsafe { sp_stream_open(&io, key.as_ptr(), &mut error) };
         if stream.is_null() {
             io_close(user);
-            return Err("无法打开加密媒体，请重试或切换清晰度".into());
+            // The header is read through the network source: a failed read
+            // there is a network problem, not a broken file.
+            let fetch = last_error.lock().ok().and_then(|last| *last);
+            return Err(match fetch {
+                Some(error) => OpenError::fetch(error),
+                None => OpenError::new("无法打开加密媒体，请重试或切换清晰度", "decrypt"),
+            });
         }
         Reader::Encrypted(stream)
     };
-    let listener = TcpListener::bind(("127.0.0.1", 0)).map_err(|_| "无法打开本机媒体端口")?;
+    let local = |message| move |_| OpenError::new(message, "other");
+    let listener = TcpListener::bind(("127.0.0.1", 0)).map_err(local("无法打开本机媒体端口"))?;
     listener
         .set_nonblocking(true)
-        .map_err(|_| "无法初始化媒体端口")?;
+        .map_err(local("无法初始化媒体端口"))?;
     let authority = listener
         .local_addr()
-        .map_err(|_| "媒体端口不可用")?
+        .map_err(local("媒体端口不可用"))?
         .to_string();
     let token = hex::encode(rand::random::<[u8; 32]>());
     let path = format!("/media/{token}");
@@ -476,12 +514,13 @@ fn open(request: OpenRequest) -> Result<serde_json::Value, String> {
         size: reader.size(),
         reader: Mutex::new(reader),
         stop: AtomicBool::new(false),
+        cancelled,
         authority,
         path,
     });
     sessions()
         .lock()
-        .map_err(|_| "媒体会话不可用")?
+        .map_err(|_| OpenError::new("媒体会话不可用", "other"))?
         .insert(token.clone(), session.clone());
     thread::spawn(move || {
         while !session.stop.load(Ordering::Acquire) {
@@ -506,16 +545,20 @@ fn open(request: OpenRequest) -> Result<serde_json::Value, String> {
 pub unsafe extern "C" fn fq_desktop_media_open(request: *const c_char) -> *mut c_char {
     let result = std::panic::catch_unwind(|| {
         if request.is_null() {
-            return Err("媒体请求无效".to_string());
+            return Err(OpenError::new("媒体请求无效", "other"));
         }
         let request: OpenRequest = serde_json::from_slice(CStr::from_ptr(request).to_bytes())
-            .map_err(|_| "媒体请求无效".to_string())?;
+            .map_err(|_| OpenError::new("媒体请求无效", "other"))?;
         open(request)
     })
-    .unwrap_or_else(|_| Err("媒体初始化失败".into()));
+    .unwrap_or_else(|_| Err(OpenError::new("媒体初始化失败", "other")));
     let value = match result {
         Ok(value) => value,
-        Err(error) => serde_json::json!({"error": error}),
+        Err(error) => serde_json::json!({
+            "error": error.message,
+            "kind": error.kind,
+            "status": error.status,
+        }),
     };
     CString::new(value.to_string())
         .map(CString::into_raw)
@@ -530,6 +573,9 @@ pub unsafe extern "C" fn fq_desktop_media_close(id: *const c_char) {
         if let Ok(mut sessions) = sessions().lock() {
             if let Some(session) = sessions.remove(id) {
                 session.stop.store(true, Ordering::Release);
+                if let Some(cancelled) = &session.cancelled {
+                    cancelled.store(true, Ordering::Release);
+                }
             }
         }
     }

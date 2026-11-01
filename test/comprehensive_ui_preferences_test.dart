@@ -9,7 +9,7 @@ import 'package:shared_preferences_platform_interface/shared_preferences_platfor
 
 import 'package:fqapp/pages/library_page.dart';
 import 'package:fqapp/pages/settings_page.dart';
-import 'package:fqapp/pages/stats_page.dart';
+import 'package:fqapp/pages/mine_page.dart';
 import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/services/library_store.dart';
 import 'package:fqapp/services/shelf_store.dart';
@@ -85,7 +85,9 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('清空历史'));
     await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithText(TextButton, '清空'));
+    // 清空确认统一走 showSettingsConfirmDialog：破坏性确认键是 FilledButton，
+    // 不再是旧的红色 TextButton。
+    await tester.tap(find.widgetWithText(FilledButton, '清空'));
     for (var frame = 0; frame < 4; frame++) {
       await tester.runAsync(() => Future<void>.delayed(Duration.zero));
       await tester.pump();
@@ -147,11 +149,7 @@ void main() {
       _failPreferenceWrites(failLoad: true);
       addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
       await tester.pumpWidget(
-        MaterialApp(
-          home: statistics
-              ? const Scaffold(body: StatsPage())
-              : const LibraryPage(),
-        ),
+        MaterialApp(home: statistics ? const MinePage() : const LibraryPage()),
       );
       for (var frame = 0; frame < 5; frame++) {
         await tester.pump(const Duration(milliseconds: 100));

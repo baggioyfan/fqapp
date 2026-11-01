@@ -36,4 +36,6 @@ pub mod upstream;
 mod frb_generated;
 
 #[cfg(any(windows, target_os = "macos"))]
+mod desktop_fetch;
+#[cfg(any(windows, target_os = "macos"))]
 mod desktop_media;

@@ -127,6 +127,11 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   /// （ep1/ep18）都是第 4 次才起来，只兜 2 次不够。
   static const _maxAutoRetries = 3;
 
+  /// 自动重试的**总时长**预算。次数上限之外再加一道时间闸门：
+  /// 次数管「坏地址概率」，时间管「整条链路都不通」——后者靠次数只会
+  /// 让用户对着加载封面干等四十多秒。
+  static const _autoRetryBudget = Duration(seconds: 20);
+
   /// 下一集取流地址的预取提前量：本集**只剩这么多**时才去取。
   ///
   /// 2026-10-24 之前是「起播 750ms 后立刻取」。这个改动本身并不解决 403 ——
@@ -1293,6 +1298,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     bool autoplay = true,
     bool autoRetry = false,
     int retryDepth = 0,
+    DateTime? retryDeadline,
   }) async {
     if (!mounted || _switchingSeries || widget.eps.isEmpty) return;
     _loadTrace?.finish('superseded');
@@ -1440,6 +1446,13 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
           rethrow;
         }
         if (retryDepth >= _maxAutoRetries) rethrow;
+        // 次数上限挡不住「死网」：每次尝试要现取地址（高峰期 3–4 秒）再等
+        // create 超时（15 秒），4 次叠起来能空转四十多秒，用户只看到加载封面。
+        // 过了预算就把错误交回去，让界面显示「重试」按钮。
+        final deadline =
+            retryDeadline ??
+            DateTime.now().add(_autoRetryBudget);
+        if (DateTime.now().isAfter(deadline)) rethrow;
         trace.fail();
         unawaited(
           _loadVideo(
@@ -1447,6 +1460,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
             autoplay: autoplay,
             autoRetry: true,
             retryDepth: retryDepth + 1,
+            retryDeadline: deadline,
           ),
         );
         return;

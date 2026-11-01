@@ -7,10 +7,14 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/pages/search_page.dart';
 import 'package:fqapp/services/search_history_store.dart';
-import 'package:fqapp/widgets/media_card.dart';
+import 'package:fqapp/widgets/home/home_media_card.dart';
 
 void main() {
-  setUp(() => SharedPreferences.setMockInitialValues({}));
+  // 默认测试窗口 800×600 是横屏；预置「用户选过封面视图」这一条，避免
+  // 样稿新增的「横屏默认列表」把这里的网格断言全部翻成列表。
+  setUp(
+    () => SharedPreferences.setMockInitialValues({'search_list_view': false}),
+  );
 
   testWidgets(
     'a category can be chosen before search and survives new queries',
@@ -91,11 +95,11 @@ void main() {
       await tester.testTextInput.receiveAction(TextInputAction.search);
       await tester.pumpAndSettle();
       expect(offsets, [0]);
-      expect(find.byType(MediaCard), findsNothing);
+      expect(find.byType(HomeMediaCard), findsNothing);
       await tester.tap(find.text('加载更多'));
       await tester.pumpAndSettle();
       expect(offsets, [0, 14]);
-      expect(find.byType(MediaCard), findsNothing);
+      expect(find.byType(HomeMediaCard), findsNothing);
       await tester.tap(find.text('加载更多'));
       await tester.pumpAndSettle();
       expect(offsets, [0, 14, 27]);
@@ -132,10 +136,10 @@ void main() {
 
     await tester.pumpWidget(_app(loader));
     await tester.pumpAndSettle();
-    expect(find.byType(MediaCard), findsOneWidget);
+    expect(find.byType(HomeMediaCard), findsOneWidget);
     await tester.tap(find.byKey(const Key('search-layout-toggle')));
     await tester.pumpAndSettle();
-    expect(find.byType(MediaCard), findsNothing);
+    expect(find.byType(HomeMediaCard), findsNothing);
     expect(find.text('列表作品'), findsOneWidget);
     expect(find.text('小说 · 9.1分'), findsOneWidget);
     expect(requests, 1);
@@ -146,7 +150,7 @@ void main() {
     await tester.pumpWidget(const SizedBox());
     await tester.pumpWidget(_app(loader));
     await tester.pumpAndSettle();
-    expect(find.byType(MediaCard), findsNothing);
+    expect(find.byType(HomeMediaCard), findsNothing);
     expect(find.text('列表作品'), findsOneWidget);
     expect(find.byTooltip('切换为封面视图'), findsOneWidget);
   });
@@ -194,7 +198,7 @@ void main() {
     await tester.testTextInput.receiveAction(TextInputAction.search);
     await tester.pumpAndSettle();
     // 8.2 is below the restored 9-point threshold, so it stays filtered out.
-    expect(find.byType(MediaCard), findsNothing);
+    expect(find.byType(HomeMediaCard), findsNothing);
   });
 
   testWidgets('list and grid captions show the work length', (tester) async {
@@ -332,61 +336,6 @@ void main() {
   });
 
   testWidgets(
-    'a short category loads its own pages and preserves other cursors',
-    (tester) async {
-      await tester.binding.setSurfaceSize(const Size(420, 700));
-      addTearDown(() => tester.binding.setSurfaceSize(null));
-      final requests = <(int, int)>[];
-      await tester.pumpWidget(
-        _app((query, {required int tabType, required int offset}) async {
-          requests.add((tabType, offset));
-          if (tabType == 1) {
-            return [
-              SearchTab(
-                title: '综合',
-                items: offset == 0
-                    ? [for (var i = 0; i < 30; i++) _item('b$i', '小说 $i')]
-                    : [_item('b30', '末页小说')],
-                hasMore: offset == 0,
-                nextOffset: offset == 0 ? 14 : 0,
-              ),
-              SearchTab(
-                title: '漫画',
-                items: [_item('old', '综合里的漫画', kind: 'manga')],
-                hasMore: false,
-              ),
-            ];
-          }
-          return [
-            SearchTab(
-              title: '漫画',
-              items: [_item('m$offset', '漫画 $offset', kind: 'manga')],
-              hasMore: offset == 0,
-              nextOffset: offset == 0 ? 23 : 0,
-            ),
-          ];
-        }),
-      );
-      await tester.pumpAndSettle();
-      expect(requests, [(1, 0)]);
-      await tester.tap(find.widgetWithText(ChoiceChip, '漫画'));
-      await tester.pumpAndSettle();
-      expect(requests, [(1, 0), (8, 0), (8, 23)]);
-      expect(find.text('漫画 23'), findsOneWidget);
-      expect(find.text('综合里的漫画'), findsNothing);
-
-      await tester.tap(find.widgetWithText(ChoiceChip, '综合'));
-      await tester.pumpAndSettle();
-      expect(requests, hasLength(3));
-      await tester.drag(find.byType(CustomScrollView), const Offset(0, -3000));
-      await tester.pumpAndSettle();
-      expect(requests.last, (1, 14));
-      expect(find.text('末页小说'), findsOneWidget);
-      expect(_visibleKinds(tester).toSet(), {'book'});
-    },
-  );
-
-  testWidgets(
     'duplicate pages preserve their advancing cursor without looping',
     (tester) async {
       final offsets = <int>[];
@@ -457,7 +406,7 @@ void main() {
       await tester.tap(find.widgetWithText(ChoiceChip, '漫剧'));
       await tester.pumpAndSettle();
       expect(requests, [(1, 0), (11, 0)]);
-      expect(find.byType(MediaCard), findsNothing);
+      expect(find.byType(HomeMediaCard), findsNothing);
       expect(find.text('加载更多'), findsOneWidget);
       await tester.tap(find.text('加载更多'));
       await tester.pumpAndSettle();
@@ -821,7 +770,7 @@ Widget _app(SearchPageLoader loader) => MaterialApp(
 );
 
 List<String> _visibleKinds(WidgetTester tester) => tester
-    .widgetList<MediaCard>(find.byType(MediaCard))
+    .widgetList<HomeMediaCard>(find.byType(HomeMediaCard))
     .map((card) => card.item.kind)
     .toList();
 

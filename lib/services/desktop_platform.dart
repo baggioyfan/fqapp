@@ -731,13 +731,6 @@ String decodeGb18030(Uint8List bytes) {
   }
 }
 
-/// 从 Rust 探针的中文错误里抠出 HTTP 状态码（`取流失败 status=403`）。
-int? _probeStatus(String detail) {
-  final match = RegExp(r'status=(\d{3})').firstMatch(detail);
-  final group = match?.group(1);
-  return group == null ? null : int.tryParse(group);
-}
-
 class _DesktopPlayer {
   _DesktopPlayer(this.id, this.emit) {
     video = VideoController(player);
@@ -804,27 +797,14 @@ class _DesktopPlayer {
       emit({'playerId': id, 'type': 'created', 'value': id});
       _size();
     } catch (error) {
-      // 探针阶段的文案是 Rust 里的固定字面量，原样落盘正好区分「连不上」与
-      // 「不是 206」「密钥/首块解不开」；播放器阶段的异常只留类型。
-      final detail = stage == 'probe' && error is StateError
-          ? error.message
-          : '${error.runtimeType}';
-      // 只记 CDN 主机名，不落带签名的完整地址。
+      // 只记 CDN 主机名与阶段，不落带签名的完整地址。状态码与分类由
+      // `desktopOpenFailure` 从 Rust 回传的 kind / status 里取。
       final host = Uri.tryParse(url)?.host ?? '';
-      AppLog.d('desktop-open', 'step=$stage host=$host error=$detail');
-      final status = stage == 'probe' ? _probeStatus(detail) : null;
+      AppLog.d('desktop-open', 'step=$stage host=$host kind=${error.runtimeType}');
       if (!ready.isCompleted) ready.completeError(StateError('无法打开媒体'));
+      final value = desktopOpenFailure(id, error);
       if (!disposed) {
-        emit({
-          'playerId': id,
-          'type': 'error',
-          'value': {
-            'message': '媒体加载失败，请检查网络或重试',
-            // 1 = 取流/解密失败（桌面端探针），2 = 播放器打不开媒体。
-            'errorCode': stage == 'probe' ? 1 : 2,
-            'httpStatusCode': ?status,
-          },
-        });
+        emit({'playerId': id, 'type': 'error', 'value': value});
       }
       media?.close();
     }

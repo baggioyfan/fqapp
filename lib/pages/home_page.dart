@@ -249,15 +249,18 @@ class _HomePageState extends ConsumerState<HomePage> {
         alignment: Alignment.topCenter,
         // 阅读宽度：手机/平板压 840（一屏三到五列，再宽眼睛就散）。
         //
-        // 桌面不再共用这一档。原先写的是 `isWindowsDesktop ? 1440 : 840`，
-        // 于是 macOS 跟手机一样吃 840——2560 的窗口里内容只占三分之一，
-        // 两侧各空出 860dp，全屏看着像没铺开。桌面把宽度交给窗口本身，
-        // 能铺几列由 homeShelfColumns 按「一格 190dp，钳 6–9 列」反推（见
-        // `widgets/home/home_shelf.dart`）：默认窗口六列、全屏九列，窗口再宽
-        // 就把卡片放大，不会再往格子里塞更多小封面。
+        // 桌面不吃固定 1440：2560 的窗口里只占一半多，两侧各空 560dp。
+        // 宽度交给窗口后，列数由 homeShelfColumns 按「一格 190dp，钳 6–9 列」
+        // 反推（见 `widgets/home/home_shelf.dart`）：默认六列、全屏九列，
+        // 窗口再宽只把卡片放大，不会往格子里塞更多小封面。
+        //
+        // 840 是 Material 3 的 expanded 断点：平板与手机横屏跨过后一并铺满，
+        // 不再像原先那样只在 Windows 上生效（macOS 与平板仍会被压成 840）。
         child: ConstrainedBox(
           constraints: BoxConstraints(
-            maxWidth: isDesktopHost ? double.infinity : 840,
+            maxWidth: isWindowsDesktop || MediaQuery.sizeOf(context).width >= 840
+                ? double.infinity
+                : 840,
           ),
           child: SafeArea(
             bottom: false,
