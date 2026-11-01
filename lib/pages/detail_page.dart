@@ -621,7 +621,9 @@ class _DetailPageState extends State<DetailPage> {
                 ],
               ),
         body: desktop ? _desktopBody(palette) : _phoneBody(palette),
-        bottomNavigationBar: desktop
+        // 目录没取到的短剧不摆「观看」按钮：点进去只会看到一集（pseries 对
+        // 单集 id 回空列表），那不是这部剧的真实形态。宁可只给目录区的重试。
+        bottomNavigationBar: desktop || !_supported || _allChapters.isEmpty
             ? null
             : DetailReadBar(
                 label: _readBarLabel,
