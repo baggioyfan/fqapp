@@ -19,6 +19,9 @@ extension _ReaderPageListeningLaunch on _ReaderPageState {
       textId ??= anchor.textId;
     }
     final chapterId = _chapter.itemId;
+    // 起点只有一个来源：当前页第一段。查不到正文段时 (null, null) 才落到
+    // 播放页自己的兜底——纯图页、空章这类边界，正常书页走不到。
+    final anchor = _currentPageAnchor();
     var system = widget.localOnly;
     if (!system) {
       if (fromPage) {
@@ -32,26 +35,19 @@ extension _ReaderPageListeningLaunch on _ReaderPageState {
       }
       _openingListening = true;
       try {
-        // 0 = 从头/续播，1 = 从本页播放，2 = 系统朗读。
+        // 菜单只问引擎（0 = 听书，2 = 系统朗读）：起点不在菜单里选。
         final choice = await _showListeningSourceSheet();
         if (!mounted || choice == null || chapterId != _chapter.itemId) return;
-        if (choice == 1) {
-          final anchor = _currentPageAnchor();
-          await _openUpstreamListening(
-            fromMs: anchor.startMs ?? fromMs,
-            textId: anchor.textId ?? textId,
-            openPage: false,
-            keepControls: true,
-          );
-          return;
-        }
         system = choice == 2;
       } finally {
         _openingListening = false;
       }
     }
     if (!system) {
-      await _openUpstreamListening(fromMs: fromMs, textId: textId);
+      await _openUpstreamListening(
+        fromMs: anchor.startMs ?? fromMs,
+        textId: anchor.textId ?? textId,
+      );
       return;
     }
     _openingListening = true;
@@ -110,10 +106,12 @@ extension _ReaderPageListeningLaunch on _ReaderPageState {
     }
   }
 
-  /// 听书方式选择：0 = 从头/续播，1 = 从本页播放，2 = 系统朗读。
+  /// 听书方式选择：0 = 听书（作品自带音频），2 = 系统朗读。
   ///
   /// 面板骨架走 ReaderSettingsSheetFrame；路由透明，底色 / 圆角由 frame
   /// 按阅读 preset 画出。
+  ///
+  /// 只有引擎两项：起点固定是当前页第一段，不再给「从本页播放」这种第二轴。
   Future<int?> _showListeningSourceSheet() {
     final preset = _effectivePreset;
     return showModalBottomSheet<int>(
@@ -392,23 +390,18 @@ class _ListeningSourceSheet extends StatelessWidget {
     children: [
       _row(
         context,
+        key: const ValueKey('listen-source-audio'),
         icon: LucideIcons.headphones,
         title: '听书',
-        subtitle: '使用作品自带音频与音色',
+        subtitle: '作品自带的真人音频，从当前位置开始',
         value: 0,
       ),
       _row(
         context,
-        icon: LucideIcons.locate_fixed,
-        title: '从本页播放',
-        subtitle: '从当前页第一段开始听',
-        value: 1,
-      ),
-      _row(
-        context,
+        key: const ValueKey('listen-source-tts'),
         icon: LucideIcons.mic,
         title: '系统朗读',
-        subtitle: '使用手机已安装的 TTS 引擎',
+        subtitle: '手机已装的 TTS 引擎，从当前位置开始',
         value: 2,
       ),
     ],
@@ -416,11 +409,13 @@ class _ListeningSourceSheet extends StatelessWidget {
 
   Widget _row(
     BuildContext context, {
+    Key? key,
     required IconData icon,
     required String title,
     required String subtitle,
     required int value,
   }) => ListTile(
+    key: key,
     leading: Icon(icon, color: preset.mutedTextColor),
     title: Text(title, style: TextStyle(color: preset.textColor)),
     subtitle: Text(subtitle, style: TextStyle(color: preset.mutedTextColor)),
