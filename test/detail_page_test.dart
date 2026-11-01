@@ -109,9 +109,12 @@ void main() {
     await tester.pumpAndSettle();
     // 目录为空说明取目录失败（pseries 对单集 id 回 code=101104 + 空列表），
     // 不能把它渲染成「这部剧只有正在看的这一集」：页面要给失败态和重试，
-    // 也不该摆出「观看」按钮把用户带进只有一集的播放器。
+    // 主按钮也不能可点——否则用户会被带进只有一集的播放器。
+    //
+    // 底部条本身保持挂载（上游口径），只把主按钮置为禁用，避免页面高度在
+    // 数据到达时跳一下。
     expect(find.textContaining('没取到这部短剧的目录'), findsOneWidget);
-    expect(find.byKey(const Key('detail_read_button')), findsNothing);
+    expect(tester.widget<DetailReadBar>(find.byType(DetailReadBar)).enabled, isFalse);
     // 短剧的空目录会被当成一次失败重试（同一次地址连打两次都空才下结论）。
     expect(calls, 2);
     await tester.pumpWidget(const SizedBox.shrink());

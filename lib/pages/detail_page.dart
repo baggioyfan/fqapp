@@ -621,9 +621,10 @@ class _DetailPageState extends State<DetailPage> {
                 ],
               ),
         body: desktop ? _desktopBody(palette) : _phoneBody(palette),
-        // 目录没取到的短剧不摆「观看」按钮：点进去只会看到一集（pseries 对
-        // 单集 id 回空列表），那不是这部剧的真实形态。宁可只给目录区的重试。
-        bottomNavigationBar: desktop || !_supported || _allChapters.isEmpty
+        // 底部条恒挂载，目录没取到（或还在加载）时只禁用主按钮：整条隐藏会
+        // 让页面高度在数据到达时跳一下，而且会把「下载 / 离线缓存」这些还能
+        // 用的入口一起带走。
+        bottomNavigationBar: desktop
             ? null
             : DetailReadBar(
                 label: _readBarLabel,
