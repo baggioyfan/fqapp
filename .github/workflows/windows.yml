@@ -39,7 +39,9 @@ jobs:
           channel: stable
           cache: true
       - name: Resolve dependencies on the official unmodified SDK
-        run: flutter pub get
+        # --enforce-lockfile：不带它时 flutter pub get 会静默改写 lock，
+        # CI 测的就不是仓库里那份依赖了。
+        run: flutter pub get --enforce-lockfile
       - name: Analyze application
         run: flutter analyze --no-pub
       # 行数预算门禁在 android-apk.yml 的 dart-gate 里跑：它只读源码，不依赖

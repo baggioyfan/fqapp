@@ -62,19 +62,24 @@ test('the build scripts pin the same flutter_rust_bridge version as the crate', 
   assert.match(yaml, /web:\s*false/);
 });
 
-test('the build scripts target Android ARM64 + ARMv7 with the project NDK and 16 KiB pages', () => {
+test('the build scripts target Android ARM64 with the project NDK and 16 KiB pages', () => {
   for (const name of ['build_rust_backend.ps1', 'build_rust_backend.sh']) {
     const source = readScript(name);
     assert.ok(source.includes('aarch64-linux-android'), name);
-    assert.ok(source.includes('armv7-linux-androideabi'), `${name} must build the 32-bit ARM target`);
     assert.ok(source.includes('28.2.13676358'), `${name} must pin the project NDK`);
     assert.ok(
       source.includes('libfqapi_core.so'),
       `${name} must produce libfqapi_core.so`,
     );
+    // 本 fork 只发 arm64-v8a：32 位目标是有意移除的（脚本头部写着原因），
+    // 所以这里只要求 64 位那条落盘，同时禁止把 armv7 悄悄加回来。
     assert.ok(
-      source.includes('jniLibs') && source.includes('arm64-v8a') && source.includes('armeabi-v7a'),
-      `${name} must install into jniLibs/arm64-v8a and jniLibs/armeabi-v7a`,
+      source.includes('jniLibs') && source.includes('arm64-v8a'),
+      `${name} must install into jniLibs/arm64-v8a`,
+    );
+    assert.ok(
+      !/^\s*build_android_target\s+armv7/m.test(source),
+      `${name} must not build the 32-bit target: this fork ships arm64-v8a only`,
     );
   }
 
@@ -94,26 +99,33 @@ test('the build scripts target Android ARM64 + ARMv7 with the project NDK and 16
   );
 });
 
-test('the APK workflow builds and verifies both ABIs', () => {
+test('the APK workflow builds and verifies the arm64-v8a ABI', () => {
   const workflow = fs.readFileSync(
     path.join(appDir, '.github', 'workflows', 'android-apk.yml'),
     'utf8',
   );
   assert.ok(
-    workflow.includes('armv7-linux-androideabi'),
-    'the APK workflow must install the 32-bit Rust target',
+    workflow.includes('aarch64-linux-android'),
+    'the APK workflow must install the 64-bit Rust target',
+  );
+  // 32 位是有意不构建的（交付面只有 arm64-v8a）。用 targets: 那一行来判定，
+  // 而不是在全文里找 armv7 —— 解释性注释里本来就会提到 armv7。
+  assert.match(
+    workflow,
+    /^\s*targets:\s*aarch64-linux-android\s*$/m,
+    'the APK workflow must install only the arm64 Rust target',
   );
   assert.ok(
     workflow.includes('--split-per-abi'),
-    'the APK workflow must split the APK per ABI instead of shipping one arm64-only package',
+    'the APK workflow must split the APK per ABI',
   );
   assert.ok(
-    workflow.includes('app-$abi-release.apk') || workflow.includes('app-armeabi-v7a-release.apk'),
-    'the APK workflow must verify the 32-bit APK',
+    workflow.includes('app-$abi-release.apk') || workflow.includes('app-arm64-v8a-release.apk'),
+    'the APK workflow must verify the arm64-v8a APK',
   );
   assert.ok(
-    workflow.includes('fqapp-armv7-'),
-    'the APK workflow must upload a separate 32-bit artifact',
+    workflow.includes('fqapp-${{ env.') || workflow.includes('arm64-v8a'),
+    'the APK workflow must upload the arm64-v8a artifact',
   );
 });
 
@@ -322,6 +334,20 @@ test('workflow path filters are defined once and referenced by anchor', () => {
     );
     // 用 split 数出现次数而不是正则：模板字符串里写 \b 会变成退格符。
     const definitions = workflow.split(`paths: &${anchor}`).length - 1;
+    if (definitions === 0) {
+      // 没有锚点只允许一种情况：这个 workflow 压根没有自动触发块。本 fork 把
+      // windows.yml 的 push / pull_request 整个去掉了（只留 workflow_dispatch，
+      // 省 45 分钟/次的 runner 额度），没有 paths 可锚定 —— 这不是漏抄。
+      const live = workflow
+        .split('\n')
+        .filter((line) => !line.trimStart().startsWith('#'))
+        .join('\n');
+      assert.ok(
+        !/^ {2}(push|pull_request):/m.test(live),
+        `${file} has no paths block; that is only allowed while it has no push/pull_request trigger`,
+      );
+      continue;
+    }
     assert.equal(definitions, 1, `${file} must define paths once as &${anchor}`);
     const references = workflow.split(`paths: *${anchor}`).length - 1;
     assert.equal(

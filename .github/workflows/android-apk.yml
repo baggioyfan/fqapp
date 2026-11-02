@@ -118,6 +118,24 @@ jobs:
           path: app
           persist-credentials: false
 
+      # 版本单调性闸门要读 `git tag --list 'v*'`，但默认 checkout 是
+      # `--depth=1 --no-tags`，那份列表是空的 —— 闸门在所有分支/PR 构建上
+      # 都是静默通过，等于不存在。`fetch-tags: true` 也救不了：checkout 仍然
+      # 带 --depth=1，浅取只解析得到从 tip 可达的 tag。必须显式 fetch 一次。
+      - name: Fetch version tags for the monotonicity gate
+        run: |
+          git fetch --tags --force origin '+refs/tags/v*:refs/tags/v*' \
+            || git fetch --tags --force origin
+          count="$(git tag --list 'v*' | wc -l)"
+          if [ "$count" -eq 0 ]; then
+            # 不致命：下游闸门退化成「没有可比对的 tag」。但要大声说出来，
+            # 「一声不响地通过」正是这个闸门以前失效的方式。
+            echo '::warning::No v* tags are visible; the version-monotonicity gate cannot run.'
+          else
+            printf 'Visible v* tags: %s (highest: %s)\n' \
+              "$count" "$(git tag --list 'v*' --sort=-v:refname | head -1)"
+          fi
+
       - name: Compute artifact identifiers
         id: artifact-ids
         run: |
@@ -217,12 +235,40 @@ jobs:
           flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
 
+      # 钉住的 NDK 与 CMake 都不在 ubuntu-24.04 镜像里（镜像带的是 27.3/29/30
+      # 与 3.31/4.1），每次全量下载要几分钟。两者各用各的 key：NDK 升版不该
+      # 把 CMake 条目一起失效。
+      # 路径写死成 runner 镜像文档里的 SDK 根，不用 ${{ env.ANDROID_HOME }} ——
+      # 那是 RUN 时才注入的变量，在 ${{ }} 里展开是空串，缓存路径会变成
+      # /ndk/... 与 /cmake/...，actions/cache 直接拒绝保存（Path(s) ... do(es)
+      # not exist），缓存看似配了其实一次都没生效。
+      - name: Cache the pinned NDK
+        id: ndk-cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: /usr/local/lib/android/sdk/ndk/${{ env.NDK_VERSION }}
+          key: android-ndk-${{ env.NDK_VERSION }}-${{ runner.os }}
+
+      - name: Cache the pinned CMake
+        id: cmake-cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: /usr/local/lib/android/sdk/cmake/${{ env.CMAKE_VERSION }}
+          key: android-cmake-${{ env.CMAKE_VERSION }}-${{ runner.os }}
+
       - name: Install Android SDK components
         run: |
           sdkmanager_bin="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
           "$sdkmanager_bin" --licenses < <(yes) > /dev/null
+          # 缓存命中时目录已经在盘上，再让 sdkmanager 查一遍只是白跑网络往返。
+          missing=()
+          for pkg in "ndk;$NDK_VERSION" "cmake;$CMAKE_VERSION"; do
+            if [ ! -d "$ANDROID_HOME/${pkg%%;*}/${pkg##*;}" ]; then
+              missing+=("$pkg")
+            fi
+          done
           "$sdkmanager_bin" "platforms;android-36" "build-tools;$BUILD_TOOLS_VERSION" \
-            "ndk;$NDK_VERSION" "cmake;$CMAKE_VERSION"
+            ${missing[@]+"${missing[@]}"}
           printf 'ANDROID_NDK_HOME=%s/ndk/%s\n' "$ANDROID_HOME" "$NDK_VERSION" >> "$GITHUB_ENV"
           flutter config --android-sdk "$ANDROID_HOME" --no-analytics
 
@@ -680,7 +726,7 @@ jobs:
       # 理论上可以给 4（上游给了 4），但这次先只验证「拆分」这一个变量：等这
       # 条流水线绿过一次，再把并发提到 4 单独测一次，出问题好归因。
       - name: Test
-        run: flutter test --no-pub --concurrency=2 --reporter compact
+        run: flutter test --no-pub --concurrency=4 --reporter compact
 
   # 交付面是两个包：APK + macOS universal。桌面包与 APK 同一次 dispatch 产出
   # （macos.yml 是可复用工作流），勾了 `macos` 就出；填了 release_tag 则强制出
