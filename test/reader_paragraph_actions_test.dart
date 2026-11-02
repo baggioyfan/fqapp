@@ -12,6 +12,7 @@ import 'package:fqapp/pages/audio_page.dart';
 import 'package:fqapp/pages/reader_page.dart';
 import 'package:fqapp/services/chapter_text_formatter.dart';
 import 'package:fqapp/services/reader_underline_store.dart';
+import 'package:fqapp/widgets/audio/audio_playback_scope.dart';
 import 'package:fqapp/widgets/reader/reader_listen_button.dart';
 import 'package:fqapp/widgets/reader/reader_paged_view.dart';
 import 'package:fqapp/widgets/reader/reader_paragraph_menu.dart';
@@ -671,11 +672,19 @@ void main() {
     expect(find.text('已取消划线'), findsOneWidget);
   });
 
-  testWidgets('听书入口只问引擎，起点是当前页第一段', (tester) async {
+  testWidgets('听书入口直接用默认引擎起播，起点是当前页第一段', (tester) async {
     await tester.binding.setSurfaceSize(const Size(400, 800));
     addTearDown(() => tester.binding.setSurfaceSize(null));
     await tester.pumpWidget(_app(_MemoryUnderlines()));
     await tester.pumpAndSettle();
+
+    // 默认引擎是智能朗读，起播走「后台起播、不跳页」，用起播缝接住请求。
+    AudioPage? started;
+    AudioPlaybackScope.startListeningOverride = (context, request) async {
+      started = request;
+      return true;
+    };
+    addTearDown(() => AudioPlaybackScope.startListeningOverride = null);
 
     await tester.tapAt(
       tester.getRect(find.byKey(const ValueKey('reader-page-surface'))).center,
@@ -689,25 +698,19 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 500));
 
-    // 菜单只剩引擎两项：起点不在这里选，也没有「从本页播放」这种第二轴。
-    expect(find.byKey(const ValueKey('listen-source-audio')), findsOneWidget);
-    expect(find.byKey(const ValueKey('listen-source-tts')), findsOneWidget);
-    expect(find.text('从本页播放'), findsNothing);
+    // 入口不再先问引擎：引擎来自设置里的偏好，换引擎在听书胶囊的三点里。
+    expect(find.byKey(const ValueKey('listen-source-audio')), findsNothing);
+    expect(find.byType(AudioPage), findsNothing);
 
-    await tester.tap(find.byKey(const ValueKey('listen-source-audio')));
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 600));
-
-    // The listening page is pushed on top of the reader for this chapter.
-    final audio = tester.widget<AudioPage>(find.byType(AudioPage));
-    expect(audio.bookId, 'reader-test');
-    expect(audio.startIndex, 0);
-    expect(audio.chapters.first.itemId, 'c1');
-    expect(audio.chapters, hasLength(2));
+    expect(started, isNotNull);
+    expect(started!.bookId, 'reader-test');
+    expect(started!.startIndex, 0);
+    expect(started!.chapters.first.itemId, 'c1');
+    expect(started!.chapters, hasLength(2));
     // 第 0 段没有 `<span start_time>`，仍然是段落锚定请求：不落回历史续播，
     // 而是把段落交给播放页去 /timepoints 查，查不到才从章首起。
-    expect(audio.startPosition, Duration.zero);
-    expect(audio.startParagraph?.paraIndex, 0);
+    expect(started!.startPosition, Duration.zero);
+    expect(started!.startParagraph?.paraIndex, 0);
     expect(tester.takeException(), isNull);
 
     await _drainPlaybackRetries(tester);
@@ -750,18 +753,21 @@ void main() {
       );
 
       // 听书是唯一的请求方：点一次听书才补取时间轴，而且只取一次。
+      AudioPage? started;
+      AudioPlaybackScope.startListeningOverride = (context, request) async {
+        started = request;
+        return true;
+      };
+      addTearDown(() => AudioPlaybackScope.startListeningOverride = null);
+
       await tester.tapAt(tester.getRect(find.byType(ReaderPage)).center);
       await tester.pumpAndSettle();
       await tester.tap(find.byType(ReaderListenButton));
       // 同前：起播中按钮转圈，不能 pumpAndSettle。
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 500));
-      await tester.tap(find.byKey(const ValueKey('listen-source-audio')));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 600));
       expect(requests.where((id) => id == 'c1'), hasLength(1));
-      final audio = tester.widget<AudioPage>(find.byType(AudioPage));
-      expect(audio.startParagraph?.paraIndex, 0);
+      expect(started?.startParagraph?.paraIndex, 0);
       expect(tester.takeException(), isNull);
 
       await _drainPlaybackRetries(tester);

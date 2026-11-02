@@ -21,7 +21,12 @@ extension _ReaderPageListeningLaunch on _ReaderPageState {
     // 起点只有一个来源：当前页第一段。查不到正文段时 (null, null) 才落到
     // 播放页自己的兜底——纯图页、空章这类边界，正常书页走不到。
     final anchor = _currentPageAnchor();
-    var system = widget.localOnly;
+    // 入口不再问引擎：按设置里存的偏好走。本地书没有服务端音频，固定
+    // 系统朗读；其余书听用户的——偏好为系统朗读就直接起 TTS，否则走
+    // 听书页（默认智能朗读）。换引擎在听书胶囊的三点里，不挡在入口前。
+    var system =
+        widget.localOnly ||
+        AudioPreferences.instance.listenEngine.value == ListenEngine.system;
     if (!system) {
       if (fromPage) {
         await _openUpstreamListening(
@@ -44,6 +49,13 @@ extension _ReaderPageListeningLaunch on _ReaderPageState {
       }
       if (!mounted || choice == null || chapterId != _chapter.itemId) return;
       system = choice == 2;
+      // 记住这次的选择：设置面板里换过引擎，之后入口就直接按它起播，
+      // 不再每次弹面板。
+      unawaited(
+        AudioPreferences.instance.setListenEngine(
+          system ? ListenEngine.system : ListenEngine.smart,
+        ),
+      );
     }
     if (!system) {
       await _openUpstreamListening(
@@ -115,7 +127,7 @@ extension _ReaderPageListeningLaunch on _ReaderPageState {
     }
   }
 
-  /// 听书方式选择：0 = 听书（作品自带音频），2 = 系统朗读。
+  /// 选择播放引擎：0 = 智能朗读（作品音频），2 = 系统朗读（手机 TTS）。
   ///
   /// 面板骨架走 ReaderSettingsSheetFrame；路由透明，底色 / 圆角由 frame
   /// 按阅读 preset 画出。
@@ -406,8 +418,8 @@ class _ListeningSourceSheet extends StatelessWidget {
         context,
         key: const ValueKey('listen-source-audio'),
         icon: LucideIcons.headphones,
-        title: '听书',
-        subtitle: '作品自带的真人音频，从当前位置开始',
+        title: '智能朗读',
+        subtitle: '作品自带朗读音频，音色可换，需要联网',
         value: 0,
       ),
       _row(
@@ -415,7 +427,7 @@ class _ListeningSourceSheet extends StatelessWidget {
         key: const ValueKey('listen-source-tts'),
         icon: LucideIcons.mic,
         title: '系统朗读',
-        subtitle: '手机已装的 TTS 引擎，从当前位置开始',
+        subtitle: '手机已装的 TTS 引擎，离线可用，音色由系统决定',
         value: 2,
       ),
     ],
