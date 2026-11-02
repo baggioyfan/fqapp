@@ -62,15 +62,22 @@ extension _ReaderPageListeningLaunch on _ReaderPageState {
       }
       final content = _chapterContent;
       final chapter = _chapter;
+      // TTS 的坐标是「正文字符偏移」：把锚点段落换算成朗读文本里的起点，
+      // 菜单进来（当前页第一段）和长按进来（按住那段）走的是同一段换算。
+      //
+      // 2026-11-02 修复：11-01 合并上游时这段取了上游版本（只认入参 textId），
+      // 于是菜单进来的系统朗读一路 null 回落到 offset 0，也就是章节开头。
+      // 页锚点在函数开头已经算好，这里按「显式传入优先、否则用页首段」取。
+      final ttsTextId = textId ?? anchor.textId;
       var offset = 0;
-      if (textId != null) {
+      if (ttsTextId != null) {
         final body = replacement.bodyBlocks(chapter.title);
         var found = false;
         for (var i = 0; i < body.length; i++) {
           final block = body[i];
           if (block is! ChapterParagraph) continue;
           if (paragraphUnderlineId(paraIndex: block.paraIndex, blockIndex: i) ==
-              textId) {
+              ttsTextId) {
             found = true;
             break;
           }
