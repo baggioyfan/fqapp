@@ -5,7 +5,7 @@ WebDAV 双向同步（书架 / 进度 / 已看 / 搜索历史 / 阅读时长）�
 桌面版同在本 Release 发布，**一个 universal 包通吃**：同一个 .app 里同时带 Apple Silicon
 （arm64）与 Intel（x86_64）两份切片，两类 Mac 装同一个文件都能跑，不用再挑包。
 
-## 本版 `v1.0.200-fq13`（听书入口统一走默认引擎，并入上游 1.0.200）
+## 本版 `v1.0.200-fq1`（听书入口统一走默认引擎，并入上游 1.0.200）
 
 **听书入口只认「默认引擎」，不再看从哪个入口进来**
 
@@ -29,7 +29,7 @@ WebDAV 双向同步（书架 / 进度 / 已看 / 搜索历史 / 阅读时长）�
 
 ## ⚠️ 升级必读
 
-签名与 `fq1`…`fq12` **相同**（正式证书 `7d5397aa…3cde7a`），可直接覆盖安装，
+签名与上一版 `v1.0.133-fq12` **相同**（正式证书 `7d5397aa…3cde7a`），可直接覆盖安装，
 书架与进度都保留。
 
 还在用更早 debug 签名（`13f6a184…d9ac`）的机器必须卸载重装 —— 清单
@@ -51,8 +51,8 @@ WebDAV 双向同步（书架 / 进度 / 已看 / 搜索历史 / 阅读时长）�
 
 ## 校验
 
-- `fqapp-v1.0.200-fq13-arm64-v8a.apk`，versionName `1.0.200` / versionCode `205`，显示名「什锦铺」
-- `fqapp-v1.0.200-fq13-macos.zip`，universal —— 一个 `.app` 内 arm64 + x86_64 两条切片，
+- `fqapp-v1.0.200-fq1-arm64-v8a.apk`，versionName `1.0.200` / versionCode `205`，显示名「什锦铺」
+- `fqapp-v1.0.200-fq1-macos.zip`，universal —— 一个 `.app` 内 arm64 + x86_64 两条切片，
   Apple Silicon 与 Intel 都跑原生，要求 macOS 13+
 - 流水线：analyze 无问题 + 全量测试通过 + APK 签名与 16 KiB 对齐校验
   + 包内 Mach-O 架构校验（校 universal 的两条切片都在）；sha256 与体积见 `build-info.txt`
