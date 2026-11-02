@@ -4,15 +4,8 @@
 // 上游侧新增了全局 shared_client 与按已知长度的分段拉取，两边代码在合并后同时
 // 存在，所以两套符号都要引；net 里 Shutdown 只给上游的 socket 收尾用。
 use crate::desktop_fetch::{
-    content_range,
-    fetch_known_range,
-    fetch_range,
-    shared_client,
-    with_retries,
-    FetchError,
-    OpenError,
-    CHUNK_TIMEOUT,
-    PROBE_TIMEOUT,
+    content_range, fetch_known_range, fetch_range, shared_client, with_retries, FetchError,
+    OpenError, CHUNK_TIMEOUT, PROBE_TIMEOUT,
 };
 use reqwest::{blocking::Client, header};
 use serde::Deserialize;

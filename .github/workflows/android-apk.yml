@@ -725,11 +725,14 @@ jobs:
       # 的通过用例（错误处理覆盖）不再看着像失败，真失败的仍会打印完整异常和
       # 堆栈。
       #
-      # --concurrency 仍是 2，跟搬到 apk job 里之前一致。这个 job 独占 4 vCPU，
-      # 理论上可以给 4（上游给了 4），但这次先只验证「拆分」这一个变量：等这
-      # 条流水线绿过一次，再把并发提到 4 单独测一次，出问题好归因。
+      # --concurrency 保持 2，与 dart-check.yml 一致。曾经提到 4 想省时间，结
+      # 果 2026-11-02 那次构建栽在 audio_downloader_test 的
+      # 「discard 后立刻重下…」上：那条用例用 `Future.delayed(100ms)` 当窗口，
+      # 断言「旧协程还没收尾」，本质是在测收尾耗时而不是并发正确性（真正的
+      # 串行化由 _runs 的 key 占位保证，跟并发度无关）。并发度一高，收尾在
+      # 窗口内完成，用例就翻脸。要提速得先把那条用例改成不依赖墙钟时间。
       - name: Test
-        run: flutter test --no-pub --concurrency=4 --reporter compact
+        run: flutter test --no-pub --concurrency=2 --reporter compact
 
   # 交付面是两个包：APK + macOS universal。桌面包与 APK 同一次 dispatch 产出
   # （macos.yml 是可复用工作流），勾了 `macos` 就出；填了 release_tag 则强制出
