@@ -258,9 +258,25 @@ test('the APK workflow shares the Dart gate with a parallel job', () => {
     /^\s{2}dart-gate:/m.test(workflow),
     'the Dart gate must be its own job so it can run in parallel with apk',
   );
+  // 这里锁的是「全量套件」，不是核数。曾经把 --concurrency=4 写死成断言，
+  // 结果 audio_downloader_test 有一条用 100ms 墙钟窗口断言「旧协程还没收尾」
+  // 的用例在 4 并发下翻脸，只好退回 2（与 dart-check.yml 一致）；断言跟着
+  // 放宽到 2|4，但「不许过滤用例」这条实质约束反而要显式钉住。
+  const testCommand = (
+    /flutter test --no-pub[^\n]*/.exec(workflow)?.[0] ?? ''
+  )
+    // Windows 检出带 CRLF，[^\n]* 会把 \r 也吃进来，不剥掉下面的 ^$ 就永远不匹配。
+    .replace(/\r/g, '')
+    .trim();
   assert.ok(
-    /flutter test --no-pub --concurrency=4 --reporter compact/.test(workflow),
-    'the Dart gate must run the full suite on all four cores',
+    /^flutter test --no-pub --concurrency=[24] --reporter compact$/.test(
+      testCommand,
+    ),
+    'the Dart gate must run the full suite at concurrency 2 or 4',
+  );
+  assert.ok(
+    !/--(?:name|plain-name|tags|exclude-tags)[= ]/.test(testCommand),
+    'the Dart gate must not filter tests; it has to be the full suite',
   );
   assert.ok(
     !/flutter analyze --no-pub\n\s+flutter test/.test(workflow),
