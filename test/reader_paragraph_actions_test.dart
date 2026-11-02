@@ -133,6 +133,19 @@ Future<void> _longPressParagraph(WidgetTester tester, int paraIndex) async {
   await tester.pumpAndSettle();
 }
 
+/// 收起播放链路留下的定时器。
+///
+/// 起播之后 `_AudioPlaybackController._fetchSource` 会挂一条「单次 30 秒截止
+/// + 最多 3 次重试」的定时器链（`retryTransient`）。测试环境的网络是桩，请求
+/// 一律失败，所以测试结束前必须把这条链跑完：只把 widget 树换掉不够，框架
+/// 仍会断言「widget 树销毁后仍有 Timer」。
+Future<void> _drainPlaybackRetries(WidgetTester tester) async {
+  await tester.pumpWidget(const SizedBox.shrink());
+  for (var attempt = 0; attempt < 4; attempt++) {
+    await tester.pump(const Duration(seconds: 31));
+  }
+}
+
 /// Drags the end handle into the next paragraph with two slop-crossing
 /// steps — a single small move never leaves the pan slop, so the selection
 /// would not update at all.
@@ -696,6 +709,8 @@ void main() {
     expect(audio.startPosition, Duration.zero);
     expect(audio.startParagraph?.paraIndex, 0);
     expect(tester.takeException(), isNull);
+
+    await _drainPlaybackRetries(tester);
   });
 
   testWidgets(
@@ -748,6 +763,8 @@ void main() {
       final audio = tester.widget<AudioPage>(find.byType(AudioPage));
       expect(audio.startParagraph?.paraIndex, 0);
       expect(tester.takeException(), isNull);
+
+      await _drainPlaybackRetries(tester);
     },
   );
 
