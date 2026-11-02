@@ -12,7 +12,6 @@ import 'package:fqapp/pages/audio_page.dart';
 import 'package:fqapp/pages/reader_page.dart';
 import 'package:fqapp/services/chapter_text_formatter.dart';
 import 'package:fqapp/services/reader_underline_store.dart';
-import 'package:fqapp/widgets/audio/audio_playback_scope.dart';
 import 'package:fqapp/widgets/reader/reader_listen_button.dart';
 import 'package:fqapp/widgets/reader/reader_paged_view.dart';
 import 'package:fqapp/widgets/reader/reader_paragraph_menu.dart';
