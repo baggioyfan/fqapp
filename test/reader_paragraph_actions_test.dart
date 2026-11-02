@@ -671,7 +671,10 @@ void main() {
     // 上游 #226 把菜单里的「听书」文字按钮换成了右下角图标按钮；
     // 按类型点，别按文案找。
     await tester.tap(find.byType(ReaderListenButton));
-    await tester.pumpAndSettle();
+    // 起播中按钮上是个转圈（loading 是无限动画），pumpAndSettle 永远等不到
+    // 静止；上游 reader_interface_test 也是手动推两拍。
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
 
     // 菜单只剩引擎两项：起点不在这里选，也没有「从本页播放」这种第二轴。
     expect(find.byKey(const ValueKey('listen-source-audio')), findsOneWidget);
@@ -679,7 +682,8 @@ void main() {
     expect(find.text('从本页播放'), findsNothing);
 
     await tester.tap(find.byKey(const ValueKey('listen-source-audio')));
-    await tester.pumpAndSettle();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 600));
 
     // The listening page is pushed on top of the reader for this chapter.
     final audio = tester.widget<AudioPage>(find.byType(AudioPage));
@@ -734,9 +738,12 @@ void main() {
       await tester.tapAt(tester.getRect(find.byType(ReaderPage)).center);
       await tester.pumpAndSettle();
       await tester.tap(find.byType(ReaderListenButton));
-      await tester.pumpAndSettle();
+      // 同前：起播中按钮转圈，不能 pumpAndSettle。
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 500));
       await tester.tap(find.byKey(const ValueKey('listen-source-audio')));
-      await tester.pumpAndSettle();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 600));
       expect(requests.where((id) => id == 'c1'), hasLength(1));
       final audio = tester.widget<AudioPage>(find.byType(AudioPage));
       expect(audio.startParagraph?.paraIndex, 0);
