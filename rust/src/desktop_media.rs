@@ -208,8 +208,8 @@ impl Source {
             (None, size)
         } else {
             let client = media_client(&url)?;
-            let (_, total) = with_retries(&cancelled, || probe(client, &url))
-                .map_err(OpenError::fetch)?;
+            let (_, total) =
+                with_retries(&cancelled, || probe(client, &url)).map_err(OpenError::fetch)?;
             (Some(client), total)
         };
         if size == 0 || size > i64::MAX as u64 {
