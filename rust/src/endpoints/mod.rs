@@ -18,6 +18,7 @@ pub mod dhcontent;
 pub mod full;
 pub mod home;
 pub mod manga;
+pub mod reader_video;
 pub mod router;
 pub mod search;
 pub mod session;
@@ -135,6 +136,7 @@ pub type RawHandler = for<'a> fn(&'a Ctx, &'a Params) -> BoxFuture<'a, ApiResult
 
 pub struct Server {
     pub ctx: Arc<Ctx>,
+    pub(crate) lifetime: tokio_util::sync::CancellationToken,
     routes: HashMap<&'static str, Handler>,
     raw: HashMap<&'static str, RawHandler>,
 }
@@ -143,6 +145,7 @@ impl Server {
     pub fn new(ctx: Arc<Ctx>) -> Self {
         let mut s = Server {
             ctx,
+            lifetime: tokio_util::sync::CancellationToken::new(),
             routes: HashMap::new(),
             raw: HashMap::new(),
         };
@@ -184,6 +187,7 @@ pub mod server {
         author::register(s);
         audio::register(s);
         video::register(s);
+        reader_video::register(s);
         manga::register(s);
     }
 }

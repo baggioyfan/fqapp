@@ -16,7 +16,7 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 # https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
 # In Windows, build-name is used as the major, minor, and patch parts
 # of the product and file versions while build-number is used as the build suffix.
-version: 1.0.133+138
+version: 1.0.200+205
 
 environment:
   sdk: ^3.12.2
@@ -36,6 +36,7 @@ dependencies:
     sdk: flutter
 
   http: ^1.6.0
+  crypto: 3.0.8
   path_provider: ^2.1.0
   shared_preferences: ^2.3.0
   url_launcher: ^6.3.0
@@ -126,6 +127,7 @@ flutter:
     # `ckao/decompile/apktool/res/drawable*/` 原样抽出（见
     # docs/research/short-drama-decompile-comparison-20260921.md §8）。
     - assets/images/drama/
+    - assets/images/reader/
     # 「上滑查看更多视频」的官方箭头动画（`more_wonderful_series_up_arrow.json`），
     # 原样复制、仅把填充色改为白色——官方运行时用 LottieValueCallback 强制
     # `@color/al`=#ffffffff（见同文档 §19）。

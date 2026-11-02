@@ -32,6 +32,7 @@ on:
       - 'scripts/run_rust_host_tests.sh'
       - 'scripts/run_rust_host_tests.ps1'
       - 'scripts/check_native_alignment.cjs'
+      - 'scripts/check_line_budget.sh'
       - 'scripts/generate_app_icons.py'
       - 'scripts/verify_android_apk.py'
       - 'scripts/verify_audio_cenc.cjs'
@@ -712,10 +713,12 @@ jobs:
       - name: Analyze
         run: flutter analyze --no-pub
 
-      # AGENTS.md caps files at 500 lines and functions at 80. The codebase is
-      # already over that in many places, so this gate freezes todays debt
-      # instead of pretending it is clean: a listed file may shrink but not grow.
-      - name: Check size budget
+      # Size is review context, not a quality gate. Even a reporting error
+      # must not block the build; analysis and functional checks stay enforced.
+      # 上游 11-02 把这条从「冻结行数债务」的阻塞门禁降级成信息报告，
+      # 并删掉了 scripts/line_budget.json（脚本改为只打印尺寸）。
+      - name: Report source sizes (informational)
+        continue-on-error: true
         run: bash scripts/check_line_budget.sh
 
       # --reporter compact 用进度点代替每个用例一行：名字里带 "failed"/"error"

@@ -254,6 +254,7 @@ class _FqAppState extends State<FqApp> {
 
   @override
   void dispose() {
+    BackendService.instance.cancelStartupTimeout();
     _audioRoutes.dispose();
     super.dispose();
   }
