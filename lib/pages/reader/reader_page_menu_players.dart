@@ -53,10 +53,12 @@ extension _ReaderPageMenuPlayers on _ReaderPageState {
                             preset: preset,
                             loading: _openingListening,
                             unavailable: _readerAudioUnavailable,
+                            // fork 口径：菜单入口先问引擎（听书 / 系统朗读），
+                            // 起点固定当前页第一段。不要传 fromPage —— 那会
+                            // 跳过引擎菜单直接起播。
                             onTap: _loading || _error != null
                                 ? null
-                                : () =>
-                                      unawaited(_openListening(fromPage: true)),
+                                : () => unawaited(_openListening()),
                           ),
                         ),
                       ),

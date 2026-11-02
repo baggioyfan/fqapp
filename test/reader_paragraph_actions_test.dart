@@ -12,6 +12,7 @@ import 'package:fqapp/pages/audio_page.dart';
 import 'package:fqapp/pages/reader_page.dart';
 import 'package:fqapp/services/chapter_text_formatter.dart';
 import 'package:fqapp/services/reader_underline_store.dart';
+import 'package:fqapp/widgets/reader/reader_listen_button.dart';
 import 'package:fqapp/widgets/reader/reader_paged_view.dart';
 import 'package:fqapp/widgets/reader/reader_paragraph_menu.dart';
 import 'package:fqapp/widgets/reader/reader_text_selection.dart';
@@ -667,7 +668,9 @@ void main() {
       tester.getRect(find.byKey(const ValueKey('reader-page-surface'))).center,
     );
     await tester.pumpAndSettle();
-    await tester.tap(find.text('听书'));
+    // 上游 #226 把菜单里的「听书」文字按钮换成了右下角图标按钮；
+    // 按类型点，别按文案找。
+    await tester.tap(find.byType(ReaderListenButton));
     await tester.pumpAndSettle();
 
     // 菜单只剩引擎两项：起点不在这里选，也没有「从本页播放」这种第二轴。
@@ -730,7 +733,7 @@ void main() {
       // 听书是唯一的请求方：点一次听书才补取时间轴，而且只取一次。
       await tester.tapAt(tester.getRect(find.byType(ReaderPage)).center);
       await tester.pumpAndSettle();
-      await tester.tap(find.text('听书'));
+      await tester.tap(find.byType(ReaderListenButton));
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const ValueKey('listen-source-audio')));
       await tester.pumpAndSettle();
