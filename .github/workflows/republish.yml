@@ -1,0 +1,78 @@
+name: Republish from build
+
+# 用「已经跑过的构建」发 Release，不重新编译。
+#
+# 存在的理由：Actions 产物（artifact）和 Release 资产是两套存储，GitHub 没有
+# 「把 artifact 直接挂成 asset」的接口，必须把文件实体重新上传一次。在本地传
+# 等于让几十 MB 经个人网络来回走两遍；在本 workflow 里传是 GitHub 内部网络，
+# 几秒就完事，也不用重新跑一遍 flutter build。
+#
+# 正文统一取仓库里的 `.github/release-notes.md`，与常规发布路径同源。
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: 取用哪个构建运行的产物（runs/<id>，在 Actions 页面 URL 里）
+        required: true
+        type: string
+      release_tag:
+        description: 发布 tag，例如 v1.0.200-fq2
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  republish:
+    name: republish
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 下载构建产物并整理成发布资产
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ inputs.run_id }}
+          TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          mkdir -p raw dist
+          gh run download "$RUN_ID" -R "$GITHUB_REPOSITORY" -D raw
+          echo "--- 下载到的东西 ---"
+          find raw -type f -printf '%s\t%p\n' | sort -rn
+
+          apk=$(find raw -name '*.apk' | head -1)
+          mac=$(find raw -name 'fqapp-macos*.zip' | head -1)
+          info=$(find raw -name 'build-info.txt' | head -1)
+          for f in "$apk" "$mac" "$info"; do
+            [ -n "$f" ] && [ -s "$f" ] || { echo "缺少产物：apk/macos/build-info 之一为空"; exit 1; }
+          done
+
+          cp "$apk"  "dist/fqapp-${TAG}-arm64-v8a.apk"
+          cp "$mac"  "dist/fqapp-${TAG}-macos.zip"
+          cp "$info" dist/build-info.txt
+
+          ls -l dist
+          echo "--- build-info 的 App commit ---"
+          grep -i '^App commit' dist/build-info.txt
+
+      - name: 建 Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ inputs.run_id }}
+          TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          sha=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID" --jq .head_sha)
+          echo "target commit = $sha"
+          gh release create "$TAG" \
+            -R "$GITHUB_REPOSITORY" \
+            --target "$sha" \
+            --title "$TAG" \
+            --notes-file .github/release-notes.md \
+            dist/fqapp-*.apk dist/fqapp-*.zip dist/build-info.txt
+          gh release view "$TAG" -R "$GITHUB_REPOSITORY" --json url,assets \
+            --jq '"\(.url)", (.assets[] | "  \(.name) \(.size) B")'
