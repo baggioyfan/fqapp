@@ -685,8 +685,9 @@ void main() {
     };
     addTearDown(() => AudioPlaybackScope.startListeningOverride = null);
 
-    // The listening page is pushed on top of the reader for this chapter.
-    await tester.tap(find.text('智能朗读'));
+    // 这条用例从阅读页右下角的听书圆钮起播，走「后台起播、不跳页」——
+    // 页面不会跳到听书页，所以没有「智能朗读」按钮可点（那是「从本段听」
+    // 弹出听书页之后才有的）。
     await tester.pumpAndSettle();
     // 上游 #226 把菜单里的「听书」文字按钮换成了右下角图标按钮；
     // 按类型点，别按文案找。
@@ -714,27 +715,9 @@ void main() {
     await _drainPlaybackRetries(tester);
   });
 
-  testWidgets('a paragraph without a timeline starts at the chapter opening', (
-    tester,
-  ) async {
-    await tester.binding.setSurfaceSize(const Size(400, 800));
-    addTearDown(() => tester.binding.setSurfaceSize(null));
-    await tester.pumpWidget(_app(_MemoryUnderlines()));
-    await tester.pumpAndSettle();
-
-    // Paragraph 0 has no `<span start_time>`. This is still a paragraph-anchored
-    // request, so it carries an explicit zero: falling back to null would resume
-    // saved history instead of starting the chapter at its opening.
-    await _longPressParagraph(tester, 0);
-    await tester.tap(find.byKey(const ValueKey('reader-action-listen')));
-    await tester.pumpAndSettle();
-
-    await tester.tap(find.text('智能朗读'));
-    await tester.pumpAndSettle();
-    final audio = tester.widget<AudioPage>(find.byType(AudioPage));
-    expect(audio.startPosition, Duration.zero);
-    expect(tester.takeException(), isNull);
-  });
+  // 上游还有一个 'a paragraph without a timeline starts at the chapter
+  // opening'：它从长按段落的「从本段听」起播。那条入口我们已裁撤（2acdf7a，
+  // 听书收敛为工具栏唯一一个入口），所以这个用例不适用，不跟着上游带过来。
 
   testWidgets(
     'a cache written before the timeline is refetched only when asked to listen',
@@ -780,9 +763,9 @@ void main() {
       };
       addTearDown(() => AudioPlaybackScope.startListeningOverride = null);
 
-      // Asking to listen from a paragraph pays for the timeline exactly once,
-      // and the resulting position comes from the freshly parsed chapter.
-      await tester.tap(find.text('智能朗读'));
+      // 听书是唯一的请求方：点一次听书才补取时间轴，而且只取一次。
+      // 起点是当前页第一段（长按段落的「从本段听」已裁撤，见 2acdf7a）。
+      await tester.tapAt(tester.getRect(find.byType(ReaderPage)).center);
       await tester.pumpAndSettle();
       await tester.tap(find.byType(ReaderListenButton));
       // 同前：起播中按钮转圈，不能 pumpAndSettle。
