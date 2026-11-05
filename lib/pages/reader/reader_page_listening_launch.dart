@@ -28,9 +28,6 @@ extension _ReaderPageListeningLaunch on _ReaderPageState {
       textId ??= anchor.textId;
     }
     final chapterId = _chapter.itemId;
-    // 起点只有一个来源：当前页第一段。查不到正文段时 (null, null) 才落到
-    // 播放页自己的兜底——纯图页、空章这类边界，正常书页走不到。
-    final anchor = _currentPageAnchor();
     // 入口不再问引擎：按设置里存的偏好走。本地书没有服务端音频，固定
     // 系统朗读；其余书听用户的——偏好为系统朗读就直接起 TTS，否则走
     // 听书页（默认智能朗读）。换引擎在听书胶囊的三点里，不挡在入口前。
@@ -51,15 +48,23 @@ extension _ReaderPageListeningLaunch on _ReaderPageState {
       final int? choice;
       _setState(() => _openingListening = true);
       try {
-        // 菜单只问引擎（0 = 听书，2 = 系统朗读）：起点不在菜单里选，起点由
-        // 调用方决定——普通进来用当前页第一段，长按段落进来用按住那段。
-        // 上游把 choice 提到 try 外声明、用 _setState 持锁（菜单关闭时也刷新
-        // 按钮态），这里沿用它的骨架，只保留 fork 的两项菜单。
+        // 0 = 从头/续播，1 = 从本页播放，2 = 系统朗读。
         choice = await _showListeningSourceSheet();
       } finally {
         if (mounted) _setState(() => _openingListening = false);
       }
       if (!mounted || choice == null || chapterId != _chapter.itemId) return;
+      // The launch helper owns the same lock; release the source sheet first.
+      if (choice == 1) {
+        final anchor = _currentPageAnchor();
+        await _openUpstreamListening(
+          fromMs: anchor.startMs ?? fromMs,
+          textId: anchor.textId ?? textId,
+          openPage: false,
+          keepControls: true,
+        );
+        return;
+      }
       system = choice == 2;
       // 记住这次的选择：设置面板里换过引擎，之后入口就直接按它起播，
       // 不再每次弹面板。
@@ -70,10 +75,7 @@ extension _ReaderPageListeningLaunch on _ReaderPageState {
       );
     }
     if (!system) {
-      await _openUpstreamListening(
-        fromMs: anchor.startMs ?? fromMs,
-        textId: anchor.textId ?? textId,
-      );
+      await _openUpstreamListening(fromMs: fromMs, textId: textId);
       return;
     }
     _setState(() => _openingListening = true);
@@ -88,22 +90,15 @@ extension _ReaderPageListeningLaunch on _ReaderPageState {
       }
       final content = _chapterContent;
       final chapter = _chapter;
-      // TTS 的坐标是「正文字符偏移」：把锚点段落换算成朗读文本里的起点，
-      // 菜单进来（当前页第一段）和长按进来（按住那段）走的是同一段换算。
-      //
-      // 2026-11-02 修复：11-01 合并上游时这段取了上游版本（只认入参 textId），
-      // 于是菜单进来的系统朗读一路 null 回落到 offset 0，也就是章节开头。
-      // 页锚点在函数开头已经算好，这里按「显式传入优先、否则用页首段」取。
-      final ttsTextId = textId ?? anchor.textId;
       var offset = 0;
-      if (ttsTextId != null) {
+      if (textId != null) {
         final body = replacement.bodyBlocks(chapter.title);
         var found = false;
         for (var i = 0; i < body.length; i++) {
           final block = body[i];
           if (block is! ChapterParagraph) continue;
           if (paragraphUnderlineId(paraIndex: block.paraIndex, blockIndex: i) ==
-              ttsTextId) {
+              textId) {
             found = true;
             break;
           }
@@ -139,12 +134,10 @@ extension _ReaderPageListeningLaunch on _ReaderPageState {
     }
   }
 
-  /// 选择播放引擎：0 = 智能朗读（作品音频），2 = 系统朗读（手机 TTS）。
+  /// 选择播放引擎：0 = 智能朗读（作品音频），1 = 从本页播放，2 = 系统朗读（手机 TTS）。
   ///
   /// 面板骨架走 ReaderSettingsSheetFrame；路由透明，底色 / 圆角由 frame
   /// 按阅读 preset 画出。
-  ///
-  /// 只有引擎两项：起点固定是当前页第一段，不再给「从本页播放」这种第二轴。
   Future<int?> _showListeningSourceSheet() {
     final preset = _effectivePreset;
     return showModalBottomSheet<int>(
@@ -428,7 +421,6 @@ class _ListeningSourceSheet extends StatelessWidget {
     children: [
       _row(
         context,
-        key: const ValueKey('listen-source-audio'),
         icon: LucideIcons.headphones,
         title: '智能朗读',
         subtitle: '作品自带朗读音频，音色可换，需要联网',
@@ -436,7 +428,13 @@ class _ListeningSourceSheet extends StatelessWidget {
       ),
       _row(
         context,
-        key: const ValueKey('listen-source-tts'),
+        icon: LucideIcons.locate_fixed,
+        title: '从本页播放',
+        subtitle: '从当前页第一段开始听',
+        value: 1,
+      ),
+      _row(
+        context,
         icon: LucideIcons.mic,
         title: '系统朗读',
         subtitle: '手机已装的 TTS 引擎，离线可用，音色由系统决定',
@@ -447,13 +445,11 @@ class _ListeningSourceSheet extends StatelessWidget {
 
   Widget _row(
     BuildContext context, {
-    Key? key,
     required IconData icon,
     required String title,
     required String subtitle,
     required int value,
   }) => ListTile(
-    key: key,
     leading: Icon(icon, color: preset.mutedTextColor),
     title: Text(title, style: TextStyle(color: preset.textColor)),
     subtitle: Text(subtitle, style: TextStyle(color: preset.mutedTextColor)),

@@ -685,9 +685,8 @@ void main() {
     };
     addTearDown(() => AudioPlaybackScope.startListeningOverride = null);
 
-    await tester.tapAt(
-      tester.getRect(find.byKey(const ValueKey('reader-page-surface'))).center,
-    );
+    // The listening page is pushed on top of the reader for this chapter.
+    await tester.tap(find.text('智能朗读'));
     await tester.pumpAndSettle();
     // 上游 #226 把菜单里的「听书」文字按钮换成了右下角图标按钮；
     // 按类型点，别按文案找。
@@ -713,6 +712,28 @@ void main() {
     expect(tester.takeException(), isNull);
 
     await _drainPlaybackRetries(tester);
+  });
+
+  testWidgets('a paragraph without a timeline starts at the chapter opening', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(400, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(_app(_MemoryUnderlines()));
+    await tester.pumpAndSettle();
+
+    // Paragraph 0 has no `<span start_time>`. This is still a paragraph-anchored
+    // request, so it carries an explicit zero: falling back to null would resume
+    // saved history instead of starting the chapter at its opening.
+    await _longPressParagraph(tester, 0);
+    await tester.tap(find.byKey(const ValueKey('reader-action-listen')));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('智能朗读'));
+    await tester.pumpAndSettle();
+    final audio = tester.widget<AudioPage>(find.byType(AudioPage));
+    expect(audio.startPosition, Duration.zero);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets(
@@ -759,7 +780,9 @@ void main() {
       };
       addTearDown(() => AudioPlaybackScope.startListeningOverride = null);
 
-      await tester.tapAt(tester.getRect(find.byType(ReaderPage)).center);
+      // Asking to listen from a paragraph pays for the timeline exactly once,
+      // and the resulting position comes from the freshly parsed chapter.
+      await tester.tap(find.text('智能朗读'));
       await tester.pumpAndSettle();
       await tester.tap(find.byType(ReaderListenButton));
       // 同前：起播中按钮转圈，不能 pumpAndSettle。

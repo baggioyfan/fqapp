@@ -13,6 +13,8 @@ enum ReaderPageMode { paged, scroll }
 
 enum ReaderScrollChapterMode { replace, joined }
 
+enum ReaderDialogueHighlightStyle { automatic, background, underline }
+
 /// Compact mode keeps one footer; detailed mode also shows book/chapter data.
 /// Note: 兼容旧开关的迁移见 .agents/notes/implemented/feature/2026-10-15-reader-info-modes.md
 enum ReaderInfoMode { hidden, compact, detailed }
@@ -39,6 +41,8 @@ class ReaderPreferences {
   static const _showReadingInfoKey = 'reader_show_reading_info';
   static const _readingInfoModeKey = 'reader_info_mode';
   static const _showSystemStatusBarKey = 'reader_show_system_status_bar';
+  static const _showSystemNavigationBarKey =
+      'reader_show_system_navigation_bar';
   static const _followSystemBrightnessKey = 'reader_follow_system_brightness';
   static const _brightnessKey = 'reader_brightness';
   static const _fontPathKey = 'reader_font_path';
@@ -52,6 +56,8 @@ class ReaderPreferences {
   static const _narrationHighlightKey = 'reader_narration_highlight';
   static const _narrationHighlightColorKey = 'reader_narration_highlight_color';
   static const _narrationHighlightStyleKey = 'reader_narration_highlight_style';
+  static const _dialogueHighlightKey = 'reader_dialogue_highlight';
+  static const _dialogueHighlightStyleKey = 'reader_dialogue_highlight_style';
   static const _continuousReadingKey = 'reader_continuous_reading';
   static const _scrollChapterModeKey = 'reader_scroll_chapter_mode';
   static const _einkRefreshIntervalKey = 'reader_eink_refresh_interval';
@@ -74,6 +80,7 @@ class ReaderPreferences {
   final ReaderTitleAlignment titleAlignment;
   final ReaderInfoMode readingInfoMode;
   final bool showSystemStatusBar;
+  final bool showSystemNavigationBar;
   bool get showReadingInfo => readingInfoMode != ReaderInfoMode.hidden;
   final bool followSystemBrightness;
   final double brightness;
@@ -130,6 +137,18 @@ class ReaderPreferences {
         _ => preset == ReaderThemePreset.eink,
       };
 
+  /// Marks quoted dialogue in the reading text, independently of playback.
+  final bool dialogueHighlight;
+  final ReaderDialogueHighlightStyle dialogueHighlightStyle;
+
+  bool dialogueUnderlineFor(ReaderThemePreset preset) =>
+      switch (dialogueHighlightStyle) {
+        ReaderDialogueHighlightStyle.automatic =>
+          preset == ReaderThemePreset.eink,
+        ReaderDialogueHighlightStyle.background => false,
+        ReaderDialogueHighlightStyle.underline => true,
+      };
+
   /// 滚动模式连续阅读：到底继续下拉进入下一章。默认开启。
   /// 普通分页始终直接跨章，不受这个滚动手势开关影响。
   final bool continuousReading;
@@ -172,6 +191,7 @@ class ReaderPreferences {
     bool? showReadingInfo,
     ReaderInfoMode readingInfoMode = ReaderInfoMode.compact,
     this.showSystemStatusBar = true,
+    this.showSystemNavigationBar = false,
     this.followSystemBrightness = true,
     this.brightness = 0.5,
     this.fontPath = '',
@@ -185,6 +205,8 @@ class ReaderPreferences {
     this.narrationHighlight = true,
     this.narrationHighlightColor,
     this.narrationHighlightStyle,
+    this.dialogueHighlight = false,
+    this.dialogueHighlightStyle = ReaderDialogueHighlightStyle.automatic,
     this.continuousReading = true,
     this.scrollChapterMode = ReaderScrollChapterMode.joined,
     this.einkRefreshInterval = 10,
@@ -212,6 +234,7 @@ class ReaderPreferences {
     bool? showReadingInfo,
     ReaderInfoMode? readingInfoMode,
     bool? showSystemStatusBar,
+    bool? showSystemNavigationBar,
     bool? followSystemBrightness,
     double? brightness,
     String? fontPath,
@@ -232,6 +255,8 @@ class ReaderPreferences {
 
     /// true = 恢复「自动」（墨水屏下划线，其余背景色块）。
     bool autoNarrationHighlightStyle = false,
+    bool? dialogueHighlight,
+    ReaderDialogueHighlightStyle? dialogueHighlightStyle,
     bool? continuousReading,
     ReaderScrollChapterMode? scrollChapterMode,
     int? einkRefreshInterval,
@@ -261,6 +286,8 @@ class ReaderPreferences {
               ? ReaderInfoMode.compact
               : this.readingInfoMode),
       showSystemStatusBar: showSystemStatusBar ?? this.showSystemStatusBar,
+      showSystemNavigationBar:
+          showSystemNavigationBar ?? this.showSystemNavigationBar,
       followSystemBrightness:
           followSystemBrightness ?? this.followSystemBrightness,
       brightness: brightness ?? this.brightness,
@@ -279,6 +306,9 @@ class ReaderPreferences {
       narrationHighlightStyle: autoNarrationHighlightStyle
           ? null
           : narrationHighlightStyle ?? this.narrationHighlightStyle,
+      dialogueHighlight: dialogueHighlight ?? this.dialogueHighlight,
+      dialogueHighlightStyle:
+          dialogueHighlightStyle ?? this.dialogueHighlightStyle,
       continuousReading: continuousReading ?? this.continuousReading,
       scrollChapterMode: scrollChapterMode ?? this.scrollChapterMode,
       einkRefreshInterval: einkRefreshInterval ?? this.einkRefreshInterval,
@@ -313,6 +343,7 @@ class ReaderPreferences {
       titleAlignment: titleAlignment,
       readingInfoMode: readingInfoMode,
       showSystemStatusBar: showSystemStatusBar,
+      showSystemNavigationBar: showSystemNavigationBar,
       followSystemBrightness: followSystemBrightness,
       brightness: brightness.isFinite ? brightness.clamp(0.02, 1) : 0.5,
       fontPath: fontPath,
@@ -328,6 +359,8 @@ class ReaderPreferences {
       narrationHighlight: narrationHighlight,
       narrationHighlightColor: narrationHighlightColor,
       narrationHighlightStyle: narrationHighlightStyle,
+      dialogueHighlight: dialogueHighlight,
+      dialogueHighlightStyle: dialogueHighlightStyle,
       continuousReading: continuousReading,
       scrollChapterMode: scrollChapterMode,
       einkRefreshInterval: einkRefreshInterval.clamp(0, 100),
@@ -372,6 +405,8 @@ class ReaderPreferences {
       ),
       showSystemStatusBar:
           _boolean(preferences, _showSystemStatusBarKey) ?? true,
+      showSystemNavigationBar:
+          _boolean(preferences, _showSystemNavigationBarKey) ?? false,
       followSystemBrightness:
           _boolean(preferences, _followSystemBrightnessKey) ?? true,
       brightness: _number(preferences, _brightnessKey) ?? 0.5,
@@ -400,6 +435,11 @@ class ReaderPreferences {
         preferences,
         _narrationHighlightStyleKey,
       )?.toInt(),
+      dialogueHighlight: _boolean(preferences, _dialogueHighlightKey) ?? false,
+      dialogueHighlightStyle: ReaderDialogueHighlightStyle.values.firstWhere(
+        (style) => style.name == preferences.get(_dialogueHighlightStyleKey),
+        orElse: () => ReaderDialogueHighlightStyle.automatic,
+      ),
       continuousReading: _boolean(preferences, _continuousReadingKey) ?? true,
       scrollChapterMode: ReaderScrollChapterMode.values.firstWhere(
         (mode) => mode.name == preferences.getString(_scrollChapterModeKey),
@@ -446,6 +486,10 @@ class ReaderPreferences {
       preferences.setString(_readingInfoModeKey, value.readingInfoMode.name),
       preferences.setBool(_showSystemStatusBarKey, value.showSystemStatusBar),
       preferences.setBool(
+        _showSystemNavigationBarKey,
+        value.showSystemNavigationBar,
+      ),
+      preferences.setBool(
         _followSystemBrightnessKey,
         value.followSystemBrightness,
       ),
@@ -473,6 +517,11 @@ class ReaderPreferences {
           _narrationHighlightStyleKey,
           value.narrationHighlightStyle!,
         ),
+      preferences.setBool(_dialogueHighlightKey, value.dialogueHighlight),
+      preferences.setString(
+        _dialogueHighlightStyleKey,
+        value.dialogueHighlightStyle.name,
+      ),
       preferences.setBool(_continuousReadingKey, value.continuousReading),
       preferences.setString(
         _scrollChapterModeKey,

@@ -444,24 +444,32 @@ class _AudioPlaybackScopeState extends State<AudioPlaybackScope> {
         return true;
       }
       final book = tts.book;
-      await _closeTts();
-      if (!mounted) return false;
-      return ReaderAudioBridge.startListeningInBackground(
-        context,
-        AudioPage(
-          bookId: book.bookId,
-          title: book.title,
-          cover: book.coverUrl,
-          chapters: book.chapters,
-          startIndex: book.startIndex,
-        ),
+      final request = AudioPage(
+        bookId: book.bookId,
+        title: book.title,
+        cover: book.coverUrl,
+        chapters: book.chapters,
+        startIndex: tts.index,
       );
+      try {
+        final override = AudioPlaybackScope.startListeningOverride;
+        if (override != null) {
+          final accepted = await override(context, request);
+          if (accepted) await _closeTts();
+          return accepted;
+        }
+        if (book.localOnly) return false;
+        // 当前 context 属于 scope 自身，不能经祖先查找取回自己；切换由队列接管。
+        return await acquire(request) != null;
+      } catch (_) {
+        return false;
+      }
     }
     final session = _session;
     if (session != null && !session._closed && session._ready) {
-      // 缓冲中不给 toggle（与胶囊的 canToggle 同一条规矩）。
       if (engine == ListenEngine.system) return false;
-      await session._togglePlayback();
+      // 选择当前引擎只恢复播放，不能把缓冲中或已恢复的会话反向暂停。
+      if (!session._wantPlay) await session._togglePlayback();
       return true;
     }
     return false;
@@ -476,13 +484,11 @@ class _AudioPlaybackScopeState extends State<AudioPlaybackScope> {
     return session != null && !session._closed && engine == ListenEngine.system;
   }
 
-  /// 接续目标书：系统朗读优先，其次音频会话。null 就是没在听。
-  String? get _switchBookId {
+  /// Use the same audio/novel identity mapping as the reader's other controls.
+  bool _switchBookMatches(String bookId) {
     final tts = _tts;
-    if (tts != null && !tts.closed) return tts.book.bookId;
-    final session = _session;
-    if (session != null && !session._closed) return session._bookId;
-    return null;
+    if (tts != null && !tts.closed) return tts.book.bookId == bookId;
+    return _sessionBookMatches(bookId);
   }
 
   /// 点封面：回到正在朗读的那本书的书页。

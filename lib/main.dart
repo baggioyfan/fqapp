@@ -3,6 +3,7 @@ import 'services/audio_downloader.dart';
 import 'widgets/desktop_app_frame.dart';
 import 'services/native_player.dart';
 import 'services/desktop_platform.dart';
+import 'services/platform_capabilities.dart';
 import 'services/platform_channel.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
@@ -50,6 +51,7 @@ import 'services/webdav_auto_sync.dart';
 import 'services/webdav_client.dart' show WebdavException;
 import 'services/webdav_sync_service.dart' show describeSyncReport;
 import 'widgets/lazy_indexed_stack.dart';
+import 'widgets/unsupported_feature_page.dart';
 import 'widgets/home/home_design.dart';
 
 Future<void> main() async {
@@ -834,7 +836,16 @@ class _RootShellState extends State<RootShell> with WidgetsBindingObserver {
               scrollController: _homeScroll,
               cueLoader: () => ApiClient.instance.searchCue(),
             ),
-            const DramaPage(),
+            // iOS 首版没有原生播放器实现：把短剧页换成「暂不支持」占位，
+            // 避免进入播放页时触发缺失的 fqapp/native_player 通道。
+            if (supportsVideoPlayback)
+              const DramaPage()
+            else
+              const UnsupportedFeaturePage(
+                icon: LucideIcons.clapperboard,
+                title: '短剧暂不支持',
+                description: '当前平台没有内置视频播放器。搜书、书架和阅读可以正常使用。',
+              ),
             // 空书架上的「去书城找书」切回首页 tab；收藏空态的「找短剧」
             // 切到短剧 tab。
             LibraryPage(

@@ -8,8 +8,12 @@ extension _ReaderPageMenuPlayers on _ReaderPageState {
     bookId: widget.bookId,
     builder: (context, currentBook) {
       final match = _videoMatch;
-      final video =
-          _preferences.showVideoButton && match != null && match.available;
+      // iOS 首版没有原生播放器（见 platform_capabilities.dart），观影入口点了
+      // 只会推出一个起不来的播放页，所以与短剧 tab 一致整体不展示。
+      final video = supportsVideoPlayback &&
+          _preferences.showVideoButton &&
+          match != null &&
+          match.available;
       final reducedMotion =
           preset.isEink ||
           MediaQuery.disableAnimationsOf(context) ||
@@ -24,13 +28,12 @@ extension _ReaderPageMenuPlayers on _ReaderPageState {
             onSwitch: () => _openListening(fromPage: true),
             child: ReaderListenCapsuleHost(
               monochrome: preset.isEink,
-              // 胶囊封面在这里点下去就是「回书页」：人已经在书页上，收起
-              // 菜单露出正文，而不是推到系统朗读那个控制页。
-              onOpenBook: () => _setControlsVisible(false),
+              // 只在同一本书里收起菜单；借用别书胶囊时保留回到朗读书籍的跳转。
+              onOpenBook: currentBook ? () => _setControlsVisible(false) : null,
             ),
           ),
           if (video)
-            // 87 = 听书钮的下边距 20 + 直径 42 + 两颗钮之间 11 的间隙；两颗
+            // 73 = 听书钮的下边距 20 + 直径 42 + 两颗钮之间 11 的间隙；两颗
             // 钮一起缩到 42 后这条留白得跟着收，否则「看」会飘到正文里。
             Padding(
               padding: const EdgeInsets.only(right: 16, bottom: 73),

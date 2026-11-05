@@ -13,6 +13,7 @@ import '../src/rust/api.dart' as rust;
 import '../src/rust/frb_generated.dart';
 import 'app_log.dart';
 import 'desktop_media.dart' show desktopCoreLibraryPath;
+import 'rust_bootstrap.dart';
 import 'secure_key_provider.dart';
 
 /// One backend response.
@@ -263,10 +264,18 @@ class RustBackendTransport implements BackendTransport {
   /// desktop path above so macOS can find the bundled dylib. A seam rather than
   /// a direct call, so the retry behavior can be tested without loading the
   /// shared library.
+  ///
+  /// [initRustRuntime] covers the platform-specific cases (iOS links the core
+  /// statically and has to look the symbols up in the process itself); the
+  /// desktop bundle path wins on Windows/macOS because FRB's own loader only
+  /// dlopens by bare filename there.
   @visibleForTesting
-  static Future<void> Function() runtimeInitializer = () => RustLib.init(
-    externalLibrary: _desktopExternalLibrary(),
-  );
+  static Future<void> Function() runtimeInitializer = () {
+    final desktop = _desktopExternalLibrary();
+    return desktop != null
+        ? RustLib.init(externalLibrary: desktop)
+        : initRustRuntime();
+  };
 
   /// Whether FRB already installed its process-wide state.
   ///
@@ -284,9 +293,12 @@ class RustBackendTransport implements BackendTransport {
   @visibleForTesting
   static void resetRuntimeForTest() {
     _runtimeReady = null;
-    runtimeInitializer = () => RustLib.init(
-      externalLibrary: _desktopExternalLibrary(),
-    );
+    runtimeInitializer = () {
+      final desktop = _desktopExternalLibrary();
+      return desktop != null
+          ? RustLib.init(externalLibrary: desktop)
+          : initRustRuntime();
+    };
     runtimeInitialized = () => RustLib.instance.initialized;
     disposeRuntime = RustLib.dispose;
   }

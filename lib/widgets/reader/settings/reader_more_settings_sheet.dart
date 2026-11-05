@@ -160,11 +160,26 @@ class _ReaderMoreSettingsSheetState
               _apply((current) => current.copyWith(showSystemStatusBar: on)),
         ),
         ReaderSettingsSwitchRow(
+          label: '底部导航栏',
+          value: value.showSystemNavigationBar,
+          onChanged: (on) => _apply(
+            (current) => current.copyWith(showSystemNavigationBar: on),
+          ),
+        ),
+        ReaderSettingsSwitchRow(
           label: '段评气泡',
           value: value.showParagraphBubbles,
           onChanged: (on) =>
               _apply((current) => current.copyWith(showParagraphBubbles: on)),
         ),
+        ReaderSettingsSwitchRow(
+          key: const ValueKey('reader-dialogue-highlight'),
+          label: '正文对话高亮',
+          value: value.dialogueHighlight,
+          onChanged: (on) =>
+              _apply((current) => current.copyWith(dialogueHighlight: on)),
+        ),
+        if (value.dialogueHighlight) _dialogueStyleRow(),
         ReaderSettingsSwitchRow(
           label: '屏幕常亮',
           value: value.keepScreenOn,
@@ -187,6 +202,27 @@ class _ReaderMoreSettingsSheetState
       ],
     );
   }
+
+  Widget _dialogueStyleRow() => ReaderSettingsRow(
+    label: '对话样式',
+    child: ReaderSettingsChipRow(
+      children: [
+        for (final style in ReaderDialogueHighlightStyle.values)
+          ReaderSettingsChip(
+            key: ValueKey('reader-dialogue-style-${style.name}'),
+            label: switch (style) {
+              ReaderDialogueHighlightStyle.automatic => '自动',
+              ReaderDialogueHighlightStyle.background => '背景',
+              ReaderDialogueHighlightStyle.underline => '下划线',
+            },
+            selected: value.dialogueHighlightStyle == style,
+            onTap: () => _apply(
+              (current) => current.copyWith(dialogueHighlightStyle: style),
+            ),
+          ),
+      ],
+    ),
+  );
 
   List<Widget> _videoSettings() => [
     const ReaderSettingsSectionHeader(title: '改编剧'),

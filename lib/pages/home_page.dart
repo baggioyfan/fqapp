@@ -37,8 +37,8 @@ import 'home_provider.dart';
 /// 版式（用户 2026-10-26 起的设计方向）：
 ///
 /// ```
-/// 搜索行
-/// 分类条（吸顶）
+/// 搜索行（固定）
+/// 分类条（固定，仅下方内容横滑）
 /// 继续阅读          ← 只有「推荐」且有阅读史：一行字，无封面无卡面
 /// 排行榜            ← 上游 RankCellV3，横滑大封面 + 名次
 /// 为你推荐 / 分类名  ← 统一的书籍网格
@@ -82,6 +82,10 @@ class _HomePageState extends ConsumerState<HomePage> {
   late final ScrollController _scroll =
       widget.scrollController ?? ScrollController();
   bool get _ownsScroll => widget.scrollController == null;
+  bool _hadContent = false;
+  final Map<int, List<Widget>> _previewBodies = {};
+  double? _previewGridWidth;
+  double? _previewTextScale;
   Timer? _loadMoreTimer;
   bool _visible = false;
 
@@ -131,7 +135,9 @@ class _HomePageState extends ConsumerState<HomePage> {
         ..addListener(_onLocalDataChanged);
     }
     // 关闭「继续阅读」是个持久化开关，加载完成后要重画这一行。
-    HomeContinuePreferences.instance.dismissedId.addListener(_onLocalDataChanged);
+    HomeContinuePreferences.instance.dismissedId.addListener(
+      _onLocalDataChanged,
+    );
     unawaited(HomeContinuePreferences.instance.load());
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) ref.read(homeProvider.notifier).load();
@@ -193,6 +199,13 @@ class _HomePageState extends ConsumerState<HomePage> {
     ref.read(homeProvider.notifier).loadMore();
   }
 
+  void _selectTab(int index) {
+    if (index == ref.read(homeProvider).tabIndex) return;
+    // Both headers are outside the viewport, so content starts at zero.
+    if (_scroll.hasClients) _scroll.jumpTo(0);
+    ref.read(homeProvider.notifier).selectTab(index);
+  }
+
   /// 下拉与冷启动错误里的「重试」都走手动刷新：手动刷新会跳过续接快照，
   /// 用服务端的第一页整体替换列表（官方 `SaasClientReqType.Refresh`）。
   Future<void> _refresh() =>
@@ -239,7 +252,6 @@ class _HomePageState extends ConsumerState<HomePage> {
   @override
   Widget build(BuildContext context) {
     final state = ref.watch(homeProvider);
-    final notifier = ref.read(homeProvider.notifier);
     final palette = HomePalette.of(context);
     final categories = _categoriesOf(state);
     final textScale = MediaQuery.textScalerOf(context).scale(16) / 16;
@@ -253,71 +265,98 @@ class _HomePageState extends ConsumerState<HomePage> {
         // 宽度交给窗口后，列数由 homeShelfColumns 按「一格 190dp，钳 6–9 列」
         // 反推（见 `widgets/home/home_shelf.dart`）：默认六列、全屏九列，
         // 窗口再宽只把卡片放大，不会往格子里塞更多小封面。
-        //
-        // 840 是 Material 3 的 expanded 断点：平板与手机横屏跨过后一并铺满，
-        // 不再像原先那样只在 Windows 上生效（macOS 与平板仍会被压成 840）。
         child: ConstrainedBox(
           constraints: BoxConstraints(
-            maxWidth: isWindowsDesktop || MediaQuery.sizeOf(context).width >= 840
+            maxWidth:
+                isWindowsDesktop || MediaQuery.sizeOf(context).width >= 840
                 ? double.infinity
                 : 840,
           ),
           child: SafeArea(
             bottom: false,
-            // 冷启动失败不再整页替换：搜索行与分类条留在原位，错误信息进
-            // feed 里滚动，用户换个分类或下拉都能继续用。
-            child: RefreshIndicator(
-              color: HomePalette.accent,
-              backgroundColor: palette.surface,
-              onRefresh: _refresh,
-              // The grid is measured once here, outside the sliver: a sliver's
-              // constraints carry the scroll offset, so measuring inside one
-              // re-ran the builder and rebuilt every visible card per frame.
-              child: LayoutBuilder(
-                builder: (context, constraints) => TabSwipeArea(
-                  index: state.tabIndex,
-                  count: categories.length,
-                  onSelect: notifier.selectTab,
-                  child: CustomScrollView(
-                    key: const Key('home_feed'),
-                    controller: _scroll,
-                    physics: const BouncingScrollPhysics(
-                      parent: AlwaysScrollableScrollPhysics(),
-                    ),
-                    slivers: [
-                      SliverToBoxAdapter(
-                        child: HomeHero(
-                          onSearch: _openSearch,
-                          onCategory: _openCategory,
-                          cueLoader: widget.cueLoader,
+            child: Column(
+              children: [
+                HomeHero(
+                  onSearch: _openSearch,
+                  onCategory: _openCategory,
+                  cueLoader: widget.cueLoader,
+                ),
+                HomeTabBar(
+                  selectedIndex: state.tabIndex,
+                  onSelect: _selectTab,
+                  categories: categories,
+                ),
+                Expanded(
+                  // Headers stay outside both the horizontal transform and
+                  // the vertical viewport, including loading/error states.
+                  child: LayoutBuilder(
+                    builder: (context, constraints) {
+                      final gridWidth = constraints.maxWidth - homeGutter * 2;
+                      final content = _contentSlivers(state, gridWidth);
+                      _rememberPreviewBody(
+                        state.tabIndex,
+                        content,
+                        gridWidth,
+                        textScale,
+                      );
+                      return ClipRect(
+                        child: TabSwipeArea(
+                          index: state.tabIndex,
+                          count: categories.length,
+                          onSelect: _selectTab,
+                          previewBuilder: (target) =>
+                              _buildTabPreview(target, palette.canvas),
+                          child: RefreshIndicator(
+                            color: HomePalette.accent,
+                            backgroundColor: palette.surface,
+                            onRefresh: _refresh,
+                            child: CustomScrollView(
+                              key: const Key('home_feed'),
+                              controller: _scroll,
+                              physics: const BouncingScrollPhysics(
+                                parent: AlwaysScrollableScrollPhysics(),
+                              ),
+                              slivers: content,
+                            ),
+                          ),
                         ),
-                      ),
-                      SliverPersistentHeader(
-                        pinned: true,
-                        delegate: HomeTabBarDelegate(
-                          selectedIndex: state.tabIndex,
-                          onSelect: notifier.selectTab,
-                          categories: categories,
-                          extent:
-                              HomeTabBarDelegate.barHeight +
-                              HomeTabBarDelegate.bottomPadding +
-                              (textScale - 1).clamp(0, 2) * 16,
-                          dark: palette.dark,
-                          eink: palette.eink,
-                          oled: palette.oled,
-                        ),
-                      ),
-                      ..._contentSlivers(
-                        state,
-                        constraints.maxWidth - homeGutter * 2,
-                      ),
-                    ],
+                      );
+                    },
                   ),
                 ),
-              ),
+              ],
             ),
           ),
         ),
+      ),
+    );
+  }
+
+  void _rememberPreviewBody(
+    int tabIndex,
+    List<Widget> slivers,
+    double gridWidth,
+    double textScale,
+  ) {
+    if (_previewGridWidth != gridWidth || _previewTextScale != textScale) {
+      _previewBodies.clear();
+      _previewGridWidth = gridWidth;
+      _previewTextScale = textScale;
+    }
+    _previewBodies[tabIndex] = slivers;
+  }
+
+  Widget _buildTabPreview(int target, Color canvas) {
+    if (target < 0 || target >= homeCategories.length) {
+      return const SizedBox.shrink();
+    }
+    final body = _previewBodies[target];
+    return ColoredBox(
+      color: canvas,
+      child: CustomScrollView(
+        primary: false,
+        physics: const NeverScrollableScrollPhysics(),
+        slivers: body ?? const [SliverToBoxAdapter(child: HomeSkeleton())],
       ),
     );
   }
@@ -339,6 +378,7 @@ class _HomePageState extends ConsumerState<HomePage> {
     }
 
     final items = _visibleItems(state);
+    if (items.isNotEmpty) _hadContent = true;
     final now = _readingNow(state);
     final lead = now?.item;
     final blockBody = _blockBodySlivers(
@@ -376,6 +416,9 @@ class _HomePageState extends ConsumerState<HomePage> {
       }
       // `alx.xml` points its `SkeletonLayout` at `cmc`, so a cold first load
       // paints the skeleton rather than a spinner.
+      if (_hadContent) {
+        return const [SliverToBoxAdapter(child: HomeFeedLoading())];
+      }
       return const [SliverToBoxAdapter(child: HomeSkeleton())];
     }
     return [
