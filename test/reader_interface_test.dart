@@ -252,6 +252,13 @@ void main() {
         findsOneWidget,
       );
     }
+    // 「从本页播放」这类第二起点轴不能回来：起点固定是当前页第一段
+    // （本地裁撤，见 2acdf7a）。上游把这一项加回来时靠上面的断言抓不到，
+    // 这里显式锁住。
+    expect(
+      find.descendant(of: sheet, matching: find.byIcon(LucideIcons.locate_fixed)),
+      findsNothing,
+    );
 
     await tester.tap(find.byTooltip('关闭'));
     await tester.pumpAndSettle();
