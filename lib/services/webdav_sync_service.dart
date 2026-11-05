@@ -381,7 +381,10 @@ class WebdavSyncService {
   Future<int> _restoreProgress(Uint8List bytes) async {
     try {
       final shard = await Isolate.run(() => ProgressShard.decode(bytes));
-      return _backups.restoreHistory(shard.history);
+      // await 后再 return：try 块里直接 return 一个 Future，新版 analyzer 的
+      // unawaited_return_in_try_block 会判它可能在 try 之外抛出，
+      // 而上面的 FormatException 分支正是要在这里接住它。
+      return await _backups.restoreHistory(shard.history);
     } on FormatException catch (error) {
       if (error.message.contains('MB')) {
         throw const WebdavException(
