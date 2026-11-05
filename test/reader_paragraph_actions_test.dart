@@ -685,9 +685,10 @@ void main() {
     };
     addTearDown(() => AudioPlaybackScope.startListeningOverride = null);
 
-    // 这条用例从阅读页右下角的听书圆钮起播，走「后台起播、不跳页」——
-    // 页面不会跳到听书页，所以没有「智能朗读」按钮可点（那是「从本段听」
-    // 弹出听书页之后才有的）。
+    // 先点开阅读菜单（听书钮在菜单里，见 reader_page_menu_players.dart）。
+    await tester.tapAt(
+      tester.getRect(find.byKey(const ValueKey('reader-page-surface'))).center,
+    );
     await tester.pumpAndSettle();
     // 上游 #226 把菜单里的「听书」文字按钮换成了右下角图标按钮；
     // 按类型点，别按文案找。
