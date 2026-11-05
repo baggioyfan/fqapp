@@ -16,7 +16,10 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  FLUTTER_VERSION: '3.44.6'
+  # 与 android-apk / windows 同版本：pubspec.lock 的传递依赖是按 3.47.9 解析的
+  # （dart >=3.13 / flutter >=3.47），用旧版本跑 pub get 会被 --enforce-lockfile
+  # 判成 lock 不一致。
+  FLUTTER_VERSION: '3.47.9'
 
 jobs:
   analyze:

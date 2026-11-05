@@ -78,7 +78,7 @@ enum DramaChannelSource { feed, history, shelf }
 class DramaChannel {
   final String label;
 
-  /// Index into [HomeNotifier.tabs] for [DramaChannelSource.feed].
+  /// Index into [HomeNotifier.allTabs] for [DramaChannelSource.feed].
   final int tabIndex;
   final String kind;
   final DramaChannelSource source;
@@ -113,19 +113,19 @@ class DramaChannel {
 final dramaChannels = <DramaChannel>[
   DramaChannel(
     label: '推荐',
-    tabIndex: HomeNotifier.tabs.indexOf('视频'),
+    tabIndex: HomeNotifier.allTabs.indexOf('视频'),
     kind: 'video',
     serverType: kChannelVideoFeed,
   ),
   DramaChannel(
     label: '看剧',
-    tabIndex: HomeNotifier.tabs.indexOf('短剧'),
+    tabIndex: HomeNotifier.allTabs.indexOf('短剧'),
     kind: 'video',
     serverType: kChannelVideoEpisode,
   ),
   DramaChannel(
     label: '漫剧',
-    tabIndex: HomeNotifier.tabs.indexOf('漫剧'),
+    tabIndex: HomeNotifier.allTabs.indexOf('漫剧'),
     kind: 'manju',
     serverType: kChannelDynamicComic,
   ),
@@ -165,7 +165,7 @@ DramaChannel? serverChannelOf(ChannelTab tab) {
     case kChannelVideoFeed:
       return DramaChannel(
         label: label('推荐'),
-        tabIndex: HomeNotifier.tabs.indexOf('视频'),
+        tabIndex: HomeNotifier.allTabs.indexOf('视频'),
         kind: 'video',
         serverType: tab.type,
       );
@@ -173,14 +173,14 @@ DramaChannel? serverChannelOf(ChannelTab tab) {
     case kChannelVideo:
       return DramaChannel(
         label: label('看剧'),
-        tabIndex: HomeNotifier.tabs.indexOf('短剧'),
+        tabIndex: HomeNotifier.allTabs.indexOf('短剧'),
         kind: 'video',
         serverType: tab.type,
       );
     case kChannelDynamicComic:
       return DramaChannel(
         label: label('漫剧'),
-        tabIndex: HomeNotifier.tabs.indexOf('漫剧'),
+        tabIndex: HomeNotifier.allTabs.indexOf('漫剧'),
         kind: 'manju',
         serverType: tab.type,
       );
@@ -231,6 +231,46 @@ List<DramaChannel> dedupeChannels(List<DramaChannel> channels) {
     kept.add(channel);
   }
   return kept;
+}
+
+/// 服务端默认下标 → 去重后频道条里的下标。
+///
+/// 服务端 `defaultIndex` 指的是 `table.tabs` 里的位置，但频道条上摆的是
+/// [dedupeChannels] 之后的 `mapped`：映射不到的类型在 [serverChannelOf] 就被
+/// 丢掉了，重复的频道也被去掉了。三个坐标系不能混用——直接拿服务端下标当
+/// `mapped` 下标，越界时退回 0，看起来像「服务端指定的就是第一个频道」，
+/// 其实选错了。
+///
+/// 换算走两步：先在 `table.tabs` 里找到服务端指的是哪一条，再顺着
+/// `raw`（未去重）→ `mapped`（已去重）找到它的位置。两步都按频道**身份**
+/// 匹配，不靠下标硬套。
+int _mappedIndexOfServerDefault(
+  ChannelTable table,
+  List<DramaChannel> raw,
+  List<DramaChannel> mapped,
+  int serverDefault,
+) {
+  if (serverDefault < 0 || serverDefault >= table.tabs.length) return 0;
+  // raw 与 table.tabs 不一定等长（serverChannelOf 会丢掉映射不到的类型），
+  // 所以按身份回查，而不是拿 raw[serverDefault] 当答案。
+  final target = serverChannelOf(table.tabs[serverDefault]);
+  if (target == null) return 0;
+  final rawIndex = raw.indexWhere(
+    (channel) =>
+        channel.source == target.source &&
+        channel.tabIndex == target.tabIndex &&
+        channel.kind == target.kind,
+  );
+  if (rawIndex < 0) return 0;
+  final target2 = raw[rawIndex];
+  final mappedIndex = mapped.indexWhere(
+    (channel) =>
+        channel.source == target2.source &&
+        channel.tabIndex == target2.tabIndex &&
+        channel.kind == target2.kind,
+  );
+  // 被去重掉的频道没有位置可落，退回第一个（官方也是先到先得）。
+  return mappedIndex < 0 ? 0 : mappedIndex;
 }
 
 /// 搜索行高度（首页 `fua` 的 51dp）：6dp 上留白 + 36dp 框体 + 9dp 下留白。
@@ -670,10 +710,13 @@ class _DramaPageState extends ConsumerState<DramaPage>
       );
     }
     if (index < 0) {
+      // 服务端的 `defaultIndex` 指的是 `table.tabs` 的下标，而 `mapped` 是
+      // 去重后的列表——两者不是同一个坐标系：映射不到的类型会被丢掉，
+      // 重复的频道也会被去掉，直接拿服务端下标当 `mapped` 下标会选错频道
+      // （下标越界时退回 0，看着像「服务端指定的就是第一个」）。
+      // 先在 `table.tabs` 里定位，再顺着 raw → mapped 换算过去。
       final serverDefault = table.defaultIndex;
-      index = serverDefault >= 0 && serverDefault < mapped.length
-          ? serverDefault
-          : 0;
+      index = _mappedIndexOfServerDefault(table, raw, mapped, serverDefault);
     }
     setState(() {
       _channels = List.unmodifiable(mapped);

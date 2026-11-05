@@ -125,7 +125,7 @@ fqapp/
 
 | 工具 | 版本 | 用途 |
 |---|---|---|
-| Flutter | 3.44.6 (stable) | 构建 App |
+| Flutter | 3.47.9 (stable) | 构建 App |
 | Dart SDK | 3.12+ | 随 Flutter |
 | Rust | stable (cargo/rustc) | 编译原生核心 `fqapi_core` |
 | flutter_rust_bridge | 2.13.0 | 生成 Flutter/Rust 绑定 |
@@ -210,7 +210,7 @@ flutter build apk --release --target-platform android-arm64
 运行成功后，在该次运行的 **Artifacts** 中下载 `fqapp-arm64-运行编号`；其中包含
 `app-release.apk`、SHA-256、签名与 16 KiB 对齐报告、源码版本和工具版本，产物保留 14 天。
 
-[工作流](.github/workflows/android-apk.yml) 固定 Flutter `3.44.6`、Rust 工具链与
+[工作流](.github/workflows/android-apk.yml) 固定 Flutter `3.47.9`、Rust 工具链与
 flutter_rust_bridge `2.13.0`、JDK 17、NDK `28.2.13676358` 和 CMake `3.22.1`。
 Rust 核心与 C 解密库都会在 runner 上编译。CI 设置 `FQAPP_USE_MAVEN_MIRRORS=false`
 使用官方 Maven 源；本地构建默认仍使用国内镜像。

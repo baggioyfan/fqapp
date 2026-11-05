@@ -1502,6 +1502,40 @@ void main() {
     expect(tester.takeException(), isNull, reason: '旧快照的列数被新频道拿去画了');
   });
 
+  testWidgets('服务端默认下标按映射后的顺序换算', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(360, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
+    // 「按类型续接」优先于服务端 `tab_index`：本地默认停在「推荐」，而下面那
+    // 张表里也有推荐，会命中续接、根本走不到换算那条分支。先把上次看过的频道
+    // 设成「看剧」（下面那张表里没有这一项），才测得到换算本身。
+    DramaChannelPreferences.selectedType = kChannelVideoEpisode;
+    addTearDown(() => DramaChannelPreferences.selectedType = null);
+    await tester.pumpWidget(
+      _scope(
+        perTab: 1,
+        child: MaterialApp(
+          home: _Seams().page(
+            channelLoader: () async => const ChannelTable(
+              defaultIndex: 2,
+              tabs: [
+                ChannelTab(type: kChannelVideoFeed, title: '推荐'),
+                // 映射不到的类型会被丢掉，所以服务端的 2 在映射后是 1。
+                ChannelTab(type: 103, title: '短篇'),
+                ChannelTab(type: kChannelDynamicComic, title: '漫剧'),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+    await _flush(tester);
+    // 直接拿服务端下标当 `mapped` 下标会越界退回 0（推荐）；换算后应落在漫剧
+    // ——搜索框占位文案跟着当前频道的种类走，是最好的观测点。
+    expect(find.text('请输入漫剧名或主演名'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('服务端频道表取不到时保留本地表', (tester) async {
     await tester.binding.setSurfaceSize(const Size(360, 800));
     addTearDown(() => tester.binding.setSurfaceSize(null));
