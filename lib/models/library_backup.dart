@@ -30,13 +30,34 @@ class LibraryBackup {
   /// export still writes them, so a backup file stays self-contained.
   /// Older files stay importable: a v1–v3 `readTime` list is folded into the
   /// two new tables on read, so no export ever loses the totals.
-  /// 6 才带 `groups`（书架分组）。
+  /// 6 才带 `groups`（书架分组）与带来源前缀的身份键（`shuqi/book:123`）。
   static const _version = 6;
 
   /// 没分组时仍写 5：旧版（≤5）照样读得懂，不会因为我们单方面升级就把它
   /// 挡在门外——多端同步里只要有一台还没更新，写 6 就等于让它报错。
   static const _legacyVersion = 5;
   static const _supportedVersions = {1, 2, 3, 4, 5, 6};
+
+  /// 该写哪个版本。
+  ///
+  /// 判据不是「有没有分组」一件，而是**旧版读不读得动**：书旗条目的身份键是
+  /// `shuqi/book:123`，v5 的读取方按首个冒号切 kind，会把它当成未知作品类型
+  /// 直接抛异常——那等于用 v5 的版本号撒谎。所以只要出现非番茄来源（或任何
+  /// 带来源前缀的墓碑），就必须写成 v6，让旧版按「不支持的版本」干净拒绝，
+  /// 而不是解析到一半崩掉。
+  static int versionFor({
+    required Map<String, dynamic> groups,
+    required Iterable<ShelfRecord> shelf,
+    required Iterable<String> removedKeys,
+  }) {
+    final hasForeignSource = shelf.any(
+      (record) => record.item.source != ShelfIdentity.fanqie,
+    );
+    final hasScopedTombstone = removedKeys.any((key) => key.contains('/'));
+    return groups.isNotEmpty || hasForeignSource || hasScopedTombstone
+        ? _version
+        : _legacyVersion;
+  }
   static const _kinds = {'book', 'audio', 'manga', 'video', 'manju'};
   static final _idPattern = RegExp(r'^[a-zA-Z0-9_-]{1,128}$');
   static final _devicePattern = RegExp(r'^[a-zA-Z0-9_~-]{1,32}$');
@@ -225,7 +246,11 @@ class LibraryBackup {
     }
     return LibraryBackup._fromJson({
       'format': _format,
-      'version': groups.isEmpty ? _legacyVersion : _version,
+      'version': versionFor(
+        groups: groups,
+        shelf: shelf,
+        removedKeys: shelfRemoved.keys,
+      ),
       'createdAt': DateTime.now().millisecondsSinceEpoch,
       'shelf': [
         for (final record in shelf)
@@ -577,7 +602,11 @@ class LibraryBackup {
 
   Map<String, dynamic> _toJson({required bool includeHistory}) => {
     'format': _format,
-    'version': groups.isEmpty ? _legacyVersion : _version,
+    'version': versionFor(
+      groups: groups,
+      shelf: shelf,
+      removedKeys: shelfRemoved.keys,
+    ),
     'createdAt': createdAt.millisecondsSinceEpoch,
     'shelf': shelf.map(_shelfJson).toList(),
     'shelfRemoved': _shelfRemovedJson(),
