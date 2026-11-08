@@ -33,9 +33,8 @@ void main() {
   testWidgets('记录全部在 16 周窗口外时显示 0% 而不是尚未开始', (tester) async {
     final stats = ReadingStats.from(
       history: const [],
-      readTime: {
-        'old-book': {'2020-1-1': 60.0},
-      },
+      readTimeDays: const {'2020-1-1': 60.0},
+      readTimeBooks: const {'old-book': 60.0},
     );
     await pump(tester, stats);
     expect(find.text('尚未开始记录'), findsNothing);
@@ -47,9 +46,8 @@ void main() {
   testWidgets('洞察与本周指标使用同一份窗口数据', (tester) async {
     final stats = ReadingStats.from(
       history: const [],
-      readTime: {
-        'today-book': {readingDayKey(today): 1800.0},
-      },
+      readTimeDays: {readingDayKey(today): 1800.0},
+      readTimeBooks: const {'today-book': 1800.0},
     );
     await pump(tester, stats);
     expect(find.textContaining('近 16 周活跃占比 1%'), findsOneWidget);

@@ -185,9 +185,8 @@ void main() {
     final today = DateUtils.dateOnly(DateTime.now());
     final stats = ReadingStats.from(
       history: const [],
-      readTime: {
-        'zero-book': {readingDayKey(today): 0.0},
-      },
+      readTimeDays: {readingDayKey(today): 0.0},
+      readTimeBooks: const {'zero-book': 0.0},
     );
     addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
     await tester.pumpWidget(

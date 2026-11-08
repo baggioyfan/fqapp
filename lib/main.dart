@@ -50,7 +50,7 @@ import 'services/swipe_guide_store.dart';
 import 'services/third_party_licenses.dart';
 import 'services/webdav_auto_sync.dart';
 import 'services/webdav_client.dart' show WebdavException;
-import 'services/webdav_sync_service.dart' show describeSyncReport';
+import 'services/webdav_sync_service.dart' show describeSyncReport;
 import 'widgets/lazy_indexed_stack.dart';
 import 'widgets/shell_dock.dart';
 import 'widgets/unsupported_feature_page.dart';

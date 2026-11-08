@@ -144,15 +144,18 @@ class LibraryBackup {
   int get assignmentCount =>
       groups['assignments'] is Map ? (groups['assignments'] as Map).length : 0;
 
+  /// 除书架、历史、已看这三项外，其余部分（墓碑、阅读时长两张表、搜索历史）
+  /// 都给了空默认值：上游的备份测试只关心它自己那几项，调用方漏传一份空表
+  /// 与传一份空表等价，不该让构造失败。
   factory LibraryBackup.capture({
     required List<ShelfRecord> shelf,
-    required Map<String, DateTime> shelfRemoved,
+    Map<String, DateTime> shelfRemoved = const {},
     required List<Map<String, dynamic>> history,
     required Map<String, Map<String, int>> watched,
-    required Map<String, Map<String, double>> daily,
-    required List<({String id, String kind, Map<String, double> devices})>
-    books,
-    required Iterable<String> searchHistory,
+    Map<String, Map<String, double>> daily = const {},
+    List<({String id, String kind, Map<String, double> devices})> books =
+        const [],
+    Iterable<String> searchHistory = const [],
     Map<String, dynamic> groups = const {},
   }) {
     var excluded = 0;

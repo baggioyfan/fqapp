@@ -12,6 +12,7 @@ import 'package:fqapp/pages/player_page.dart';
 import 'package:fqapp/pages/reader_page.dart';
 import 'package:fqapp/services/chapter_cache_store.dart';
 import 'package:fqapp/services/chapter_text_formatter.dart';
+import 'package:fqapp/widgets/detail/detail_archive.dart';
 
 import 'support/fakes.dart';
 
@@ -113,7 +114,10 @@ void main() {
     // 底部条本身保持挂载（上游口径），只把主按钮置为禁用，避免页面高度在
     // 数据到达时跳一下。
     expect(find.textContaining('没取到这部短剧的目录'), findsOneWidget);
-    expect(tester.widget<DetailReadBar>(find.byType(DetailReadBar)).enabled, isFalse);
+    expect(
+      tester.widget<DetailArchiveDock>(find.byType(DetailArchiveDock)).onPrimary,
+      isNull,
+    );
     // 短剧的空目录会被当成一次失败重试（同一次地址连打两次都空才下结论）。
     expect(calls, 2);
     await tester.pumpWidget(const SizedBox.shrink());

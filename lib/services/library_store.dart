@@ -184,7 +184,7 @@ class LibraryStore implements ReaderStore {
 
   /// 把老版本「书 × 天」交叉表折叠成「按天 + 按书」两张表，只跑一次。
   ///
-  /// 折叠用的是 [readTimeSnapshot] 的现有视图 —— 它已经把那四份并存的 day
+  /// 折叠用的是 [legacyReadTimeSnapshot] 的现有视图 —— 它已经把那四份并存的 day
   /// map（`days` / `_new_media_time_v1` / `_legacy_media_time_v1` /
   /// `_allocated_media_time_v1`）算成了用户可见的秒数，所以这里不需要重写
   /// 那套分配逻辑。折叠完清空旧盒子，旧代码自然退化成空转。
@@ -1121,7 +1121,7 @@ class LibraryStore implements ReaderStore {
     final legacy = record[_legacyTimeKey];
     if (legacy is Map && legacy['days'] is Map) {
       // Each stored map is bounded independently. The merged window is capped
-      // in readTimeSnapshot(), which avoids dropping overlapping seconds.
+      // in legacyReadTimeSnapshot(), which avoids dropping overlapping seconds.
       _pruneDayMap(legacy['days'] as Map);
       final discarded = legacy['discardedDays'];
       if (discarded is Map) {

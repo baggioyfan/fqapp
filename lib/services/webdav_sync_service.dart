@@ -693,7 +693,16 @@ class WebdavSyncService {
       final decoded = await _decodeWithBackup(transport, config, primary);
       remote = decoded.snapshot;
       primaryReadable = !decoded.fromBackup;
-      merged = await _backups.restore(remote);
+      // 分组（v6 / 上游备份里带的）会一并写回本地，但不进同步报告，
+      // 所以这里只取报告要报的五项。
+      final restored = await _backups.restore(remote);
+      merged = (
+        shelf: restored.shelf,
+        history: restored.history,
+        episodes: restored.episodes,
+        readTime: restored.readTime,
+        searchHistory: restored.searchHistory,
+      );
     }
     // v5 起整包不带进度（它在 `progress.json` 里），所以这里得单独合并一次。
     // 不合并的后果不是「少同步几条」，而是**抹掉**：`_commit` 会拿本机这份

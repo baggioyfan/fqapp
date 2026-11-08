@@ -107,7 +107,8 @@ class _ReadingStatisticsPageState extends State<ReadingStatisticsPage> {
     final store = LibraryStore.instance;
     final stats = ReadingStats.from(
       history: store.historySnapshot(),
-      readTime: store.readTimeSnapshot(),
+      readTimeDays: store.readTimeDailyTotals(),
+      readTimeBooks: store.readTimeBookTotals(),
       readTimeKinds: store.readTimeKindSnapshot(),
     );
     setState(() {
