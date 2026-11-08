@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import '../models/library_backup.dart';
 import 'library_store.dart';
 import 'search_history_store.dart';
+import 'shelf_group_store.dart';
 import 'shelf_store.dart';
 
 class LibraryBackupService {
@@ -25,6 +26,11 @@ class LibraryBackupService {
     // here and cross the isolate boundary with the rest of the snapshot.
     final readTime = library.readTimeBackupSnapshot();
     final searchHistory = await SearchHistoryStore.instance.load();
+    // A broken or unopened group box must not block exporting shelf/history;
+    // the page tells the user this backup carries no groups (D-M9).
+    final groups = ShelfGroupStore.instance.isReady
+        ? ShelfGroupStore.instance.backupOrganization()
+        : const <String, dynamic>{};
     return Isolate.run(
       () => LibraryBackup.capture(
         shelf: shelf,
@@ -34,6 +40,7 @@ class LibraryBackupService {
         daily: readTime.daily,
         books: readTime.books,
         searchHistory: searchHistory,
+        groups: groups,
       ),
     );
   }
@@ -91,17 +98,35 @@ class LibraryBackupService {
 
   /// Reports how many records each store took. `history` counts writes (new and
   /// replaced), because a record that is both newer and further along replaces
-  /// the local one instead of being skipped.
+  /// the local one instead of being skipped. `groups`/`assignments` come from
+  /// the group store and stay 0 when the backup carries no organization.
   Future<
-    ({int shelf, int history, int episodes, int readTime, int searchHistory})
+    ({
+      int shelf,
+      int history,
+      int episodes,
+      int readTime,
+      int searchHistory,
+      int groups,
+      int assignments,
+    })
   >
   restore(LibraryBackup backup) async {
     if (!LibraryStore.instance.isInitialized || !ShelfStore.instance.isReady) {
       throw StateError('本机数据尚未初始化');
     }
-    // Every record was validated by LibraryBackup before any write. Boxes do
-    // not share a transaction; retries re-apply the merged result, which is
-    // idempotent for every store involved.
+    final groupStore = ShelfGroupStore.instance;
+    // A backup that carries groups cannot be restored into a store that is
+    // not ready; refuse before any write so a retry stays idempotent.
+    if (backup.groups.isNotEmpty && !groupStore.isReady) {
+      throw StateError('本地分类尚未初始化');
+    }
+    // Every record was validated by LibraryBackup before any write. Groups go
+    // first (so assignment capacity is known), then shelf, then history; all
+    // three merges only fill gaps, so retries are idempotent.
+    final merge = backup.groups.isEmpty
+        ? (groups: 0, assignments: 0)
+        : await groupStore.mergeBackup(backup.groups);
     final library = await LibraryStore.instance.mergeBackup(
       history: backup.history,
       watched: backup.watched,
@@ -121,6 +146,8 @@ class LibraryBackupService {
       episodes: library.episodes,
       readTime: library.readTime,
       searchHistory: searchHistory,
+      groups: merge.groups,
+      assignments: merge.assignments,
     );
   }
 }

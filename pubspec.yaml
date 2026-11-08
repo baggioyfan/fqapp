@@ -52,6 +52,9 @@ dependencies:
   html: 0.15.6
   xml: ^7.0.1
   flutter_lucide: 1.59.0
+  cupertino_icons: ^1.0.8
+  liquid_glass_easy:
+    path: third_party/liquid_glass_easy
   lottie: ^3.6.1
   flutter_rust_bridge: 2.13.0
   # Android 用 7.3.x；macOS 构建另降到 7.0.0（见下）。
@@ -130,6 +133,18 @@ flutter:
     # 原样复制、仅把填充色改为白色——官方运行时用 LottieValueCallback 强制
     # `@color/al`=#ffffffff（见同文档 §19）。
     - assets/lottie/
+    # 字体许可文本仍随包分发：阅读器可选字体的许可原文指向这个目录
+    # （见 assets/licenses/wenku8/NOTICE），首页字体已改为直接用系统衬线/等宽。
+    - assets/fonts/NotoSerifCJK-OFL.txt
+    - assets/fonts/RobotoMono-OFL.txt
+    - assets/licenses/wenku8/NOTICE
+    - assets/licenses/wenku8/LICENSE
+    - assets/licenses/wenku8/GPL-3.0.txt
+    - assets/licenses/wenku8/PORTING.md
+
+  # 首页档案版式的衬线/等宽字体不随包分发（上游原打的是思源宋体子集 +
+  # Roboto Mono，共 5.3MB）。改用系统字族：Android `serif`/`monospace`，
+  # macOS/iOS `Songti SC`/`Menlo`，见 lib/widgets/home/home_archive.dart。
 
   # To add assets to your application, add an assets section, like this:
   # assets:

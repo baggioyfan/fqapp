@@ -16,6 +16,7 @@ import 'package:fqapp/widgets/reader/reader_listen_button.dart';
 import 'package:fqapp/widgets/reader/reader_paged_view.dart';
 import 'package:fqapp/widgets/reader/reader_paragraph_menu.dart';
 import 'package:fqapp/widgets/reader/reader_text_selection.dart';
+import 'package:fqapp/widgets/wenku/wenku_ui.dart';
 
 import 'support/fakes.dart';
 
@@ -309,27 +310,23 @@ void main() {
     expect(find.text('从本段听'), findsNothing);
   });
 
-  // The official bar takes u_ #FF303030 by day and s7 #FF1C1C1C at night
-  // (selection/m.java#o); the mapping used to be recorded the other way round.
-  testWidgets('the bar background is #FF303030 by day and #FF1C1C1C at night', (
-    tester,
-  ) async {
-    Future<Color?> barColor({required bool dark}) async {
+  // The Wenku8 port replaced the official Fanqie #FF303030 PopupWindow with
+  // one live glass bar; day keeps the shared milk tint, night uses the reader's
+  // near-black sheet so the white labels stay legible.
+  testWidgets('the bar keeps a day and night glass tint', (tester) async {
+    Future<Color?> barTint({required bool dark}) async {
       await tester.pumpWidget(
         MaterialApp(
-          home: ReaderParagraphMenu(isDark: dark, onAction: (_) {}),
+          home: Scaffold(
+            body: ReaderParagraphMenu(isDark: dark, onAction: (_) {}),
+          ),
         ),
       );
-      final containers = tester.widgetList<Container>(
-        find.byWidgetPredicate(
-          (widget) => widget is Container && widget.decoration is BoxDecoration,
-        ),
-      );
-      return (containers.single.decoration! as BoxDecoration).color;
+      return tester.widget<LiquidGlass>(find.byType(LiquidGlass)).tintColor;
     }
 
-    expect(await barColor(dark: false), const Color(0xFF303030));
-    expect(await barColor(dark: true), const Color(0xFF1C1C1C));
+    expect(await barTint(dark: false), const Color(0xFFFEFDF8));
+    expect(await barTint(dark: true), const Color(0xFF1C1C1C));
   });
 
   testWidgets('long press selects the paragraph with wash and handles', (

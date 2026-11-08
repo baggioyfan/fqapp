@@ -2,8 +2,10 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import '../services/search_history_store.dart';
+import '../services/shelf_group_store.dart';
 import '../services/shelf_store.dart';
 import 'media_item.dart';
+import 'shelf_identity.dart';
 
 /// A portable allowlist, never a dump of Hive boxes or device preferences.
 // Note: 范围、合并规则与非事务恢复见
@@ -16,6 +18,7 @@ class LibraryBackup {
   static const _maxSearchTermLength = 200;
   static const _maxRecords = 10000;
   static const _maxEpisodes = 100000;
+  static const _maxCategories = 1000;
   static const _format = 'fqapp.library-backup';
 
   /// 2 adds `readTime` and `searchHistory`; 3 adds `shelfRemoved`;
@@ -27,8 +30,13 @@ class LibraryBackup {
   /// export still writes them, so a backup file stays self-contained.
   /// Older files stay importable: a v1–v3 `readTime` list is folded into the
   /// two new tables on read, so no export ever loses the totals.
-  static const _version = 5;
-  static const _supportedVersions = {1, 2, 3, 4, 5};
+  /// 6 才带 `groups`（书架分组）。
+  static const _version = 6;
+
+  /// 没分组时仍写 5：旧版（≤5）照样读得懂，不会因为我们单方面升级就把它
+  /// 挡在门外——多端同步里只要有一台还没更新，写 6 就等于让它报错。
+  static const _legacyVersion = 5;
+  static const _supportedVersions = {1, 2, 3, 4, 5, 6};
   static const _kinds = {'book', 'audio', 'manga', 'video', 'manju'};
   static final _idPattern = RegExp(r'^[a-zA-Z0-9_-]{1,128}$');
   static final _devicePattern = RegExp(r'^[a-zA-Z0-9_~-]{1,32}$');
@@ -64,6 +72,12 @@ class LibraryBackup {
   final List<String> searchHistory;
   final int excludedLocalRecords;
 
+  /// The optional shelf-group organization (visible groups and assignments).
+  /// Empty means this backup carries no groups; such a file is still written as
+  /// v5 so builds without the group feature keep reading it. A non-empty
+  /// organization is what pushes the file to v6.
+  final Map<String, dynamic> groups;
+
   LibraryBackup._({
     required this.createdAt,
     required this.shelf,
@@ -74,6 +88,7 @@ class LibraryBackup {
     required this.books,
     required this.searchHistory,
     required this.excludedLocalRecords,
+    this.groups = const {},
   });
 
   /// 这台设备上导入的本地书籍（`local_<时间戳>_<盐>`）。它们只存在于本机：
@@ -88,13 +103,25 @@ class LibraryBackup {
     for (final entry in shelfRemoved.entries) {
       final parts = _splitBare(entry.key);
       if (parts == null) continue;
-      result[ShelfStore.keyFor(parts.kind, parts.id)] = entry.value;
+      result[ShelfStore.keyFor(
+        parts.kind,
+        parts.id,
+        source: parts.source,
+      )] = entry.value;
     }
     return result;
   }
 
   int get episodeCount =>
       watched.values.fold(0, (total, episodes) => total + episodes.length);
+
+  bool get groupsIncluded => groups.isNotEmpty;
+
+  int get groupCount =>
+      groups['groups'] is Map ? (groups['groups'] as Map).length : 0;
+
+  int get assignmentCount =>
+      groups['assignments'] is Map ? (groups['assignments'] as Map).length : 0;
 
   factory LibraryBackup.capture({
     required List<ShelfRecord> shelf,
@@ -105,12 +132,41 @@ class LibraryBackup {
     required List<({String id, String kind, Map<String, double> devices})>
     books,
     required Iterable<String> searchHistory,
+    Map<String, dynamic> groups = const {},
   }) {
     var excluded = 0;
     bool include(String id) {
       if (!isDeviceLocalId(id)) return true;
       excluded++;
       return false;
+    }
+
+    bool includeShelf(ShelfRecord record) {
+      final item = record.item;
+      // Keep the pre-migration rule: any record whose raw id (or series id)
+      // carries the local prefix is device-local, even when the id is
+      // malformed and no longer matches the strict `local_<millis>_<hex>`
+      // shape. Such a record would otherwise be exported and then rejected by
+      // `_id`, failing the whole export.
+      final local =
+          item.id.startsWith('local_') ||
+          (item.seriesId?.startsWith('local_') ?? false) ||
+          ShelfIdentity.isLocalContentKey(ShelfIdentity.contentKeyOf(item));
+      if (!local) return true;
+      excluded++;
+      return false;
+    }
+
+    // Never export tombstones, local-book assignments, or assignments whose
+    // group is gone. Validation happens before the document is embedded.
+    // A ready store with no visible groups still yields the three-key
+    // document; normalize that to "no groups" so the field is omitted (D-B1).
+    var portableGroups = const <String, dynamic>{};
+    if (groups.isNotEmpty) {
+      final candidate = ShelfGroupStore.portableOrganization(groups);
+      final hasGroups = (candidate['groups'] as Map).isNotEmpty;
+      final hasAssignments = (candidate['assignments'] as Map).isNotEmpty;
+      if (hasGroups || hasAssignments) portableGroups = candidate;
     }
 
     // The same validation is used before export and before any restore writes.
@@ -120,6 +176,7 @@ class LibraryBackup {
       if (parts == null || !include(parts.id)) continue;
       removedJson.add({
         'kind': parts.kind,
+        if (parts.source != ShelfIdentity.fanqie) 'source': parts.source,
         'id': parts.id,
         'removedAt': entry.value.millisecondsSinceEpoch,
       });
@@ -168,11 +225,11 @@ class LibraryBackup {
     }
     return LibraryBackup._fromJson({
       'format': _format,
-      'version': _version,
+      'version': groups.isEmpty ? _legacyVersion : _version,
       'createdAt': DateTime.now().millisecondsSinceEpoch,
       'shelf': [
         for (final record in shelf)
-          if (include(record.item.seriesId ?? record.item.id))
+          if (includeShelf(record))
             {..._shelfJson(record), 'cover': _portableCover(record.item.cover)},
       ],
       'shelfRemoved': removedJson,
@@ -202,6 +259,7 @@ class LibraryBackup {
       ],
       'searchHistory': normalizeSearchHistory(searchHistory).toList(),
       'excludedLocalRecords': excluded,
+      if (portableGroups.isNotEmpty) 'groups': portableGroups,
     });
   }
 
@@ -241,6 +299,17 @@ class LibraryBackup {
         author: common['author'] as String,
         badge: common['badge'] as String,
         ep: common['ep'] as String,
+        source: record['source'] == null
+            ? ShelfIdentity.fanqie
+            : _source(record['source']),
+        intro: _text(record['intro'], '简介'),
+        categories: _categories(record['categories']),
+        creationStatus: record['creationStatus'] == null
+            ? -1
+            : _integer(record['creationStatus'], '连载状态', 2147483647),
+        wordNumber: record['wordNumber'] == null
+            ? 0
+            : _integer(record['wordNumber'], '字数', 2147483647),
         seriesId: common['seriesId'] as String?,
         episodeId: common['episodeId'] as String?,
       );
@@ -266,7 +335,19 @@ class LibraryBackup {
       final at = DateTime.fromMillisecondsSinceEpoch(
         _integer(record['removedAt'], '删除时间', 8640000000000000),
       );
-      final key = '${record['kind']}:${_id(record['id'])}';
+      // 来源是身份的一部分：书旗和番茄的 bookId 同为纯数字，丢了来源
+      // 就会把一本书的删除记到另一本书头上。非法的直接跳过 —— 宁可这次
+      // 删除不传播，也不能往书架里写一条认不出的记录。
+      final rawSource = record['source'];
+      if (rawSource != null &&
+          (rawSource is! String || !ShelfIdentity.isValidSource(rawSource))) {
+        continue;
+      }
+      final key = ShelfIdentity.contentKeyFor(
+        record['kind'] as String,
+        _id(record['id']),
+        source: rawSource is String ? rawSource : ShelfIdentity.fanqie,
+      );
       final existing = shelfRemoved[key];
       if (existing == null || at.isAfter(existing)) shelfRemoved[key] = at;
     }
@@ -396,6 +477,7 @@ class LibraryBackup {
       daily: Map.unmodifiable(daily),
       books: List.unmodifiable(books.values),
       searchHistory: List.unmodifiable(searchHistory),
+      groups: _groups(raw['groups']),
       excludedLocalRecords: _integer(
         raw['excludedLocalRecords'] ?? 0,
         '排除条数',
@@ -495,7 +577,7 @@ class LibraryBackup {
 
   Map<String, dynamic> _toJson({required bool includeHistory}) => {
     'format': _format,
-    'version': _version,
+    'version': groups.isEmpty ? _legacyVersion : _version,
     'createdAt': createdAt.millisecondsSinceEpoch,
     'shelf': shelf.map(_shelfJson).toList(),
     'shelfRemoved': _shelfRemovedJson(),
@@ -512,6 +594,7 @@ class LibraryBackup {
         {'id': book.id, 'kind': book.kind, 'devs': book.devices},
     ],
     'searchHistory': searchHistory,
+    if (groups.isNotEmpty) 'groups': groups,
     'excludedLocalRecords': excludedLocalRecords,
   };
 
@@ -575,14 +658,28 @@ class LibraryBackup {
     return out;
   }
 
-  /// `book:123` -> `(kind: 'book', id: '123')`。作品标识里不会有冒号
-  /// （见 `_idPattern`），所以按第一个冒号切开就够。
-  static ({String kind, String id})? _splitBare(String bare) {
-    final separator = bare.indexOf(':');
-    if (separator <= 0 || separator == bare.length - 1) return null;
+  /// `[source/]kind:123` -> `(source: 'shuqi', kind: 'book', id: '123')`。
+  ///
+  /// 与 [ShelfIdentity.contentKeyFor] 同构：来源省略即番茄，所以 v1–v5 的
+  /// 老键（`book:123`）解析结果完全不变。这里不复用
+  /// `ShelfIdentity.parseContentKey` 是因为它会按 `_kinds` 收紧 kind 白名单，
+  /// 而备份读取对历史数据要宽容 —— 认不出的 kind 交给上层的校验去拒。
+  static ({String source, String kind, String id})? _splitBare(String bare) {
+    var source = ShelfIdentity.fanqie;
+    var rest = bare;
+    final slash = bare.indexOf('/');
+    if (slash > 0) {
+      final prefix = bare.substring(0, slash);
+      if (!ShelfIdentity.isValidSource(prefix)) return null;
+      source = prefix;
+      rest = bare.substring(slash + 1);
+    }
+    final separator = rest.indexOf(':');
+    if (separator <= 0 || separator == rest.length - 1) return null;
     return (
-      kind: bare.substring(0, separator),
-      id: bare.substring(separator + 1),
+      source: source,
+      kind: rest.substring(0, separator),
+      id: rest.substring(separator + 1),
     );
   }
 
@@ -689,6 +786,7 @@ class LibraryBackup {
       if (parts == null) continue;
       result.add({
         'kind': parts.kind,
+        if (parts.source != ShelfIdentity.fanqie) 'source': parts.source,
         'id': parts.id,
         'removedAt': entry.value.millisecondsSinceEpoch,
       });
@@ -704,10 +802,63 @@ class LibraryBackup {
     'author': record.item.author,
     'badge': record.item.badge,
     'ep': record.item.ep,
+    if (record.item.source != ShelfIdentity.fanqie)
+      'source': record.item.source,
+    if (record.item.intro.isNotEmpty) 'intro': record.item.intro,
+    if (record.item.categories.isNotEmpty) 'categories': record.item.categories,
+    if (record.item.creationStatus >= 0)
+      'creationStatus': record.item.creationStatus,
+    if (record.item.wordNumber > 0) 'wordNumber': record.item.wordNumber,
     if (record.item.seriesId != null) 'seriesId': record.item.seriesId,
     if (record.item.episodeId != null) 'episodeId': record.item.episodeId,
     'addedAt': record.addedAt.millisecondsSinceEpoch,
   };
+
+  /// `null`/empty means "this file has no groups"; anything else must pass the
+  /// store's strict structural validation before a single restore write.
+  static Map<String, dynamic> _groups(dynamic value) {
+    if (value == null) return const {};
+    if (value is Map && value.isEmpty) return const {};
+    if (value is! Map) throw const FormatException('分类数据格式有误');
+    final valid = ShelfGroupStore.validateOrganization(value);
+    // An explicit but empty organization is the same as no groups (D-B1):
+    // never make restore require a ready group store for it.
+    if ((valid['groups'] as Map).isEmpty &&
+        (valid['assignments'] as Map).isEmpty) {
+      return const {};
+    }
+    return valid;
+  }
+
+  static String _source(dynamic value) {
+    if (value is! String || !ShelfIdentity.isValidSource(value)) {
+      throw const FormatException('备份字段 source 无效');
+    }
+    return value;
+  }
+
+  static String _text(dynamic value, String label) {
+    if (value == null) return '';
+    if (value is! String || value.length > 8192) {
+      throw FormatException('备份字段 $label 无效或过长');
+    }
+    return value;
+  }
+
+  static List<String> _categories(dynamic value) {
+    if (value == null) return const [];
+    if (value is! List || value.length > _maxCategories) {
+      throw const FormatException('备份字段 categories 无效或过多');
+    }
+    final result = <String>[];
+    for (final entry in value) {
+      if (entry is! String || entry.length > 256) {
+        throw const FormatException('备份字段 categories 无效或过长');
+      }
+      if (entry.isNotEmpty) result.add(entry);
+    }
+    return List.unmodifiable(result);
+  }
 
   static Map<String, dynamic> _common(Map<String, dynamic> raw) {
     if (!_kinds.contains(raw['kind'])) throw const FormatException('备份含未知作品类型');
