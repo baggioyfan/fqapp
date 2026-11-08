@@ -198,6 +198,25 @@ awk -v p="$POD_PLATFORM" -v want="$DEPLOY_MAJOR" 'BEGIN {
   die "macos/Podfile 的 platform :osx 仍是 ${POD_PLATFORM}，低于 ${DEPLOY_MIN}"
 echo "    Podfile platform :osx → ${POD_PLATFORM}"
 
+echo "==> 2f/6 关掉 Impeller（macOS 桌面用回 Skia）"
+# Flutter 3.47 起把 macOS 桌面的默认渲染器从 Skia 换成了 Impeller（Metal），
+# 而 media_kit 在 macOS 上的视频输出是「mpv OpenGL → CVPixelBuffer → Flutter
+# texture」的零拷贝路径。换到 Impeller 之后这条链路在 Intel Mac 上是花屏 +
+# 掉帧；再叠加 `vo=libmpv` 以音频为主时钟、视频落后不自动追平，就成了越播越
+# 不同步。v1.0.200-fq2（Flutter 3.44，默认 Skia）正常、fq3 起异常，原因只在
+# 渲染器这一层。
+#
+# 官方留的回退开关就是下面这个 Info.plist 键。注意它是整包生效的：universal
+# 包里没有「arm64 用 Impeller、x86_64 用 Skia」这种可能，要么都开、要么都关。
+# 回退选项将来会被移除，届时只能换掉 media_kit 的纹理实现（等上游支持 Impeller）。
+PLIST="macos/Runner/Info.plist"
+[ -f "$PLIST" ] || die "macos/ 生成异常：缺少 Runner/Info.plist"
+/usr/libexec/PlistBuddy -c "Delete :FLTEnableImpeller" "$PLIST" >/dev/null 2>&1 || true
+/usr/libexec/PlistBuddy -c "Add :FLTEnableImpeller bool false" "$PLIST"
+/usr/libexec/PlistBuddy -c "Print :FLTEnableImpeller" "$PLIST" | grep -qx false ||
+  die "Info.plist 里没写进 FLTEnableImpeller=false"
+echo "    Info.plist FLTEnableImpeller → false"
+
 echo "==> 3/6 flutter pub get"
 flutter pub get
 
@@ -326,6 +345,13 @@ assert_arch_tree() {
 assert_arch_tree "$APP/Contents/MacOS"
 assert_arch_tree "$APP/Contents/Frameworks"
 echo "    包内全部 Mach-O 均含 ${WANT_ARCHS}"
+
+# 渲染器回退要落在最终 .app 里：2f 步改的是模板，这条防的是「构建过程用自己的
+# 模板把 Info.plist 覆盖掉」——那样包能装能开，视频照旧花屏。
+/usr/libexec/PlistBuddy -c "Print :FLTEnableImpeller" \
+  "$APP/Contents/Info.plist" 2>/dev/null | grep -qx false ||
+  die "最终 .app 的 Info.plist 里没有 FLTEnableImpeller=false（渲染器仍是 Impeller）"
+echo "    渲染器 → Skia（Impeller 已关闭）"
 
 # universal 二进制会有两条 slice，必须逐条打印：只看第一条的话，第二条悄悄按
 # 更高 SDK 编也查不出来（Intel 用户会在 Ventura 上加载失败）。
