@@ -191,6 +191,8 @@ void main() {
         episodes: 0,
         groups: 2,
         assignments: 2,
+        readTime: 0,
+        searchHistory: 0,
       ));
       expect(groups.groups.values, containsAll(['想读', '在读']));
       expect(groups.groupOfKey('book:1'), 'g1-a');
@@ -202,6 +204,8 @@ void main() {
         episodes: 0,
         groups: 0,
         assignments: 0,
+        readTime: 0,
+        searchHistory: 0,
       ));
       expect(groups.groups, hasLength(2));
     },
@@ -255,6 +259,8 @@ void main() {
         episodes: 0,
         groups: 0,
         assignments: 0,
+        readTime: 0,
+        searchHistory: 0,
       ));
     },
   );
@@ -339,6 +345,8 @@ void main() {
       episodes: 0,
       groups: 0,
       assignments: 0,
+      readTime: 0,
+      searchHistory: 0,
     ));
   });
 }
