@@ -70,6 +70,38 @@ jobs:
             build/windows/x64/runner/Release
             rust/target/release/fqapi_core.dll
           key: ${{ steps.bundle-cache.outputs.cache-primary-key }}
+      - name: Smoke launch the packaged app
+        # 编译通过不等于跑得起来。2026-11 实测：在一台远程桌面会话的机器上，
+        # dxdiag 显示 Direct3D 加速 0/4（会话的显示适配器是虚拟显示器，没有 D3D 能力），
+        # ANGLE 建不出 D3D11 device，Impeller 和 Skia 两条路都在初始化渲染时崩，
+        # 进程以 0xC0000409 退出，窗口根本不出现。
+        #
+        # analyze 和 flutter test 都拦不住这种问题：flutter test 跑的是
+        # flutter_tester + --enable-software-rendering，跟桌面渲染器无关。
+        # 所以这里用托管 runner 的完整图形栈把打包出来的 exe 真启动一次，
+        # 进程活过 20 秒才算过。
+        if: always()
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          $exe = 'build/windows/x64/runner/Release/fqapp.exe'
+          if (-not (Test-Path $exe)) { throw "Missing $exe" }
+          New-Item -ItemType Directory -Force -Path 'build/validation' | Out-Null
+          $err = 'build/validation/windows-smoke.err.log'
+          $out = 'build/validation/windows-smoke.out.log'
+          $p = Start-Process -FilePath $exe -WorkingDirectory (Split-Path $exe) -RedirectStandardError $err -RedirectStandardOutput $out -PassThru
+          Start-Sleep -Seconds 20
+          if ($p.HasExited) {
+            $alive = [int]($p.ExitTime - $p.StartTime).TotalSeconds
+            Write-Host "SMOKE FAIL: fqapp.exe exited after ${alive}s with code $($p.ExitCode)"
+            foreach ($f in @($err, $out)) {
+              if (Test-Path $f) { Write-Host "--- $f ---"; Get-Content $f }
+            }
+            exit 1
+          }
+          Write-Host "SMOKE OK: fqapp.exe still alive after 20s (pid $($p.Id))"
+          Stop-Process -Id $p.Id -Force
+
       - name: Verify native decryption and access control
         shell: pwsh
         run: |
@@ -108,6 +140,7 @@ jobs:
             fqapp-windows-x64-preview.zip
             build/validation/windows-media/*.json
             build/validation/windows-player/*.json
+            build/validation/windows-smoke*.log
           if-no-files-found: error
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: failure()

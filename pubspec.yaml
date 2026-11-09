@@ -79,7 +79,8 @@ dependencies:
   # umbrella 包，理由同上。
   media_kit_libs_macos_video: 1.1.4
   file_selector: ^1.1.0
-  flutter_tts: ^4.2.5
+  flutter_tts:
+    path: third_party/flutter_tts
   webview_windows:
     path: third_party/webview_windows
   window_manager: ^0.5.1
