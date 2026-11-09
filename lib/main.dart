@@ -336,6 +336,69 @@ class _FqAppState extends State<FqApp> {
                     backendStarter: BackendService.instance.start,
                     child: const RootShell(),
                   ),
+                );
+              },
+            );
+          },
+        );
+      },
+    );
+  }
+
+  ThemeData _theme(
+    Brightness brightness, {
+    bool eink = false,
+    bool oled = false,
+  }) => AppTheme.createTheme(brightness, einkMode: eink, oledMode: oled);
+}
+
+/// Opens local data before any page can access LibraryStore's boxes. Failed
+/// initialization is retryable without clearing or replacing the user's data.
+/// See .agents/notes/implemented/bug-fix/2026-09-17-reviewed-runtime-boundaries.md.
+///
+/// When [backendStarter] is provided, the backend starts concurrently with
+/// local-data init instead of waiting for it (the two chains are independent:
+/// the backend only needs the asset bundle + app dir, never Hive/SharedPrefs
+/// stores). The backend future is deliberately NOT awaited here: RootShell
+/// awaits the same shared future (BackendService.start is idempotent) and
+/// owns backend-error UI. When null (widget tests), no backend starts here.
+class AppBootstrap extends StatefulWidget {
+  final Widget child;
+  final Future<void> Function()? initializer;
+  final Future<void> Function()? backendStarter;
+
+  const AppBootstrap({
+    super.key,
+    required this.child,
+    this.initializer,
+    this.backendStarter,
+  });
+
+  @override
+  State<AppBootstrap> createState() => _AppBootstrapState();
+}
+
+class _AppBootstrapState extends State<AppBootstrap> {
+  bool _initializing = false;
+  bool _ready = false;
+  bool _failed = false;
+  Future<void>? _backendFuture;
+
+  @override
+  void initState() {
+    super.initState();
+    _initialize();
+  }
+
+  Future<void> _initialize() async {
+    if (_initializing || _ready) return;
+    setState(() {
+      _initializing = true;
+      _failed = false;
+    });
+    // Start the backend before awaiting local data (see class doc): the
+    // two chains run concurrently; a retry must not start it twice.
+    _backendFuture ??= widget.backendStarter?.call();
     // Attach a no-op error handler so a backend failure is never reported
     // as an unhandled async error if RootShell never mounts to await the
     // same future (e.g. local-data init keeps failing). RootShell awaiting
