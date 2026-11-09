@@ -91,14 +91,13 @@ namespace {
 	void FlutterTtsPlugin::addMplayer() {
 		// emplace：只有真正要用播放器时才激活 MediaPlayer，
 		// 激活失败由调用方（构造函数）的 try/catch 接住。
-		auto& player = mPlayer.emplace(
-			winrt::Windows::Media::Playback::MediaPlayer::MediaPlayer());
+		auto& player = mPlayer.emplace();
 		auto mEndedToken =
 			player.MediaEnded([=](Windows::Media::Playback::MediaPlayer const& sender,
 				Windows::Foundation::IInspectable const& args)
 				{
 				    methodChannel->InvokeMethod("speak.onComplete", NULL);
-				    if (awaitSpeakCompletion) {
+				    if (awaitSpeakCompletion && speakResult) {
                         speakResult->Success(1);
                     }
 					isSpeaking = false;
@@ -129,7 +128,7 @@ namespace {
 			mPlayer->Play();
 		} catch (...) {
 			isSpeaking = false;
-			methodChannel->InvokeMethod("speak.onError");
+			methodChannel->InvokeMethod("speak.onError", NULL);
 		}
 	}
 
@@ -155,7 +154,7 @@ namespace {
 
 	void FlutterTtsPlugin::stop() {
 	    methodChannel->InvokeMethod("speak.onCancel", NULL);
-        if (awaitSpeakCompletion) {
+        if (awaitSpeakCompletion && speakResult) {
             speakResult->Success(1);
         }
 
@@ -262,7 +261,7 @@ namespace {
 		// 整个客户端会在启动时直接退出（0xC0000409），窗口都来不及出现。
 		// 所以只标记不可用，由方法调用层回错误，绝不让异常离开构造函数。
 		try {
-			synth.emplace(SpeechSynthesizer());
+			synth.emplace();
 			addMplayer();
 		} catch (...) {
 			ttsAvailable = false;
@@ -296,30 +295,23 @@ namespace {
 							  "Windows speech engine is not available on this machine");
 				return;
 			}
-			const flutter::EncodableList* args = method_call.arguments();
-			const bool hasArgs = args != nullptr && !args->empty();
-
+			// arguments() 返回的是 const EncodableValue*（指向那一个参数），
+			// 所以 arguments()[0] 就是这个参数本身。
 			if (method_call.method_name().compare("awaitSpeakCompletion") == 0) {
-				if (hasArgs) {
-					const flutter::EncodableValue arg = (*args)[0];
-					if (std::holds_alternative<bool>(arg)) {
-						awaitSpeakCompletion = std::get<bool>(arg);
-						result->Success(1);
-					}
-					else result->Success(0);
+				const flutter::EncodableValue arg = method_call.arguments()[0];
+				if (std::holds_alternative<bool>(arg)) {
+					awaitSpeakCompletion = std::get<bool>(arg);
+					result->Success(1);
 				}
 				else result->Success(0);
 			}
 			else if (method_call.method_name().compare("speak") == 0) {
 				if (isPaused) { continuePlay(); result->Success(1); return; }
-				if (hasArgs) {
-					const flutter::EncodableValue arg = (*args)[0];
-					if (std::holds_alternative<std::string>(arg)) {
-						if (!speaking()) {
-							const std::string text = std::get<std::string>(arg);
-							speak(text, std::move(result));
-						}
-						else result->Success(0);
+				const flutter::EncodableValue arg = method_call.arguments()[0];
+				if (std::holds_alternative<std::string>(arg)) {
+					if (!speaking()) {
+						const std::string text = std::get<std::string>(arg);
+						speak(text, std::move(result));
 					}
 					else result->Success(0);
 				}
@@ -338,66 +330,51 @@ namespace {
 				result->Success(1);
 			}
 			else if (method_call.method_name().compare("setLanguage") == 0) {
-				if (hasArgs) {
-					const flutter::EncodableValue arg = (*args)[0];
-					if (std::holds_alternative<std::string>(arg)) {
-						const std::string lang = std::get<std::string>(arg);
-						setLanguage(lang, result);
-					}
-					else result->Success(0);
+				const flutter::EncodableValue arg = method_call.arguments()[0];
+				if (std::holds_alternative<std::string>(arg)) {
+					const std::string lang = std::get<std::string>(arg);
+					setLanguage(lang, result);
 				}
 				else result->Success(0);
 			}
 			else if (method_call.method_name().compare("setVolume") == 0) {
-				if (hasArgs) {
-					const flutter::EncodableValue arg = (*args)[0];
-					if (std::holds_alternative<double>(arg)) {
-						const double newVolume = std::get<double>(arg);
-						setVolume(newVolume);
-						result->Success(1);
-					}
-					else result->Success(0);
+				const flutter::EncodableValue arg = method_call.arguments()[0];
+				if (std::holds_alternative<double>(arg)) {
+					const double newVolume = std::get<double>(arg);
+					setVolume(newVolume);
+					result->Success(1);
 				}
 				else result->Success(0);
 			}
 			else if (method_call.method_name().compare("setSpeechRate") == 0) {
-				if (hasArgs) {
-					const flutter::EncodableValue arg = (*args)[0];
-					if (std::holds_alternative<double>(arg)) {
-						const double newRate = std::get<double>(arg);
-						setRate(newRate);
-						result->Success(1);
-					}
-					else result->Success(0);
+				const flutter::EncodableValue arg = method_call.arguments()[0];
+				if (std::holds_alternative<double>(arg)) {
+					const double newRate = std::get<double>(arg);
+					setRate(newRate);
+					result->Success(1);
 				}
 				else result->Success(0);
 			}
 			else if (method_call.method_name().compare("setPitch") == 0) {
-				if (hasArgs) {
-					const flutter::EncodableValue arg = (*args)[0];
-					if (std::holds_alternative<double>(arg)) {
-						const double newPitch = std::get<double>(arg);
-						setPitch(newPitch);
-						result->Success(1);
-					}
-					else result->Success(0);
+				const flutter::EncodableValue arg = method_call.arguments()[0];
+				if (std::holds_alternative<double>(arg)) {
+					const double newPitch = std::get<double>(arg);
+					setPitch(newPitch);
+					result->Success(1);
 				}
 				else result->Success(0);
 			}
 			else if (method_call.method_name().compare("setVoice") == 0) {
-				if (hasArgs) {
-					const flutter::EncodableValue arg = (*args)[0];
-					if (std::holds_alternative<flutter::EncodableMap>(arg)) {
-						const flutter::EncodableMap voiceInfo = std::get<flutter::EncodableMap>(arg);
-						std::string voiceLanguage = "";
-						std::string voiceName = "";
-						auto voiceLanguage_it = voiceInfo.find(flutter::EncodableValue("locale"));
-						if (voiceLanguage_it != voiceInfo.end()) voiceLanguage = std::get<std::string>(voiceLanguage_it->second);
-						auto voiceName_it = voiceInfo.find(flutter::EncodableValue("name"));
-						if (voiceName_it != voiceInfo.end()) voiceName = std::get<std::string>(voiceName_it->second);
-						setVoice(voiceLanguage, voiceName, result);
-					}
-					else result->Success(0);
+				const flutter::EncodableValue arg = method_call.arguments()[0];
+				if (std::holds_alternative<flutter::EncodableMap>(arg)) {
+					const flutter::EncodableMap voiceInfo = std::get<flutter::EncodableMap>(arg);
+					std::string voiceLanguage = "";
+					std::string voiceName = "";
+					auto voiceLanguage_it = voiceInfo.find(flutter::EncodableValue("locale"));
+					if (voiceLanguage_it != voiceInfo.end()) voiceLanguage = std::get<std::string>(voiceLanguage_it->second);
+					auto voiceName_it = voiceInfo.find(flutter::EncodableValue("name"));
+					if (voiceName_it != voiceInfo.end()) voiceName = std::get<std::string>(voiceName_it->second);
+					setVoice(voiceLanguage, voiceName, result);
 				}
 				else result->Success(0);
 			}
@@ -415,12 +392,13 @@ namespace {
 				result->NotImplemented();
 			}
 		} catch (const std::exception& e) {
-			result->Error("tts_failed", e.what());
+			// speak() 会把 result 移走，这时 result 已经是空指针，不能再解引用。
+			if (result) result->Error("tts_failed", e.what());
 		} catch (...) {
-			result->Error("tts_failed", "Windows speech engine error");
+			if (result) result->Error("tts_failed", "Windows speech engine error");
 		}
 	}
-
+}
 #else
 #include <string>
 #include <atlstr.h>
@@ -755,7 +733,6 @@ namespace {
 						  "Windows speech engine is not available on this machine");
 			return;
 		}
-#endif
 		else if (method_call.method_name().compare("awaitSpeakCompletion") == 0) {
             const flutter::EncodableValue arg = method_call.arguments()[0];
             if (std::holds_alternative<bool>(arg)) {
@@ -850,6 +827,7 @@ namespace {
 		}
 	}
 }
+#endif
 
 void FlutterTtsPluginRegisterWithRegistrar(
 	FlutterDesktopPluginRegistrarRef registrar) {
