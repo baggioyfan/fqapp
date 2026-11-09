@@ -335,7 +335,6 @@ class ShelfBookGridTile extends StatelessWidget {
   Widget _metadata(BuildContext context, {double? height}) {
     // The grid footer carries the same facts as the list row's meta line, so
     // the 番茄导入 marker never disappears when the user switches to a grid.
-    final style = AppStyleTokens.of(context);
     final metaText = [
       if (isShuqiItem(item)) '书旗',
       if (cached) '缓存',
