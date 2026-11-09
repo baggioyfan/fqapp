@@ -1146,7 +1146,7 @@ class _ContentPanelState extends State<ContentPanel> {
           ),
           side: BorderSide(
             color: Theme.of(context).dividerColor,
-            width: style.isClassic ? .6 : .7,
+            width: .6,
           ),
         ),
         clipBehavior: Clip.antiAlias,

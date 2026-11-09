@@ -44,7 +44,7 @@ class AppStyleTokens extends ThemeExtension<AppStyleTokens> {
 
   static AppStyleTokens of(BuildContext context) =>
       Theme.of(context).extension<AppStyleTokens>() ??
-      const AppStyleTokens.archive();
+      const AppStyleTokens.classic();
 
   final AppThemeStyle style;
   final double panelRadius;

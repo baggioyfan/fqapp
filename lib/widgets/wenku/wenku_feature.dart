@@ -43,7 +43,7 @@ EdgeInsets featurePadding(BuildContext context) => EdgeInsets.fromLTRB(
   AppStyleTokens.of(context).pageGutter,
   MediaQuery.paddingOf(context).top +
       FrostedHeader.toolbarHeight +
-      (AppStyleTokens.of(context).isClassic ? 12 : 20),
+      12,
   AppStyleTokens.of(context).pageGutter,
   MediaQuery.paddingOf(context).bottom + 32,
 );

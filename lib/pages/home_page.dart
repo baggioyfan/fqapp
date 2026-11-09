@@ -297,17 +297,11 @@ class _HomePageState extends ConsumerState<HomePage> {
             bottom: false,
             child: Column(
               children: [
-                if (AppStyleTokens.of(context).isClassic)
-                  HomeHero(
-                    onSearch: _openSearch,
-                    onCategory: _openCategory,
-                    cueLoader: widget.cueLoader,
-                  )
-                else
-                  HomeMasthead(
-                    onSearch: _openSearch,
-                    onCategory: _openCategory,
-                  ),
+                HomeHero(
+                  onSearch: _openSearch,
+                  onCategory: _openCategory,
+                  cueLoader: widget.cueLoader,
+                ),
                 HomeTabBar(
                   selectedIndex: state.tabIndex,
                   onSelect: _selectTab,
@@ -388,30 +382,20 @@ class _HomePageState extends ConsumerState<HomePage> {
     );
   }
 
-  Widget _skeleton() => AppStyleTokens.of(context).isClassic
-      ? const ClassicHomeSkeleton()
-      : const HomeSkeleton();
+  Widget _skeleton() => const ClassicHomeSkeleton();
 
   List<Widget> _contentSlivers(HomeState state, double gridWidth) {
-    final classic = AppStyleTokens.of(context).isClassic;
     if (state.error != null &&
         state.items.isEmpty &&
         _cellsOfCurrentTab(state).isEmpty) {
       return [
         SliverToBoxAdapter(
-          child: classic
-              ? ClassicHomeFeedError(
-                  headline: '故事还在路上',
-                  message: '暂时无法加载推荐，稍后再试一次。',
-                  detail: state.error!,
-                  onRetry: _refresh,
-                )
-              : HomeFeedError(
-                  headline: '故事还在路上',
-                  message: '暂时无法加载推荐，稍后再试一次。',
-                  detail: state.error!,
-                  onRetry: _refresh,
-                ),
+          child: ClassicHomeFeedError(
+            headline: '故事还在路上',
+            message: '暂时无法加载推荐，稍后再试一次。',
+            detail: state.error!,
+            onRetry: _refresh,
+          ),
         ),
       ];
     }
@@ -637,24 +621,12 @@ class _HomePageState extends ConsumerState<HomePage> {
     return [SliverToBoxAdapter(child: _gridHeader(state)), sliver];
   }
 
-  Widget _gridHeader(HomeState state) => AppStyleTokens.of(context).isClassic
-      ? HomeSectionHeader(title: _gridTitle(state))
-      : HomeSectionLabel(code: _gridCode(state), title: _gridTitle(state));
-
-  /// 分区编号：排行榜占了 01，网格就是 02；没有排行榜时网格自己从 01 起。
-  String _gridCode(HomeState state) {
-    final hasRank = _cellsOfCurrentTab(
-      state,
-    ).any((cell) => cell.showType == kHomeCellRank);
-    return hasRank ? '02 / FOR YOU' : '01 / FOR YOU';
-  }
+  Widget _gridHeader(HomeState state) =>
+      HomeSectionHeader(title: _gridTitle(state));
 
   /// One book grid: cover, title, one meta line, nothing else.
   Widget _gridBody(List<MediaItem> entries, double gridWidth) {
     final cardWidth = homeShelfCardWidth(context, gridWidth);
-    final tokens = AppStyleTokens.of(context);
-    final classic = tokens.isClassic;
-    final radius = classic ? 12.0 : tokens.coverRadius;
     return SliverPadding(
       padding: const EdgeInsets.symmetric(horizontal: homeGutter),
       sliver: SliverGrid(
@@ -670,9 +642,8 @@ class _HomePageState extends ConsumerState<HomePage> {
             child: HomeMediaCard(
               item: item,
               coverWidth: cardWidth,
-              radius: radius,
-              titleSize: classic ? 15 : homeCardTitleSize,
-              archiveCode: classic ? null : homeFileCode(item),
+              radius: 12,
+              titleSize: 15,
               onTap: () => _openItem(item),
             ),
           );
@@ -688,34 +659,18 @@ class _HomePageState extends ConsumerState<HomePage> {
 
   /// 流尾三态：加载中 / 追加失败可重试 / 已到底。
   Widget _footer(HomeState state) {
-    if (AppStyleTokens.of(context).isClassic) {
-      if (state.isLoadMore) {
-        return const SliverToBoxAdapter(
-          child: ClassicHomeStreamFooter.loading(),
-        );
-      }
-      if (state.error != null) {
-        return SliverToBoxAdapter(
-          child: ClassicHomeStreamFooter.retry(onRetry: _retryLoadMore),
-        );
-      }
-      if (!state.hasMore) {
-        return const SliverToBoxAdapter(child: ClassicHomeStreamFooter.done());
-      }
-      return const SliverToBoxAdapter(child: SizedBox.shrink());
-    }
     if (state.isLoadMore) {
-      return SliverToBoxAdapter(
-        child: HomeStreamFooter.loading(onRetry: _retryLoadMore),
+      return const SliverToBoxAdapter(
+        child: ClassicHomeStreamFooter.loading(),
       );
     }
     if (state.error != null) {
       return SliverToBoxAdapter(
-        child: HomeStreamFooter.retry(onRetry: _retryLoadMore),
+        child: ClassicHomeStreamFooter.retry(onRetry: _retryLoadMore),
       );
     }
     if (!state.hasMore) {
-      return const SliverToBoxAdapter(child: HomeStreamFooter.done());
+      return const SliverToBoxAdapter(child: ClassicHomeStreamFooter.done());
     }
     return const SliverToBoxAdapter(child: SizedBox.shrink());
   }

@@ -101,7 +101,7 @@ class ArchiveMasthead extends StatelessWidget {
                   title,
                   maxLines: 1,
                   style: TextStyle(
-                    fontSize: AppStyleTokens.of(context).isClassic ? 21 : 23,
+                    fontSize: 21,
                     height: 1.18,
                     fontWeight: FontWeight.w800,
                     letterSpacing: -.7,

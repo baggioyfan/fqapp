@@ -227,7 +227,7 @@ class AppTheme {
     Brightness brightness, {
     bool einkMode = false,
     bool oledMode = false,
-    AppThemeStyle style = AppThemeStyle.archive,
+    AppThemeStyle style = AppThemeStyle.classic,
   }) {
     final tokens = AppStyleTokens.forStyle(style);
     if (einkMode) {

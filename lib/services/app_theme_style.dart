@@ -17,10 +17,9 @@ enum AppThemeStyle {
     archive => '纸张底色 · 档案编号 · 留白排版',
   };
 
-  static AppThemeStyle fromStorage(Object? value) => switch (value) {
-    'classic' => classic,
-    _ => archive,
-  };
+  /// 只认经典界面：档案版式（纸张底色 / 档案编号 / 留白排版）已从 fork
+  /// 移除，历史存档里的 `archive` 一律当作 classic，不做迁移提示。
+  static AppThemeStyle fromStorage(Object? value) => AppThemeStyle.classic;
 }
 
 /// Device-local theme selection. Loading cannot overwrite a newer UI choice,
@@ -28,7 +27,7 @@ enum AppThemeStyle {
 class AppThemeStyleStore extends ValueNotifier<AppThemeStyle> {
   AppThemeStyleStore({Future<SharedPreferences> Function()? preferences})
     : _preferences = preferences ?? SharedPreferences.getInstance,
-      super(AppThemeStyle.archive);
+      super(AppThemeStyle.classic);
 
   static final instance = AppThemeStyleStore();
   static const storageKey = 'app_theme_style';

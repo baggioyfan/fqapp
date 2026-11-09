@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 
-import '../../services/app_style_tokens.dart';
 
 import 'home_archive.dart';
 import 'home_design.dart';
@@ -61,7 +60,7 @@ const int homeShelfWideMinColumns = 6;
 int homeShelfColumns(BuildContext context, double width) {
   final scaler = MediaQuery.textScalerOf(context);
   if (scaler.scale(15) > 22 && width < 640) return 2;
-  if (width < (AppStyleTokens.of(context).isClassic ? 360 : 324)) return 2;
+  if (width < (360)) return 2;
   if (width < 640) return 3;
   if (width < 900) return 4;
   // 大字号把目标卡宽一起放大：190dp 里塞 2.4 倍的字会挤成竖条。
@@ -96,13 +95,10 @@ double homeCardExtent(
   double cardWidth,
   TextScaler scaler,
 ) {
-  final classic = AppStyleTokens.of(context).isClassic;
   return cardWidth * 1.4 +
       8 +
-      scaler.scale(classic ? 15 : homeCardTitleSize) * 1.35 * 2 +
-      (!classic && AppStyleTokens.of(context).showDecorativeCodes
-          ? 5 + scaler.scale(homeCardCodeSize) * 1.35 + 2
-          : 4) +
+      scaler.scale(15) * 1.35 * 2 +
+      4 +
       scaler.scale(homeCardMetaSize) * 1.3 +
       2;
 }

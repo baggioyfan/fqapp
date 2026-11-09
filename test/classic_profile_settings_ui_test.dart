@@ -9,7 +9,6 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:fqapp/pages/mine_page.dart';
 import 'package:fqapp/pages/settings_page.dart';
-import 'package:fqapp/pages/theme_page.dart';
 import 'package:fqapp/services/app_theme.dart';
 import 'package:fqapp/services/app_theme_style.dart';
 import 'package:fqapp/services/book_open_preferences.dart';
@@ -83,9 +82,6 @@ void main() {
       (material.shape! as RoundedRectangleBorder).borderRadius,
       BorderRadius.circular(20),
     );
-    await tester.tap(find.byKey(const ValueKey('settings-entry-主题')));
-    await tester.pumpAndSettle();
-    expect(find.byType(ThemePage), findsOneWidget);
     expect(find.byType(SettingsScaffold), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
@@ -173,40 +169,6 @@ void main() {
     },
   );
 
-  testWidgets('desktop keeps its theme route when changing presentation', (
-    tester,
-  ) async {
-    debugDefaultTargetPlatformOverride = TargetPlatform.windows;
-    try {
-      await tester.binding.setSurfaceSize(const Size(1280, 800));
-      addTearDown(() => tester.binding.setSurfaceSize(null));
-      final store = AppThemeStyleStore.instance;
-      final before = store.value;
-      store.value = AppThemeStyle.archive;
-      addTearDown(() => store.value = before);
-      await tester.pumpWidget(
-        ValueListenableBuilder<AppThemeStyle>(
-          valueListenable: store,
-          builder: (_, style, _) => _app(const SettingsPage(), style: style),
-        ),
-      );
-      await tester.pumpAndSettle();
-      await tester.tap(find.widgetWithText(SettingsRow, '主题'));
-      await tester.pumpAndSettle();
-      final state = tester.state(find.byType(ThemePage));
-      await tester.tap(find.byKey(const ValueKey('theme-choice-classic')));
-      await tester.pumpAndSettle();
-      expect(store.value, AppThemeStyle.classic);
-      expect(tester.state(find.byType(ThemePage)), same(state));
-      await tester.tap(find.byKey(const ValueKey('theme-choice-archive')));
-      await tester.pumpAndSettle();
-      expect(tester.state(find.byType(ThemePage)), same(state));
-      expect(tester.takeException(), isNull);
-      await tester.pumpWidget(const SizedBox.shrink());
-    } finally {
-      debugDefaultTargetPlatformOverride = null;
-    }
-  });
 
   group('classic personal page', () {
     late Directory directory;

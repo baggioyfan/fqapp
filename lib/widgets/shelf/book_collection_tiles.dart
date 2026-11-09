@@ -161,7 +161,7 @@ class ShelfNovelRow extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
     final style = AppStyleTokens.of(context);
     final metaText = [
-      if (style.isClassic && isShuqiItem(item)) '书旗',
+      if (isShuqiItem(item)) '书旗',
       if (cached) '缓存',
       if (meta != null && meta!.isNotEmpty) meta!,
       if (fanqieImported) '番茄导入',
@@ -175,7 +175,7 @@ class ShelfNovelRow extends StatelessWidget {
           onTap: onTap,
           child: Container(
             padding: EdgeInsets.symmetric(
-              vertical: style.isClassic ? style.entryGap : 13,
+              vertical: style.entryGap,
             ),
             decoration: BoxDecoration(
               border: Border(
@@ -212,7 +212,7 @@ class ShelfNovelRow extends StatelessWidget {
                       ),
                   ],
                 ),
-                SizedBox(width: style.isClassic ? style.panelPadding : 15),
+                SizedBox(width: style.panelPadding),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -337,7 +337,7 @@ class ShelfBookGridTile extends StatelessWidget {
     // the 番茄导入 marker never disappears when the user switches to a grid.
     final style = AppStyleTokens.of(context);
     final metaText = [
-      if (style.isClassic && isShuqiItem(item)) '书旗',
+      if (isShuqiItem(item)) '书旗',
       if (cached) '缓存',
       if (meta != null && meta!.isNotEmpty) meta!,
       if (fanqieImported) '番茄导入',

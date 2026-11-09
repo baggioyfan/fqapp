@@ -51,7 +51,7 @@ class SearchNovelRow extends StatelessWidget {
         onTap: onTap,
         child: Container(
           padding: EdgeInsets.symmetric(
-            vertical: style.isClassic ? style.entryGap : 13,
+            vertical: style.entryGap,
           ),
           decoration: BoxDecoration(
             border: Border(
@@ -71,7 +71,7 @@ class SearchNovelRow extends StatelessWidget {
                   ),
                 ),
               ),
-              SizedBox(width: style.isClassic ? style.panelPadding : 15),
+              SizedBox(width: style.panelPadding),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -93,7 +93,7 @@ class SearchNovelRow extends StatelessWidget {
                     const SizedBox(height: 7),
                     Text(
                       [
-                        if (style.isClassic && isShuqiItem(item)) '书旗',
+                        if (isShuqiItem(item)) '书旗',
                         searchMediaMeta(item),
                       ].join(' · '),
                       maxLines: 1,
@@ -169,7 +169,7 @@ class SearchBookGridTile extends StatelessWidget {
                 const SizedBox(height: 4),
                 Text(
                   [
-                    if (style.isClassic && isShuqiItem(item)) '书旗',
+                    if (isShuqiItem(item)) '书旗',
                     searchMediaMeta(item),
                   ].join(' · '),
                   maxLines: 1,

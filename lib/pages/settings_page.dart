@@ -49,7 +49,6 @@ import 'settings_category_page.dart';
 import 'system_tts_settings_page.dart';
 import 'webdav_sync_page.dart';
 import 'text_replacement_page.dart';
-import 'theme_page.dart';
 
 /// Settings home: a list of category entries (PiliPlus multi-level
 /// navigation). Each category opens its own archive option page.
@@ -77,13 +76,6 @@ class SettingsPage extends StatelessWidget {
             _oledModeItem(),
           if (!isDesktopHost) _playerLayoutItem(),
         ],
-      ),
-      SettingsCategory(
-        icon: CupertinoIcons.paintbrush,
-        title: '主题',
-        subtitle: '经典主题、档案主题',
-        pageBuilder: (_) => const ThemePage(),
-        items: const [],
       ),
       SettingsCategory(
         icon: SettingsCategoryIcons.reading,
