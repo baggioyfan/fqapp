@@ -135,7 +135,7 @@ void main() {
         matching: find.byType(Container),
       ),
     );
-    expect((cell.decoration! as BoxDecoration).color, const Color(0xFF2D2D2D));
+    expect((cell.decoration! as BoxDecoration).color, const Color(0xFF202023));
   });
 
   testWidgets('点选集 → 下载按钮入队，任务态实时显示', (tester) async {

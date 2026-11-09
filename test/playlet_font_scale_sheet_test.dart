@@ -30,23 +30,23 @@ void main() {
     expect(sheet.backgroundColor, const Color(0xFF242427));
     expect(
       tester.widget<Text>(find.text('字体大小')).style?.color,
-      const Color(0xFFF2F2F2),
+      const Color(0xFFF5F1EB),
     );
     // 选中档（标准）用 ink，未选中档（大号）用 muted。
     expect(
       tester.widget<Text>(find.text('标准')).style?.color,
-      const Color(0xFFF2F2F2),
+      const Color(0xFFF5F1EB),
     );
     expect(
       tester.widget<Text>(find.text('大号')).style?.color,
-      const Color(0xFFB7B7B7),
+      const Color(0xFFA7A39E),
     );
     expect(
       tester
           .widget<Text>(find.byKey(const ValueKey('player-font-scale-preview')))
           .style
           ?.color,
-      const Color(0xFFF2F2F2),
+      const Color(0xFFF5F1EB),
     );
     expect(tester.takeException(), isNull);
   });

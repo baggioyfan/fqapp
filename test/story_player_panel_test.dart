@@ -165,8 +165,8 @@ void main() {
     );
     // 当前集仍用品牌橙；普通集换色板 ink；已看集用 muted。
     expect(tileText(0).style?.color, const Color(0xFFFA6725));
-    expect(tileText(10).style?.color, const Color(0xFFF2F2F2));
-    expect(tileText(1).style?.color, const Color(0xFFB7B7B7));
+    expect(tileText(10).style?.color, const Color(0xFFF5F1EB));
+    expect(tileText(1).style?.color, const Color(0xFFA7A39E));
     // 普通格底在深色面板上换成亮 overlay（#08000000 会看不见）。
     expect(
       find.byWidgetPredicate(
