@@ -34,8 +34,8 @@ void main() {
 
     // 400dp 屏减去 16dp 栏距后内容宽 368。
     expect(homeShelfColumns(context, 368), 3);
-    // 360dp 手机内容宽 328：mockup 的三列基准，不能再掉成两列。
-    expect(homeShelfColumns(context, 328), 3);
+    // 360dp 手机内容宽 328：经典版式的断点是 360，不足 360 退到两列。
+    expect(homeShelfColumns(context, 328), 2);
     // 320dp 屏内容宽 288：三列时书名只剩四五个字，退到两列。
     expect(homeShelfColumns(context, 288), 2);
   });

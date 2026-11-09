@@ -123,11 +123,11 @@ void main() {
     // 弹层标题和未选中的集数格以前硬编码为纯黑字/6% 黑底，深色下看不见。
     expect(
       tester.widget<Text>(find.text('离线缓存 · 测试剧')).style?.color,
-      const Color(0xFFF2F2F2),
+      const Color(0xFFF5F1EB),
     );
     expect(
       tester.widget<Text>(find.text('第 1 集')).style?.color,
-      const Color(0xFFF2F2F2),
+      const Color(0xFFF5F1EB),
     );
     final cell = tester.widget<Container>(
       find.descendant(

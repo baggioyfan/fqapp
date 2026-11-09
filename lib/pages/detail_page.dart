@@ -342,7 +342,19 @@ class _DetailPageState extends State<DetailPage> {
                 loader: injected == null
                     ? null
                     : () => injected(id, tab: _tab),
-              ).then((episodes) => [episodes])
+              ).then((episodes) {
+                // loadVideoCatalogue 在目录为空时会用 episodeId 兜底造一集
+                // （hasKnownIndex=false），那是给「单集搜索结果」留的 playable
+                // 后路。对剧集条目（episodeId 与内容 id 不同）来说这一集是假的：
+                // 不能拿它当目录，更不能把用户带进只有一集的播放器。这里把它
+                // 还原成「没取到目录」，让下面的 knownSeries 分支给出失败态。
+                final onlyFallback =
+                    episodes.length == 1 && !episodes.first.hasKnownIndex;
+                if (onlyFallback && widget.item.episodeId != id) {
+                  return <List<Chapter>>[];
+                }
+                return <List<Chapter>>[episodes];
+              })
             : (injected ?? ApiClient.instance.directoryChapters)(id, tab: _tab);
         // 时间预算只加在「短剧 + 真实请求」上：注入的 loader 由调用方（测试/
         // 预览）自己掌控，给它挂一个内部定时器只会让测试留下未完成的 timer；

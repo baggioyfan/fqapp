@@ -9,11 +9,11 @@ import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/pages/home_page.dart';
 import 'package:fqapp/pages/home_provider.dart';
 import 'package:fqapp/services/api_client.dart';
-import 'package:fqapp/widgets/home/home_archive.dart';
+import 'package:fqapp/widgets/home/classic_home_skeleton.dart';
 import 'package:fqapp/widgets/home/home_design.dart';
-import 'package:fqapp/widgets/home/home_masthead.dart';
+import 'package:fqapp/widgets/home/home_hero.dart';
 import 'package:fqapp/widgets/home/home_rank_shelf.dart';
-import 'package:fqapp/widgets/home/home_skeleton.dart';
+import 'package:fqapp/widgets/home/home_shelf.dart';
 
 void main() {
   testWidgets(
@@ -305,7 +305,7 @@ void main() {
 
     // 区块的卡片并进当前分类的书架，标题用分类名，不用区块名。
     expect(
-      tester.widget<HomeSectionLabel>(find.byType(HomeSectionLabel)).title,
+      tester.widget<HomeSectionHeader>(find.byType(HomeSectionHeader)).title,
       '经典',
     );
     expect(find.text('经典必读'), findsNothing);
@@ -423,7 +423,9 @@ void main() {
       );
       await tester.pumpAndSettle();
       // 顶栏在窄屏大字号下也要放得下：店名不换行、两个圆形入口不溢出。
-      expect(find.text(HomeMasthead.brand), findsOneWidget);
+      // 经典版式的顶栏没有店名，只有搜索框 + 分类入口；窄屏大字号下
+      // 放得下搜索框即可。
+      expect(find.text(HomeHero.searchHint), findsOneWidget);
       expect(
         tester.getRect(find.byKey(const Key('home_search_button'))).right,
         lessThanOrEqualTo(320),
@@ -561,7 +563,7 @@ void main() {
     await tester.pump();
     expect(offsets, [0, 1]);
     // Cold first load paints the `cmc.xml` skeleton, not a spinner.
-    expect(find.byType(HomeSkeleton), findsOneWidget);
+    expect(find.byType(ClassicHomeSkeleton), findsOneWidget);
     expect(find.text('暂无内容'), findsNothing);
 
     secondPage.complete(
@@ -570,7 +572,7 @@ void main() {
     await tester.pump();
     await tester.pump();
     expect(offsets, [0, 1]);
-    expect(find.byType(HomeSkeleton), findsOneWidget);
+    expect(find.byType(ClassicHomeSkeleton), findsOneWidget);
     await tester.pump(const Duration(milliseconds: 500));
     await tester.pumpAndSettle();
     expect(offsets, [0, 1, 2]);

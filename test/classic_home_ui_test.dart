@@ -23,6 +23,7 @@ import 'package:fqapp/widgets/home/classic_home_tab_bar.dart';
 import 'package:fqapp/widgets/home/home_archive.dart';
 import 'package:fqapp/widgets/home/home_cell_blocks.dart';
 import 'package:fqapp/widgets/home/home_hero.dart';
+import 'package:fqapp/widgets/home/home_shelf.dart';
 import 'package:fqapp/widgets/home/home_masthead.dart';
 import 'package:fqapp/widgets/home/home_media_card.dart';
 import 'package:fqapp/widgets/home/home_rank_shelf.dart';
@@ -454,7 +455,7 @@ void main() {
 
       expect(
         (preview(0).first as SliverToBoxAdapter).child,
-        isA<HomeSectionLabel>(),
+        isA<HomeSectionHeader>(),
       );
       style.value = AppThemeStyle.classic;
       await tester.pumpAndSettle();

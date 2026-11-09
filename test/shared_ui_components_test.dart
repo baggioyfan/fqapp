@@ -3,6 +3,7 @@ import 'package:flutter_lucide/flutter_lucide.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:fqapp/services/app_theme.dart';
+import 'package:fqapp/services/app_theme_style.dart';
 import 'package:fqapp/widgets/home/home_back_button.dart';
 import 'package:fqapp/widgets/home/home_chip.dart';
 import 'package:fqapp/widgets/home/home_design.dart';
@@ -35,20 +36,30 @@ void main() {
       expect(theme.appBarTheme.surfaceTintColor, Colors.transparent);
     }
 
+    // HomePalette 在 fork 里只剩经典一套色板（style 字段已删），所以比对时
+    // createTheme 也要取经典色板，两边才在同一张色卡上。
     expectsAligned(
-      AppTheme.createTheme(Brightness.light),
+      AppTheme.createTheme(Brightness.light, style: AppThemeStyle.classic),
       const HomePalette(false),
     );
     expectsAligned(
-      AppTheme.createTheme(Brightness.dark),
+      AppTheme.createTheme(Brightness.dark, style: AppThemeStyle.classic),
       const HomePalette(true),
     );
     expectsAligned(
-      AppTheme.createTheme(Brightness.dark, oledMode: true),
+      AppTheme.createTheme(
+        Brightness.dark,
+        oledMode: true,
+        style: AppThemeStyle.classic,
+      ),
       const HomePalette(true, oled: true),
     );
     expectsAligned(
-      AppTheme.createTheme(Brightness.light, einkMode: true),
+      AppTheme.createTheme(
+        Brightness.light,
+        einkMode: true,
+        style: AppThemeStyle.classic,
+      ),
       const HomePalette(false, eink: true),
     );
     // 档案纸画布：2026-11 首页重做后浅色画布取 #F4F3EF。

@@ -1734,11 +1734,11 @@ void main() {
     // 海报格页以前恒为白底黑字，深色主题下整页会刺眼——现在跟随色板。
     expect(
       tester.widget<Scaffold>(find.byType(Scaffold)).backgroundColor,
-      const Color(0xFF191919),
+      const Color(0xFF151517),
     );
     expect(
       tester.widget<Text>(find.text('8-0 作品')).style?.color,
-      const Color(0xFFF2F2F2),
+      const Color(0xFFF5F1EB),
     );
     expect(tester.takeException(), isNull);
   });

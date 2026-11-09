@@ -8,9 +8,9 @@ import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/pages/home_page.dart';
 import 'package:fqapp/pages/home_provider.dart';
 import 'package:fqapp/services/api_client.dart';
-import 'package:fqapp/widgets/home/home_feed_states.dart';
-import 'package:fqapp/widgets/home/home_masthead.dart';
-import 'package:fqapp/widgets/home/home_skeleton.dart';
+import 'package:fqapp/widgets/home/classic_home_feed_states.dart';
+import 'package:fqapp/widgets/home/classic_home_skeleton.dart';
+import 'package:fqapp/widgets/home/home_hero.dart';
 import 'package:fqapp/widgets/tab_swipe_area.dart';
 
 /// Headers stay outside the feed viewport and horizontal transform (#261).
@@ -97,7 +97,7 @@ void main() {
 
   testWidgets('横滑时顶栏和分类条不跟着走，只有内容在滑', (tester) async {
     await pumpHome(tester);
-    final hero = tester.getRect(find.byType(HomeMasthead));
+    final hero = tester.getRect(find.byType(HomeHero));
     final firstTab = tester.getRect(
       find.byKey(const ValueKey('home_category_0')),
     );
@@ -111,7 +111,7 @@ void main() {
       // 顶栏属于「页面」，不属于「内容」：它跟着动的话，屏幕上就是整页
       // 被换掉（短剧页的顶栏在滑动区外面，所以从来不这样）。
       expect(
-        tester.getRect(find.byType(HomeMasthead)).left,
+        tester.getRect(find.byType(HomeHero)).left,
         hero.left,
         reason: '第 $frame 帧：顶栏跟着横滑走了',
       );
@@ -134,7 +134,7 @@ void main() {
     );
     expect(
       find.ancestor(
-        of: find.byType(HomeMasthead),
+        of: find.byType(HomeHero),
         matching: find.byType(TabSwipeArea),
       ),
       findsNothing,
@@ -152,13 +152,13 @@ void main() {
     await tester.pump();
 
     // 小说分类还没进过：拖动中铺的是它的骨架，而不是一块底色。
-    expect(find.byType(HomeSkeleton), findsOneWidget, reason: '拖动时缺口里应当出现邻页内容');
+    expect(find.byType(ClassicHomeSkeleton), findsOneWidget, reason: '拖动时缺口里应当出现邻页内容');
 
     await gesture.up();
     for (var frame = 0; frame < 30; frame++) {
       await tester.pump(const Duration(milliseconds: 16));
     }
-    expect(find.byType(HomeSkeleton), findsNothing);
+    expect(find.byType(ClassicHomeSkeleton), findsNothing);
     expect(tester.takeException(), isNull);
   });
 
@@ -171,23 +171,23 @@ void main() {
 
     // 换内容，但视口原地不动，顶栏仍然在。
     expect(position.pixels, 0);
-    expect(tester.getRect(find.byType(HomeMasthead)).top, greaterThanOrEqualTo(0));
+    expect(tester.getRect(find.byType(HomeHero)).top, greaterThanOrEqualTo(0));
     expect(tester.takeException(), isNull);
   });
 
   testWidgets('滚动内容后切分类：内容回到首行，顶栏保持固定', (tester) async {
     await pumpHome(tester);
     final position = positionOf(tester);
-    final hero = tester.getRect(find.byType(HomeMasthead));
+    final hero = tester.getRect(find.byType(HomeHero));
 
     await scrollDown(tester, -600);
     expect(position.pixels, greaterThan(0));
-    expect(tester.getRect(find.byType(HomeMasthead)), hero);
+    expect(tester.getRect(find.byType(HomeHero)), hero);
 
     await swipeTab(tester, -260);
 
     expect(position.pixels, 0);
-    expect(tester.getRect(find.byType(HomeMasthead)), hero);
+    expect(tester.getRect(find.byType(HomeHero)), hero);
     expect(tester.takeException(), isNull);
   });
 
@@ -200,15 +200,15 @@ void main() {
     await swipeTab(tester, -260);
     await swipeTab(tester, -260);
 
-    expect(find.byType(HomeSkeleton), findsNothing, reason: '切分类不该铺整页骨架');
-    expect(find.byType(HomeFeedLoading), findsOneWidget);
+    expect(find.byType(ClassicHomeSkeleton), findsNothing, reason: '切分类不该铺整页骨架');
+    expect(find.byType(ClassicHomeFeedLoading), findsOneWidget);
     expect(find.text('正在刷新内容'), findsOneWidget);
 
     gate.complete();
     for (var frame = 0; frame < 30; frame++) {
       await tester.pump(const Duration(milliseconds: 16));
     }
-    expect(find.byType(HomeFeedLoading), findsNothing);
+    expect(find.byType(ClassicHomeFeedLoading), findsNothing);
     expect(tester.takeException(), isNull);
   });
 

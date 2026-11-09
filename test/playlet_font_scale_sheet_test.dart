@@ -27,7 +27,7 @@ void main() {
     await tester.tap(find.text('打开'));
     await tester.pumpAndSettle();
     final sheet = tester.widget<BottomSheet>(find.byType(BottomSheet));
-    expect(sheet.backgroundColor, const Color(0xFF242424));
+    expect(sheet.backgroundColor, const Color(0xFF242427));
     expect(
       tester.widget<Text>(find.text('字体大小')).style?.color,
       const Color(0xFFF2F2F2),

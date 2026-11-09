@@ -51,7 +51,6 @@ void main() {
         .toList();
     expect(rows.map((row) => row.title), [
       '外观',
-      '主题',
       '阅读',
       '听书',
       '短剧',
@@ -121,7 +120,8 @@ void main() {
       await tester.tap(find.descendant(of: row, matching: find.byType(Switch)));
       await tester.pumpAndSettle();
       expect(BookOpenPreferences.instance.shelfDirectReader.value, !before);
-      expect(find.text('AI 阅读优化'), findsOneWidget);
+      // AI 阅读整块已移除，经典设置首页也不再挂分类副标题。
+      expect(find.text('AI 阅读优化'), findsNothing);
       expect(tester.takeException(), isNull);
     },
   );

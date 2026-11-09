@@ -121,7 +121,7 @@ void main() {
         matching: find.text('1'),
       ),
     );
-    expect(watched.style?.color, const Color(0xFF6E6D68));
+    expect(watched.style?.color, const Color(0xFF706C66));
     // 点普通格回传该集下标。
     await tester.tap(find.byKey(const ValueKey('series-episode-6')));
     expect(played, [6]);

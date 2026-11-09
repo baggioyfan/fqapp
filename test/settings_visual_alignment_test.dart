@@ -49,7 +49,8 @@ void main() {
     expect(find.byType(ArchiveMasthead), findsOneWidget);
     expect(find.byType(FeatureEntry), findsWidgets);
     expect(find.text('设置'), findsOneWidget);
-    for (final title in ['外观', '主题', '阅读', '听书', '短剧', '数据', '服务']) {
+    // 主题页（theme_page.dart）随「新的 ui」整块移除，设置里不再有「主题」入口。
+    for (final title in ['外观', '阅读', '听书', '短剧', '数据', '服务']) {
       await tester.scrollUntilVisible(
         find.text(title).hitTestable(),
         100,

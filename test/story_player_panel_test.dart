@@ -159,7 +159,7 @@ void main() {
     final panel = tester.widget<Material>(
       find.byKey(const ValueKey('story-panel')),
     );
-    expect(panel.color, const Color(0xFF242424));
+    expect(panel.color, const Color(0xFF242427));
     Text tileText(int index) => tester.widget<Text>(
       find.descendant(of: _episode(index), matching: find.byType(Text)).first,
     );
