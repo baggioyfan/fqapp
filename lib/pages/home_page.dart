@@ -442,9 +442,7 @@ class _HomePageState extends ConsumerState<HomePage> {
       if (_hadContent) {
         return [
           SliverToBoxAdapter(
-            child: classic
-                ? const ClassicHomeFeedLoading()
-                : const HomeFeedLoading(),
+            child: const ClassicHomeFeedLoading(),
           ),
         ];
       }
@@ -453,19 +451,12 @@ class _HomePageState extends ConsumerState<HomePage> {
     return [
       SliverFillRemaining(
         hasScrollBody: false,
-        child: classic
-            ? ClassicHomeFeedEmpty(
-                title: '暂无内容',
-                message: '换个分类，或刷新发现新故事',
-                actionLabel: '刷新推荐',
-                onRefresh: _refresh,
-              )
-            : HomeFeedEmpty(
-                title: '暂无内容',
-                message: '换个分类，或刷新发现新故事',
-                actionLabel: '刷新推荐',
-                onRefresh: _refresh,
-              ),
+        child: ClassicHomeFeedEmpty(
+          title: '暂无内容',
+          message: '换个分类，或刷新发现新故事',
+          actionLabel: '刷新推荐',
+          onRefresh: _refresh,
+        ),
       ),
     ];
   }

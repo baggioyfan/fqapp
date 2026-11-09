@@ -439,7 +439,7 @@ class _DetailPageState extends State<DetailPage> {
     if (!mounted || generation != _loadGeneration) return;
 
     final detail = detailResult.value;
-    final volumes = directoryResult.value ?? <List<Chapter>>[];
+    var volumes = directoryResult.value ?? <List<Chapter>>[];
 
     // A search result can represent a single episode rather than a series.
     // Keep it playable even when the pseries directory endpoint rejects that

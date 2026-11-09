@@ -1170,13 +1170,6 @@ class _ShelfPainter extends CustomPainter {
     );
     volume.rank.paint(canvas, Offset(centreX - volume.rank.width / 2, y + 7));
 
-    if (!palette.isClassic) {
-      final circle = Paint()
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 0.8
-        ..color = palette.muted;
-      canvas.drawCircle(Offset(centreX, y + g.bodyHeight - 12), 2.2, circle);
-    }
   }
 
   /// 抽出后露出的侧封：有图就画图（斜切进侧面的平行四边形），没有就退到
@@ -1214,11 +1207,9 @@ class _ShelfPainter extends CustomPainter {
       g.bodyHeight - 46,
     );
     canvas.save();
-    if (palette.isClassic) {
-      canvas.clipRRect(
-        RRect.fromRectAndRadius(art, Radius.circular(coverRadius)),
-      );
-    }
+    canvas.clipRRect(
+      RRect.fromRectAndRadius(art, Radius.circular(coverRadius)),
+    );
     final image = volume.image;
     if (image != null) {
       canvas.drawImageRect(
@@ -1266,9 +1257,6 @@ class _ShelfPainter extends CustomPainter {
     }
     canvas.restore();
     volume.sideRank.paint(canvas, Offset(margin, 7));
-    if (!palette.isClassic) {
-      volume.sideRk.paint(canvas, Offset(margin, g.bodyHeight - 18));
-    }
     canvas.restore();
     canvas.restore();
   }

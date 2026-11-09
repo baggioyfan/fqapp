@@ -81,8 +81,8 @@ class _MinePageState extends State<MinePage> {
     setState(
       () => _stats = ReadingStats.from(
         history: store.historySnapshot(),
-        readTime: store.readTimeSnapshot(),
-        readTimeKinds: store.readTimeKindSnapshot(),
+        readTimeDays: store.readTimeDailyTotals(),
+        readTimeBooks: store.readTimeBookTotals(),
       ),
     );
   }
