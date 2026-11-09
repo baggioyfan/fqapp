@@ -335,7 +335,26 @@ class DesktopPlatform with WindowListener {
     throw MissingPluginException('$channel/$method');
   }
 
+  /// 系统朗读入口。
+  ///
+  /// Windows 上没装语音包时，flutter_tts 的原生插件在启动阶段就拿不到
+  /// SpeechSynthesizer（激活失败 0x800455A0），方法调用会回 tts_unavailable。
+  /// 这里把它换成既有的中文提示，界面上不会出现英文错误。
   Future<dynamic> _speech(String method, Map args) async {
+    try {
+      return await _speechInner(method, args);
+    } on PlatformException catch (e) {
+      if (e.code != 'tts_unavailable') rethrow;
+      throw PlatformException(
+        code: 'tts_unavailable',
+        message: isMacHost
+            ? 'macOS 语音不可用，请在系统设置中启用语音'
+            : 'Windows 语音不可用，请安装中文语音',
+      );
+    }
+  }
+
+  Future<dynamic> _speechInner(String method, Map args) async {
     final engineKey = isMacHost ? 'macos' : 'windows';
     final engineLabel = isMacHost ? 'macOS 系统语音' : 'Windows 默认语音';
     switch (method) {
