@@ -110,39 +110,48 @@ mixin _LibraryClassicViews on _LibraryClassicChrome {
   }
 
   Widget _classicGrid(List<_ShelfEntry> entries) => LayoutBuilder(
-    builder: (context, constraints) => GridView.builder(
-      physics: const AlwaysScrollableScrollPhysics(),
-      key: PageStorageKey('classic-shelf-grid-$_tab'),
-      padding: const EdgeInsets.fromLTRB(
-        ShelfTokens.screenPadding,
-        ShelfTokens.spaceXS,
-        ShelfTokens.screenPadding,
-        ShelfTokens.contentBottomInset,
-      ),
-      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: ShelfTokens.gridColumns,
-        crossAxisSpacing: ShelfTokens.gridSpacing,
-        mainAxisSpacing: ShelfTokens.gridRunSpacing,
-        childAspectRatio: shelfGridChildAspectRatio(
-          context,
-          availableWidth: constraints.maxWidth,
+    builder: (context, constraints) {
+      // 桌面按可用宽度排：每格约 170dp，夹在 3–10 列。手机端仍是固定 3 列。
+      // 这段是旧版（master）原有口径，合并后取经典视图时丢了，导致桌面窗口
+      // 再宽也只排 3 列。
+      final columns = isDesktopHost
+          ? (constraints.maxWidth / 170).floor().clamp(3, 10)
+          : ShelfTokens.gridColumns;
+      return GridView.builder(
+        physics: const AlwaysScrollableScrollPhysics(),
+        key: PageStorageKey('classic-shelf-grid-$_tab'),
+        padding: const EdgeInsets.fromLTRB(
+          ShelfTokens.screenPadding,
+          ShelfTokens.spaceXS,
+          ShelfTokens.screenPadding,
+          ShelfTokens.contentBottomInset,
         ),
-      ),
-      itemCount: entries.length,
-      itemBuilder: (context, index) {
-        final entry = entries[index];
-        return BookshelfGridCard(
-          key: ValueKey('shelf-grid-${entry.selectionKey}'),
-          item: entry.item,
-          badgeText: entry.badgeText,
-          infoText: entry.infoText,
-          editing: _editing,
-          selected: _selected.contains(entry.selectionKey),
-          onTap: () => _tap(entry),
-          onLongPress: () => _longPress(entry),
-        );
-      },
-    ),
+        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+          crossAxisCount: columns,
+          crossAxisSpacing: ShelfTokens.gridSpacing,
+          mainAxisSpacing: ShelfTokens.gridRunSpacing,
+          childAspectRatio: shelfGridChildAspectRatio(
+            context,
+            availableWidth: constraints.maxWidth,
+            columns: columns,
+          ),
+        ),
+        itemCount: entries.length,
+        itemBuilder: (context, index) {
+          final entry = entries[index];
+          return BookshelfGridCard(
+            key: ValueKey('shelf-grid-${entry.selectionKey}'),
+            item: entry.item,
+            badgeText: entry.badgeText,
+            infoText: entry.infoText,
+            editing: _editing,
+            selected: _selected.contains(entry.selectionKey),
+            onTap: () => _tap(entry),
+            onLongPress: () => _longPress(entry),
+          );
+        },
+      );
+    },
   );
 
   Widget _classicDoubleGrid(List<_ShelfEntry> entries) => LayoutBuilder(
