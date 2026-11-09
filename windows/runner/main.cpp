@@ -32,6 +32,14 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
   // 这跟 macOS 侧 build_macos.sh 里写 FLTEnableImpeller=false 是一回事。
   project.set_impeller_switch(flutter::ImpellerSwitch::Disabled);
 
+  // 这台机器上同时挂着 Intel HD Graphics 530 和一个 Display-Only 的虚拟显示器
+  // （Amyuni USB Mobile Monitor Virtual Display）。ANGLE 枚举适配器时可能选中
+  // 那个只会显示、没有渲染能力的虚拟设备，于是 D3D11 device 建不出来：
+  //   Failed to create D3D renderer: Could not create D3D11 device.
+  //   ANGLE Display::initialize error 12289: No available renderers.
+  // 明确要求走高性能适配器，避开那个虚拟显示器。
+  project.set_gpu_preference(flutter::GpuPreference::HighPerformancePreference);
+
   std::vector<std::string> command_line_arguments =
       GetCommandLineArguments();
 
