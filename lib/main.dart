@@ -349,7 +349,15 @@ class _FqAppState extends State<FqApp> {
     Brightness brightness, {
     bool eink = false,
     bool oled = false,
-  }) => AppTheme.createTheme(brightness, einkMode: eink, oledMode: oled);
+  }) => AppTheme.createTheme(
+    brightness,
+    einkMode: eink,
+    oledMode: oled,
+    // fork 只保留经典版式。createTheme 的默认色板留在档案版（与上游一致，
+    // 让依赖默认值的测试回到上游语义），这里显式钉回经典 ——
+    // 运行时渲染与改动前逐字节等价。
+    style: AppThemeStyle.classic,
+  );
 }
 
 /// Opens local data before any page can access LibraryStore's boxes. Failed
