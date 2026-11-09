@@ -25,6 +25,7 @@ using namespace Concurrency;
 using namespace std::chrono_literals;
 #include <winrt/Windows.Foundation.h>
 #include <winrt/Windows.Foundation.Collections.h>
+#include <optional>
 namespace {
 	class FlutterTtsPlugin : public flutter::Plugin {
 	public:
@@ -36,6 +37,7 @@ namespace {
 		void HandleMethodCall(
 			const flutter::MethodCall<flutter::EncodableValue>& method_call,
 			std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result);
+
 		void speak(const std::string, FlutterResult);
 		void pause();
 		void continuePlay();
@@ -51,13 +53,23 @@ namespace {
 		winrt::Windows::Foundation::IAsyncAction asyncSpeak(const std::string);
 		bool speaking();
 		bool paused();
-		SpeechSynthesizer synth;
-		winrt::Windows::Media::Playback::MediaPlayer mPlayer;
+		// 语音引擎不可用（系统没装语音包）时置 false，见构造函数。
+		bool ttsAvailable = true;
+		// 语音引擎和播放器都是「按需构造」的。
+		//
+		// C++/WinRT 的 SpeechSynthesizer 默认构造函数会当场激活 WinRT 类，
+		// 激活失败就抛 winrt::hresult_error。写成普通成员的话，这个异常发生在
+		// 成员初始化阶段——比构造函数体更早——构造函数体里的 try/catch 接不住，
+		// 异常一路逃到 Flutter 的插件注册回调，然后 std::terminate，
+		// 客户端在窗口显示之前就以 0xC0000409 退出（实测：窗口 0.28s 建好、
+		// 一直没显示，0.87s 进程退出）。
+		// 放进 std::optional 之后默认构造不做任何 WinRT 调用，
+		// 真正的激活挪到构造函数体的 try/catch 里。
+		std::optional<SpeechSynthesizer> synth;
+		std::optional<winrt::Windows::Media::Playback::MediaPlayer> mPlayer;
 		bool isPaused;
 		bool isSpeaking;
 		bool awaitSpeakCompletion;
-		// 语音引擎不可用（系统没装语音包）时置 false，见构造函数。
-		bool ttsAvailable = true;
 		FlutterResult speakResult;
 	};
 
@@ -77,9 +89,12 @@ namespace {
 	}
 
 	void FlutterTtsPlugin::addMplayer() {
-		mPlayer = winrt::Windows::Media::Playback::MediaPlayer::MediaPlayer();
+		// emplace：只有真正要用播放器时才激活 MediaPlayer，
+		// 激活失败由调用方（构造函数）的 try/catch 接住。
+		auto& player = mPlayer.emplace(
+			winrt::Windows::Media::Playback::MediaPlayer::MediaPlayer());
 		auto mEndedToken =
-			mPlayer.MediaEnded([=](Windows::Media::Playback::MediaPlayer const& sender,
+			player.MediaEnded([=](Windows::Media::Playback::MediaPlayer const& sender,
 				Windows::Foundation::IInspectable const& args)
 				{
 				    methodChannel->InvokeMethod("speak.onComplete", NULL);
@@ -99,14 +114,23 @@ namespace {
 	}
 
 	winrt::Windows::Foundation::IAsyncAction FlutterTtsPlugin::asyncSpeak(const std::string text) {
-		SpeechSynthesisStream speechStream{
-		  co_await synth.SynthesizeTextToStreamAsync(to_hstring(text))
-		};
-		winrt::param::hstring cType = L"Audio";
-		winrt::Windows::Media::Core::MediaSource source =
-			winrt::Windows::Media::Core::MediaSource::CreateFromStream(speechStream, cType);
-		mPlayer.Source(source);
-		mPlayer.Play();
+		// 语音引擎不可用时（没装语音包）这里的 WinRT 调用会抛
+		// winrt::hresult_error。协程里的异常如果没人接住，会被抛到线程池上，
+		// 然后 std::terminate，整个客户端直接退出。所以在这里自己接住，
+		// 转成 speak.onError 事件交给 Dart。
+		try {
+			SpeechSynthesisStream speechStream{
+			  co_await synth->SynthesizeTextToStreamAsync(to_hstring(text))
+			};
+			winrt::param::hstring cType = L"Audio";
+			winrt::Windows::Media::Core::MediaSource source =
+				winrt::Windows::Media::Core::MediaSource::CreateFromStream(speechStream, cType);
+			mPlayer->Source(source);
+			mPlayer->Play();
+		} catch (...) {
+			isSpeaking = false;
+			methodChannel->InvokeMethod("speak.onError");
+		}
 	}
 
 	void FlutterTtsPlugin::speak(const std::string text, FlutterResult result) {
@@ -118,13 +142,13 @@ namespace {
 	};
 
 	void FlutterTtsPlugin::pause() {
-		mPlayer.Pause();
+		if (mPlayer.has_value()) mPlayer->Pause();
 		isPaused = true;
 		methodChannel->InvokeMethod("speak.onPause", NULL);
 	}
 
 	void FlutterTtsPlugin::continuePlay() {
-		mPlayer.Play();
+		if (mPlayer.has_value()) mPlayer->Play();
 		isPaused = false;
 		methodChannel->InvokeMethod("speak.onContinue", NULL);
 	}
@@ -135,19 +159,22 @@ namespace {
             speakResult->Success(1);
         }
 
-		mPlayer.Close();
-		addMplayer();
+		if (mPlayer.has_value()) {
+			mPlayer->Close();
+			addMplayer();
+		}
 		isSpeaking = false;
 		isPaused = false;
 	}
-	void FlutterTtsPlugin::setVolume(const double newVolume) { synth.Options().AudioVolume(newVolume); }
+	void FlutterTtsPlugin::setVolume(const double newVolume) { if (synth.has_value()) synth->Options().AudioVolume(newVolume); }
 
-	void FlutterTtsPlugin::setPitch(const double newPitch) { synth.Options().AudioPitch(newPitch); }
+	void FlutterTtsPlugin::setPitch(const double newPitch) { if (synth.has_value()) synth->Options().AudioPitch(newPitch); }
 
-	void FlutterTtsPlugin::setRate(const double newRate) { synth.Options().SpeakingRate(newRate + 0.5); }
+	void FlutterTtsPlugin::setRate(const double newRate) { if (synth.has_value()) synth->Options().SpeakingRate(newRate + 0.5); }
 
 	void FlutterTtsPlugin::getVoices(flutter::EncodableList& voices) {
-		auto synthVoices = synth.AllVoices();
+		if (!synth.has_value()) return;
+		auto synthVoices = synth->AllVoices();
 		std::for_each(begin(synthVoices), end(synthVoices), [&voices](const VoiceInformation& voice)
 			{
 				flutter::EncodableMap voiceInfo;
@@ -166,7 +193,7 @@ namespace {
 						gender = "unknown";
 						break;
 				}
-				voiceInfo[flutter::EncodableValue("gender")] = gender; 
+				voiceInfo[flutter::EncodableValue("gender")] = gender;
 				// Identifier example "HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Speech_OneCore\Voices\Tokens\MSTTS_V110_enUS_MarkM"
 				voiceInfo[flutter::EncodableValue("identifier")] = to_string(voice.Id());
 				voices.push_back(flutter::EncodableMap(voiceInfo));
@@ -174,9 +201,10 @@ namespace {
 	}
 
 	void FlutterTtsPlugin::setVoice(const std::string voiceLanguage, const std::string voiceName, FlutterResult& result) {
+		if (!synth.has_value()) { result->Success(0); return; }
 		bool found = false;
-		auto voices = synth.AllVoices();
-		VoiceInformation newVoice = synth.Voice();
+		auto voices = synth->AllVoices();
+		VoiceInformation newVoice = synth->Voice();
 		std::for_each(begin(voices), end(voices), [&voiceLanguage, &voiceName, &found, &newVoice](const VoiceInformation& voice)
 			{
 				if (to_string(voice.Language()) == voiceLanguage && to_string(voice.DisplayName()) == voiceName)
@@ -185,13 +213,14 @@ namespace {
 					found = true;
 				}
 			});
-		synth.Voice(newVoice);
+		synth->Voice(newVoice);
 		if (found) result->Success(1);
 		else result->Success(0);
 	}
 
 	void FlutterTtsPlugin::getLanguages(flutter::EncodableList& languages) {
-		auto synthVoices = synth.AllVoices();
+		if (!synth.has_value()) return;
+		auto synthVoices = synth->AllVoices();
 		std::set<flutter::EncodableValue> languagesSet = {};
 		std::for_each(begin(synthVoices), end(synthVoices), [&languagesSet](const VoiceInformation& voice)
 			{
@@ -203,21 +232,29 @@ namespace {
 			});
 	}
 	void FlutterTtsPlugin::setLanguage(const std::string voiceLanguage, FlutterResult& result) {
+		if (!synth.has_value()) { result->Success(0); return; }
 		bool found = false;
-		auto voices = synth.AllVoices();
-		VoiceInformation newVoice = synth.Voice();
+		auto voices = synth->AllVoices();
+		VoiceInformation newVoice = synth->Voice();
 		std::for_each(begin(voices), end(voices), [&voiceLanguage, &newVoice, &found](const VoiceInformation& voice)
 			{
-				if (to_string(voice.Language()) == voiceLanguage) newVoice = voice;
-				found = true;
+				if (to_string(voice.Language()) == voiceLanguage)
+				{
+					newVoice = voice;
+					found = true;
+				}
 			});
-		synth.Voice(newVoice);
+		synth->Voice(newVoice);
 		if (found) result->Success(1);
 		else result->Success(0);
 	}
 
 
 	FlutterTtsPlugin::FlutterTtsPlugin() {
+		isPaused = false;
+		isSpeaking = false;
+		awaitSpeakCompletion = false;
+		speakResult = FlutterResult();
 		// 语音引擎不一定存在：精简过的系统、或没装中文语音包的机器上，
 		// SpeechSynthesizer 激活会直接抛 winrt::hresult_error
 		// (0x800455A0 Internal Speech Error)。
@@ -225,22 +262,17 @@ namespace {
 		// 整个客户端会在启动时直接退出（0xC0000409），窗口都来不及出现。
 		// 所以只标记不可用，由方法调用层回错误，绝不让异常离开构造函数。
 		try {
-			synth = SpeechSynthesizer();
+			synth.emplace(SpeechSynthesizer());
 			addMplayer();
 		} catch (...) {
 			ttsAvailable = false;
-			return;
 		}
-		isPaused = false;
-		isSpeaking = false;
-		awaitSpeakCompletion = false;
-		speakResult = FlutterResult();
 	}
 
 	FlutterTtsPlugin::~FlutterTtsPlugin() {
-		if (mPlayer != nullptr) {
+		if (mPlayer.has_value()) {
 			try {
-				mPlayer.Close();
+				mPlayer->Close();
 			} catch (...) {
 			}
 		}
@@ -249,15 +281,145 @@ namespace {
 	void FlutterTtsPlugin::HandleMethodCall(
 		const flutter::MethodCall<flutter::EncodableValue>& method_call,
 		FlutterResult result) {
-		if (method_call.method_name().compare("getPlatformVersion") == 0) {
-			std::ostringstream version_stream;
-			version_stream << "Windows UWP";
-			result->Success(flutter::EncodableValue(version_stream.str()));
-		} else if (!ttsAvailable) {
-			result->Error("tts_unavailable",
-						  "Windows speech engine is not available on this machine");
-			return;
+		// 任何 WinRT 调用失败都会抛 winrt::hresult_error。这里没有 try/catch 的话，
+		// 异常会逃到 Flutter 的方法回调里变成 std::terminate，整个客户端直接退出。
+		// 所以整个派发都包在 try/catch 里，失败时回错误给 Dart。
+		try {
+			if (method_call.method_name().compare("getPlatformVersion") == 0) {
+				std::ostringstream version_stream;
+				version_stream << "Windows UWP";
+				result->Success(flutter::EncodableValue(version_stream.str()));
+				return;
+			}
+			if (!ttsAvailable) {
+				result->Error("tts_unavailable",
+							  "Windows speech engine is not available on this machine");
+				return;
+			}
+			const flutter::EncodableList* args = method_call.arguments();
+			const bool hasArgs = args != nullptr && !args->empty();
+
+			if (method_call.method_name().compare("awaitSpeakCompletion") == 0) {
+				if (hasArgs) {
+					const flutter::EncodableValue arg = (*args)[0];
+					if (std::holds_alternative<bool>(arg)) {
+						awaitSpeakCompletion = std::get<bool>(arg);
+						result->Success(1);
+					}
+					else result->Success(0);
+				}
+				else result->Success(0);
+			}
+			else if (method_call.method_name().compare("speak") == 0) {
+				if (isPaused) { continuePlay(); result->Success(1); return; }
+				if (hasArgs) {
+					const flutter::EncodableValue arg = (*args)[0];
+					if (std::holds_alternative<std::string>(arg)) {
+						if (!speaking()) {
+							const std::string text = std::get<std::string>(arg);
+							speak(text, std::move(result));
+						}
+						else result->Success(0);
+					}
+					else result->Success(0);
+				}
+				else result->Success(0);
+			}
+			else if (method_call.method_name().compare("pause") == 0) {
+				FlutterTtsPlugin::pause();
+				result->Success(1);
+			}
+			else if (method_call.method_name().compare("continuePlay") == 0) {
+				FlutterTtsPlugin::continuePlay();
+				result->Success(1);
+			}
+			else if (method_call.method_name().compare("stop") == 0) {
+				FlutterTtsPlugin::stop();
+				result->Success(1);
+			}
+			else if (method_call.method_name().compare("setLanguage") == 0) {
+				if (hasArgs) {
+					const flutter::EncodableValue arg = (*args)[0];
+					if (std::holds_alternative<std::string>(arg)) {
+						const std::string lang = std::get<std::string>(arg);
+						setLanguage(lang, result);
+					}
+					else result->Success(0);
+				}
+				else result->Success(0);
+			}
+			else if (method_call.method_name().compare("setVolume") == 0) {
+				if (hasArgs) {
+					const flutter::EncodableValue arg = (*args)[0];
+					if (std::holds_alternative<double>(arg)) {
+						const double newVolume = std::get<double>(arg);
+						setVolume(newVolume);
+						result->Success(1);
+					}
+					else result->Success(0);
+				}
+				else result->Success(0);
+			}
+			else if (method_call.method_name().compare("setSpeechRate") == 0) {
+				if (hasArgs) {
+					const flutter::EncodableValue arg = (*args)[0];
+					if (std::holds_alternative<double>(arg)) {
+						const double newRate = std::get<double>(arg);
+						setRate(newRate);
+						result->Success(1);
+					}
+					else result->Success(0);
+				}
+				else result->Success(0);
+			}
+			else if (method_call.method_name().compare("setPitch") == 0) {
+				if (hasArgs) {
+					const flutter::EncodableValue arg = (*args)[0];
+					if (std::holds_alternative<double>(arg)) {
+						const double newPitch = std::get<double>(arg);
+						setPitch(newPitch);
+						result->Success(1);
+					}
+					else result->Success(0);
+				}
+				else result->Success(0);
+			}
+			else if (method_call.method_name().compare("setVoice") == 0) {
+				if (hasArgs) {
+					const flutter::EncodableValue arg = (*args)[0];
+					if (std::holds_alternative<flutter::EncodableMap>(arg)) {
+						const flutter::EncodableMap voiceInfo = std::get<flutter::EncodableMap>(arg);
+						std::string voiceLanguage = "";
+						std::string voiceName = "";
+						auto voiceLanguage_it = voiceInfo.find(flutter::EncodableValue("locale"));
+						if (voiceLanguage_it != voiceInfo.end()) voiceLanguage = std::get<std::string>(voiceLanguage_it->second);
+						auto voiceName_it = voiceInfo.find(flutter::EncodableValue("name"));
+						if (voiceName_it != voiceInfo.end()) voiceName = std::get<std::string>(voiceName_it->second);
+						setVoice(voiceLanguage, voiceName, result);
+					}
+					else result->Success(0);
+				}
+				else result->Success(0);
+			}
+			else if (method_call.method_name().compare("getLanguages") == 0) {
+				flutter::EncodableList l;
+				getLanguages(l);
+				result->Success(l);
+			}
+			else if (method_call.method_name().compare("getVoices") == 0) {
+				flutter::EncodableList l;
+				getVoices(l);
+				result->Success(l);
+			}
+			else {
+				result->NotImplemented();
+			}
+		} catch (const std::exception& e) {
+			result->Error("tts_failed", e.what());
+		} catch (...) {
+			result->Error("tts_failed", "Windows speech engine error");
 		}
+	}
 
 #else
 #include <string>
