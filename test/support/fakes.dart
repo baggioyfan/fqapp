@@ -216,10 +216,8 @@ class MemoryDramaDownloadStore implements DramaDownloadStore {
     final directory = videoDirectory;
     if (episode != null && directory != null) {
       final file = File(episode.filePath);
-      if (file.existsSync()) {
-        final parent = file.parent.resolveSymbolicLinksSync();
-        final root = directory.resolveSymbolicLinksSync();
-        if (parent == root) await file.delete();
+      if (file.existsSync() && file.parent.path == directory.path) {
+        await file.delete();
       }
     }
     touch();

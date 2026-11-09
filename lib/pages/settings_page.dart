@@ -22,7 +22,6 @@ import 'dart:async';
 
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_lucide/flutter_lucide.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../services/app_theme.dart';
@@ -51,7 +50,6 @@ import 'system_tts_settings_page.dart';
 import 'webdav_sync_page.dart';
 import 'text_replacement_page.dart';
 import 'theme_page.dart';
-import 'ai_reading/settings/ai_settings_page.dart';
 
 /// Settings home: a list of category entries (PiliPlus multi-level
 /// navigation). Each category opens its own archive option page.
@@ -90,7 +88,7 @@ class SettingsPage extends StatelessWidget {
       SettingsCategory(
         icon: SettingsCategoryIcons.reading,
         title: '阅读',
-        subtitle: '阅读入口、正文替换、AI 阅读优化',
+        subtitle: '阅读入口、正文替换',
         items: [
           _shelfDirectReaderItem(),
           _discoverDirectReaderItem(),
@@ -101,15 +99,6 @@ class SettingsPage extends StatelessWidget {
             onTap: (context, _) => Navigator.push(
               context,
               MaterialPageRoute(builder: (_) => const TextReplacementPage()),
-            ),
-          ),
-          SettingsItem(
-            icon: LucideIcons.sparkles,
-            title: 'AI 阅读优化',
-            subtitle: '校对、反馈保护、预校对与预算',
-            onTap: (context, _) => Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => const AiSettingsPage()),
             ),
           ),
         ],

@@ -122,8 +122,6 @@ void main() {
     mockChannel(tester);
     await pumpPage(tester);
 
-    await tester.ensureVisible(find.text('备份包含哪些内容？'));
-    await tester.pumpAndSettle();
     await tester.tap(find.text('备份包含哪些内容？'));
     await tester.pumpAndSettle();
 

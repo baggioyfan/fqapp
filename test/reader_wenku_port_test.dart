@@ -3,7 +3,6 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fqapp/models/media_item.dart';
-import 'package:fqapp/services/ai_reading/ai_controller.dart';
 import 'package:fqapp/pages/reader_page.dart';
 import 'package:fqapp/services/reader_bookmark_store.dart';
 import 'package:fqapp/services/reader_device.dart';
@@ -213,9 +212,6 @@ void main() {
             ],
             currentIndex: 0,
             cachedIds: const {},
-            bookId: 'wenku-directory',
-            aiStatuses: const [],
-            aiController: AiReadingController.instance,
           ),
         ),
       );

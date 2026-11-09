@@ -107,13 +107,13 @@ void main() {
       final transport = _FakeRustTransport(blockInit: true);
       final backend = createBackend(
         transport: transport,
-        timeout: const Duration(seconds: 1),
+        timeout: const Duration(milliseconds: 200),
       );
 
       // rustTransport.start() itself has no deadline of its own: a native init
       // that never returns must still fail the launch instead of spinning.
       await expectLater(
-        backend.start().timeout(const Duration(seconds: 5)),
+        backend.start().timeout(const Duration(seconds: 3)),
         throwsA(
           isA<StateError>().having(
             (error) => error.message.toString(),

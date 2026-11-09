@@ -12,7 +12,6 @@ import 'app_log.dart';
 abstract interface class SecureKeyStorage {
   Future<String?> read(String key);
   Future<void> write(String key, String value);
-  Future<void> delete(String key);
 }
 
 /// Production backend: `flutter_secure_storage` (Android Keystore /
@@ -41,9 +40,6 @@ class FlutterSecureKeyStorage implements SecureKeyStorage {
   @override
   Future<void> write(String key, String value) =>
       _storage.write(key: key, value: value);
-
-  @override
-  Future<void> delete(String key) => _storage.delete(key: key);
 }
 
 /// In-memory fake for tests and for environments without a platform channel.
@@ -56,11 +52,6 @@ class InMemorySecureKeyStorage implements SecureKeyStorage {
   @override
   Future<void> write(String key, String value) async {
     _values[key] = value;
-  }
-
-  @override
-  Future<void> delete(String key) async {
-    _values.remove(key);
   }
 }
 
@@ -143,7 +134,9 @@ class SecureKeyProvider {
         }
       }
       final fresh = Uint8List.fromList(Hive.generateSecureKey());
-      await _storage.write(name, base64Encode(fresh)).timeout(storageTimeout);
+      await _storage
+          .write(name, base64Encode(fresh))
+          .timeout(storageTimeout);
       _cache[name] = fresh;
       return fresh;
     } catch (error) {
@@ -164,7 +157,8 @@ class SecureKeyProvider {
 
   /// Device-pool file key for the P1-2 FRB handoff. Same infrastructure as
   /// the Hive key, separate key material.
-  Future<Uint8List?> devicePoolKey() => getOrCreateKey(name: devicePoolKeyName);
+  Future<Uint8List?> devicePoolKey() =>
+      getOrCreateKey(name: devicePoolKeyName);
 
   @visibleForTesting
   void resetForTest() {
