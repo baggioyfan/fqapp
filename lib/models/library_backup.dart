@@ -93,6 +93,9 @@ class LibraryBackup {
   final List<String> searchHistory;
   final int excludedLocalRecords;
 
+  /// Base64(gzip(JSON)) AI segment. Null for a v1 backup.
+  final String? aiData;
+
   /// The optional shelf-group organization (visible groups and assignments).
   /// Empty means this backup carries no groups; such a file is still written as
   /// v5 so builds without the group feature keep reading it. A non-empty
@@ -109,6 +112,7 @@ class LibraryBackup {
     required this.books,
     required this.searchHistory,
     required this.excludedLocalRecords,
+    this.aiData,
     this.groups = const {},
   });
 
@@ -288,6 +292,7 @@ class LibraryBackup {
       'searchHistory': normalizeSearchHistory(searchHistory).toList(),
       'excludedLocalRecords': excluded,
       if (portableGroups.isNotEmpty) 'groups': portableGroups,
+      'ai': ?aiData,
     });
   }
 
@@ -312,6 +317,16 @@ class LibraryBackup {
         version is! int ||
         !_supportedVersions.contains(version)) {
       throw const FormatException('不是受支持的什锦铺备份，请使用兼容版本导出的文件');
+    }
+    String? aiData;
+    if (version == 2) {
+      final ai = raw['ai'];
+      // The exporter writes v2 only when an AI section exists; a missing or
+      // non-string section is a damaged backup, not an empty AI dataset.
+      if (ai is! String || ai.isEmpty) {
+        throw const FormatException('备份中的 AI 分段缺失或无效');
+      }
+      aiData = ai;
     }
     final createdAt = _integer(raw['createdAt'], '备份时间', 8640000000000000);
     final shelf = <ShelfRecord>[];

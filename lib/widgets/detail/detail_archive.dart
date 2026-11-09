@@ -28,6 +28,7 @@ import 'package:flutter/material.dart';
 
 import '../../models/book_detail.dart';
 import '../../models/media_item.dart';
+import '../../services/app_style_tokens.dart';
 import '../home/home_media_card.dart';
 import '../wenku/src/easy_glass.dart';
 import '../wenku/wenku_ui.dart';
@@ -109,7 +110,9 @@ class DetailArchiveIdentity extends StatelessWidget {
         // cover stays tappable even when the payload has no image URL.
         onTap: () => showDetailCover(context, item),
         child: ClipRRect(
-          borderRadius: BorderRadius.circular(ArchiveDesign.coverRadius),
+          borderRadius: BorderRadius.circular(
+            AppStyleTokens.of(context).coverRadius,
+          ),
           child: SizedBox(
             width: width,
             height: height,
@@ -211,8 +214,10 @@ class DetailArchiveIdentity extends StatelessWidget {
           const SizedBox(height: 8),
           _RankLabel(label: rank),
         ],
-        const SizedBox(height: 12),
-        ArchiveCode(detailArchiveFileCode(item.id), inverse: true),
+        if (AppStyleTokens.of(context).showDecorativeCodes) ...[
+          const SizedBox(height: 12),
+          ArchiveCode(detailArchiveFileCode(item.id), inverse: true),
+        ],
       ],
     );
   }
@@ -685,8 +690,8 @@ class DetailArchiveChapterRow extends StatelessWidget {
     required this.onTap,
   });
 
-  /// Zero-based index in the whole catalogue (the displayed ordinal is +1).
-  final int index;
+  /// Zero-based global ordinal; null when only a standalone video is known.
+  final int? index;
   final String title;
   final bool current;
   final bool cached;
@@ -713,7 +718,7 @@ class DetailArchiveChapterRow extends StatelessWidget {
             SizedBox(
               width: 36,
               child: AppText(
-                (index + 1).toString().padLeft(2, '0'),
+                index == null ? '--' : (index! + 1).toString().padLeft(2, '0'),
                 style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
               ),
             ),

@@ -27,6 +27,7 @@ import '../services/player_history.dart';
 import '../services/reader_history.dart';
 import '../services/shelf_store.dart';
 import '../services/user_facing_error.dart';
+import '../services/video_catalogue.dart';
 import '../widgets/detail/detail_archive.dart';
 import '../widgets/detail/detail_description.dart';
 import '../widgets/detail/detail_directory_sheet.dart';
@@ -49,6 +50,7 @@ import 'comic_reader_page.dart';
 import 'player_page.dart';
 import 'reader_page.dart';
 import 'shuqi_detail_page.dart';
+import 'ai_reading/settings/ai_book_settings_page.dart';
 
 /// Optional decorations for the detail page (currently the review block).
 /// Kept as one injected bundle so callers that already stub the detail and
@@ -193,14 +195,9 @@ class _DetailPageState extends State<DetailPage> {
       ? '话'
       : '章';
 
-  /// Archives header title per content kind; upstream's novel-only `图书详情`.
-  String get _pageTitle => switch (widget.item.kind) {
-    'video' => '短剧详情',
-    'manju' => '漫剧详情',
-    'audio' => '听书详情',
-    'manga' => '漫画详情',
-    _ => '图书详情',
-  };
+  /// Archives header title per content kind; follows the kind labels (小说详情,
+  /// 短剧详情, etc.).
+  String get _pageTitle => '${kindLabels[widget.item.kind] ?? '小说'}详情';
 
   /// Source label on the identity block: the fqapp catalogue is 番茄's, and
   /// short dramas/manju/comics are not "小说".
@@ -218,6 +215,7 @@ class _DetailPageState extends State<DetailPage> {
     final index = _resumeIndex;
     if (index == null || _allChapters.isEmpty) return _readLabel;
     final chapter = _allChapters[index.clamp(0, _allChapters.length - 1)];
+    if (_isVideo && !chapter.hasKnownIndex) return '$_readLabel · 当前视频';
     return '$_readLabel · ${_chapterNumber(chapter.title)}';
   }
 
@@ -331,14 +329,25 @@ class _DetailPageState extends State<DetailPage> {
   /// 正常结果。
   Future<List<List<Chapter>>> _directoryWithRetry(String id) async {
     final injected = widget.directoryLoader;
-    final loader = injected ?? ApiClient.instance.directoryChapters;
     final retries = _isVideo ? 1 : 0;
     for (var attempt = 0; ; attempt++) {
       try {
+        // 短剧目录走 loadVideoCatalogue：它认得「搜索结果是单集」「离线目录
+        // 只有部分集」这些形态，直接调 directoryChapters 会把它们当成空目录。
+        var pending = _isVideo
+            ? loadVideoCatalogue(
+                seriesId: id,
+                tab: _tab,
+                episodeId: widget.item.episodeId,
+                title: widget.item.title,
+                loader: injected == null
+                    ? null
+                    : () => injected(id, tab: _tab),
+              ).then((episodes) => [episodes])
+            : (injected ?? ApiClient.instance.directoryChapters)(id, tab: _tab);
         // 时间预算只加在「短剧 + 真实请求」上：注入的 loader 由调用方（测试/
         // 预览）自己掌控，给它挂一个内部定时器只会让测试留下未完成的 timer；
         // 而小说目录没有这类几十秒的长尾。
-        var pending = loader(id, tab: _tab);
         if (injected == null && _isVideo) {
           pending = pending.timeout(_directoryBudget);
         }
@@ -393,19 +402,37 @@ class _DetailPageState extends State<DetailPage> {
     // 对着骨架屏等到目录请求超时。联网时直接返回，在线路径一次缓存都不查。
     unawaited(_resolveCachedCatalogue(generation));
 
+    final offlineVideo =
+        _isVideo &&
+        widget.detailLoader == null &&
+        widget.directoryLoader == null &&
+        !(await (widget.connectivity ?? currentConnectivity)()).online;
+    if (!mounted || generation != _loadGeneration) return;
+
     // Detail and directory are independent. Short-drama IDs sometimes do
     // not have a legacy book-detail record, but their episode list is still
     // perfectly playable. Start both before awaiting either so the page waits
     // for the slower request, not the sum of both request times.
     final detailFuture = _capture(
-      (widget.detailLoader ?? ApiClient.instance.detail)(_contentId, tab: _tab),
+      offlineVideo
+          ? Future<Map<String, dynamic>>.error(
+              const ApiException('当前离线，详情暂不可用'),
+            )
+          : (widget.detailLoader ?? ApiClient.instance.detail)(
+              _contentId,
+              tab: _tab,
+            ),
     );
     final directoryFuture = _capture(_directoryWithRetry(_contentId));
     // Reviews and cast are cosmetic: they load alongside and never gate the
     // page. Each keeps its own inline error so a failure is visible and
     // retryable in its own section.
-    final extrasFuture = _capture(_loadExtras(_contentId));
-    final seriesFuture = _isVideo
+    final extrasFuture = _capture(
+      offlineVideo
+          ? Future.value(const DetailExtras())
+          : _loadExtras(_contentId),
+    );
+    final seriesFuture = _isVideo && !offlineVideo
         ? _capture((widget.seriesLoader ?? _defaultSeries)(_contentId))
         : null;
     final detailResult = await detailFuture;
@@ -413,7 +440,7 @@ class _DetailPageState extends State<DetailPage> {
     if (!mounted || generation != _loadGeneration) return;
 
     final detail = detailResult.value;
-    var volumes = directoryResult.value ?? <List<Chapter>>[];
+    final volumes = directoryResult.value ?? <List<Chapter>>[];
 
     // A search result can represent a single episode rather than a series.
     // Keep it playable even when the pseries directory endpoint rejects that
@@ -638,59 +665,77 @@ class _DetailPageState extends State<DetailPage> {
 
   /// Upstream `_header`: archive bar with the back action and the cache entry.
   /// fqapp also keeps the audio entry here (its detail page owns 听书).
-  Widget _archiveHeader(BuildContext context) => ArchiveHeaderBar(
-    leading: GlassIconButton(
-      icon: CupertinoIcons.back,
-      label: '返回',
-      onPressed: () => Navigator.maybePop(context),
-    ),
-    title: FittedBox(
-      fit: BoxFit.scaleDown,
-      child: AppText(
-        _pageTitle,
-        key: const Key('detail_page_title'),
-        style: const TextStyle(
-          fontSize: 18,
-          height: 1.2,
-          fontWeight: FontWeight.w700,
-        ),
+  Widget _archiveHeader(BuildContext context) => LayoutBuilder(
+    builder: (context, constraints) => ArchiveHeaderBar(
+      leading: GlassIconButton(
+        icon: CupertinoIcons.back,
+        label: '返回',
+        onPressed: () => Navigator.maybePop(context),
       ),
-    ),
-    actions: [
-      if (_isBook)
-        GlassIconButton(
-          key: const Key('detail_action_听书'),
-          icon: CupertinoIcons.headphones,
-          label: '听书',
-          onPressed: _openListening,
-        ),
-      if (_isBook)
-        GlassIconButton(
-          key: const Key('detail_action_下载'),
-          icon: _downloadProgress == null
-              ? CupertinoIcons.cloud_download
-              : CupertinoIcons.arrow_down_circle,
-          label: '缓存图书',
-          onPressed: _showDownloadSheet,
-        ),
-      if (_downloadProgress case final progress?)
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 8),
-          child: SizedBox.square(
-            key: const Key('detail_download_progress'),
-            dimension: 16,
-            // Determinate: a running whole-book batch must not keep an endless
-            // animation (and pumpAndSettle) alive.
-            child: CircularProgressIndicator(
-              strokeWidth: 2,
-              value: progress.total == 0
-                  ? 0
-                  : progress.completed / progress.total,
-              color: Theme.of(context).colorScheme.onSurface,
-            ),
+      title: FittedBox(
+        fit: BoxFit.scaleDown,
+        child: AppText(
+          _pageTitle,
+          key: const Key('detail_page_title'),
+          style: const TextStyle(
+            fontSize: 18,
+            height: 1.2,
+            fontWeight: FontWeight.w700,
           ),
         ),
-    ],
+      ),
+      actions: [
+        if (_isBook && _allChapters.isNotEmpty && constraints.maxWidth >= 360)
+          GlassIconButton(
+            key: const Key('detail_action_ai'),
+            icon: CupertinoIcons.sparkles,
+            label: '本书 AI 阅读优化',
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) => AiBookSettingsPage(
+                  bookId: _contentId,
+                  title: widget.item.title,
+                  chapters: _allChapters,
+                ),
+              ),
+            ),
+          ),
+        if (_isBook)
+          GlassIconButton(
+            key: const Key('detail_action_听书'),
+            icon: CupertinoIcons.headphones,
+            label: '听书',
+            onPressed: _openListening,
+          ),
+        if (_isBook)
+          GlassIconButton(
+            key: const Key('detail_action_下载'),
+            icon: _downloadProgress == null
+                ? CupertinoIcons.cloud_download
+                : CupertinoIcons.arrow_down_circle,
+            label: '缓存图书',
+            onPressed: _showDownloadSheet,
+          ),
+        if (_downloadProgress case final progress?)
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            child: SizedBox.square(
+              key: const Key('detail_download_progress'),
+              dimension: 16,
+              // Determinate: a running whole-book batch must not keep an endless
+              // animation (and pumpAndSettle) alive.
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                value: progress.total == 0
+                    ? 0
+                    : progress.completed / progress.total,
+                color: Theme.of(context).colorScheme.onSurface,
+              ),
+            ),
+          ),
+      ],
+    ),
   );
 
   String get _shelfLabel => _inShelf ? '移出书架' : '加入书架';
@@ -893,6 +938,9 @@ class _DetailPageState extends State<DetailPage> {
 
   /// `5 卷 · 146 章` — the one place the catalogue count appears.
   String get _directoryCountLabel {
+    if (_isVideo && !hasCompleteEpisodeCatalogue(_allChapters)) {
+      return _allChapters.isEmpty ? '暂无目录' : '完整目录暂不可用';
+    }
     final volumes = _volumes.where((volume) => volume.title.isNotEmpty).length;
     return '${volumes > 0 ? '$volumes 卷 · ' : ''}${_allChapters.length} $_chapterUnit';
   }
@@ -901,7 +949,11 @@ class _DetailPageState extends State<DetailPage> {
   /// ported heading; upstream's separate resume box would duplicate it.
   Widget? get _archiveProgress {
     final index = _resumeIndex;
-    if (index == null || _allChapters.isEmpty) return null;
+    if (index == null ||
+        _allChapters.isEmpty ||
+        (_isVideo && !hasCompleteEpisodeCatalogue(_allChapters))) {
+      return null;
+    }
     final number = (index + 1).clamp(1, _allChapters.length);
     final percent = (number / _allChapters.length * 100).round();
     final time = _resumeTimeLabel();
@@ -935,7 +987,7 @@ class _DetailPageState extends State<DetailPage> {
     final chapter = _allChapters[index];
     return DetailArchiveChapterRow(
       key: ValueKey('detail-directory-entry-$index'),
-      index: index,
+      index: chapter.hasKnownIndex ? index : null,
       title: chapter.title,
       current: _resumeIndex == index,
       cached: _cachedChapterIds.contains(chapter.itemId),

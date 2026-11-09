@@ -46,13 +46,6 @@ class ReaderParagraphMenu extends StatelessWidget {
   /// The bar floats 8dp away from the anchor (upstream `anchorAbove - 8`).
   static const _arrowHeight = 8.0;
 
-  static const _radius = 22.0;
-
-  /// Day tint stays the shared milk glass; night uses the reader's near-black
-  /// sheet so the white labels keep their contrast.
-  static const _barColor = Color(0xFFFEFDF8);
-  static const _barColorDark = Color(0xFF1C1C1C);
-
   static const _margin = 10.0;
 
   final bool underlined;
@@ -80,8 +73,6 @@ class ReaderParagraphMenu extends StatelessWidget {
     this.paragraphScoped = true,
     this.belowAnchor = true,
   });
-
-  Color get _tint => isDark ? _barColorDark : _barColor;
 
   /// Number of items the bar will render; the caller sizes the anchor with it.
   static const int itemCount = 2;
@@ -157,7 +148,7 @@ class ReaderParagraphMenu extends StatelessWidget {
                 : ReaderParagraphAction.underline,
           ),
         ),
-      ],
+      ),
     ),
   );
 }

@@ -122,6 +122,18 @@ extension _ReaderPageListeningLaunch on _ReaderPageState {
         initialContent: content,
         replacementSnapshot: snapshot,
         replacementStore: _replacementStore,
+        displayResolver: (content, index) async {
+          final target = widget.chapters[index];
+          final view = await AiReadingController.instance.viewFor(
+            bookId: widget.bookId,
+            chapterId: target.itemId,
+            chapterTitle: target.title,
+            content: content,
+            customSnapshot: snapshot,
+            temporaryOriginal: _aiTemporaryOriginal,
+          );
+          return view.composition.replacement;
+        },
         startOffset: offset,
         localOnly: widget.localOnly,
         textLoader: widget.chapterLoader,
@@ -146,6 +158,7 @@ extension _ReaderPageListeningLaunch on _ReaderPageState {
   ///
   /// 只有引擎两项：起点固定是当前页第一段，不再给「从本页播放」这种第二轴。
   Future<int?> _showListeningSourceSheet() {
+    _readerPanelOpen = true;
     final preset = _effectivePreset;
     return showModalBottomSheet<int>(
       context: context,
@@ -180,7 +193,7 @@ extension _ReaderPageListeningLaunch on _ReaderPageState {
     final paragraphAnchored = textId != null;
     if (_openingListening) return;
     if (_readerAudioUnavailable) {
-      _showMessage('本书暂无可用听书资源，可在设置 → 更多设置 → 听书方式中选择系统朗读');
+      _showMessage('本书暂无可用听书资源，可在更多阅读操作 → 阅读设置 → 听书 → 听书方式中选择系统朗读');
       return;
     }
     _setState(() => _openingListening = true);
@@ -285,6 +298,8 @@ extension _ReaderPageListeningLaunch on _ReaderPageState {
         historyStore: widget.readerStore,
       );
       if (openPage) {
+        _readerPanelOpen = false;
+        _syncSystemBars();
         // 「听书」：跳转听书详情页。会话由 scope 持有，页面只是视图。
         await Navigator.of(
           context,

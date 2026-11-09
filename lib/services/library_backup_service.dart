@@ -4,6 +4,8 @@ import 'dart:isolate';
 import 'package:flutter/services.dart';
 
 import '../models/library_backup.dart';
+import 'ai_reading/ai_backup.dart';
+import 'ai_reading/ai_controller.dart';
 import 'library_store.dart';
 import 'search_history_store.dart';
 import 'shelf_group_store.dart';
@@ -12,7 +14,14 @@ import 'shelf_store.dart';
 class LibraryBackupService {
   static const _channel = AppMethodChannel('fqapp/library_backup');
 
-  Future<LibraryBackup> capture() async {
+  AiBackupRestoreResult? lastAiRestore;
+  String? lastAiExportNote;
+
+  Future<LibraryBackup> capture({
+    bool includeAi = true,
+    String? aiBookId,
+    bool compactAi = false,
+  }) async {
     final library = LibraryStore.instance;
     final shelfStore = ShelfStore.instance;
     if (!library.isInitialized || !shelfStore.isReady) {
@@ -31,7 +40,7 @@ class LibraryBackupService {
     final groups = ShelfGroupStore.instance.isReady
         ? ShelfGroupStore.instance.backupOrganization()
         : const <String, dynamic>{};
-    return Isolate.run(
+    Future<LibraryBackup> build(String? data) => Isolate.run(
       () => LibraryBackup.capture(
         shelf: shelf,
         shelfRemoved: shelfRemoved,
@@ -43,6 +52,44 @@ class LibraryBackupService {
         groups: groups,
       ),
     );
+
+    var backup = await build(aiData);
+    try {
+      backup.encode();
+      return backup;
+    } on FormatException {
+      if (!includeAi || aiData == null) rethrow;
+      if (!compactAi) {
+        // Optional trial rows are the first thing to drop. Required feedback,
+        // protections and prompts are never removed silently.
+        aiData = await AiBackupService.instance.encode(
+          bookId: aiBookId,
+          includeTrialDetails: false,
+        );
+        backup = await build(aiData);
+        try {
+          backup.encode();
+          lastAiExportNote = '备份超过 16 MB，已省略试验明细；反馈、保护和提示词仍完整。';
+          return backup;
+        } on FormatException {
+          // fall through to the explicit failure below
+        }
+      }
+      throw const FormatException(
+        'AI 数据仍超过 16 MB。请使用「按书导出 AI 资产」，或先清理部分历史后重试；'
+        '不会生成缺少必需分段的备份。',
+      );
+    }
+  }
+
+  Future<Set<String>> aiBookIds() =>
+      AiBackupService.instance.bookIdsWithAssets();
+
+  Future<AiBackupRestoreResult?> restoreAi(LibraryBackup backup) async {
+    final ai = backup.aiData;
+    if (ai == null || ai.isEmpty) return null;
+    await AiReadingController.instance.init();
+    return AiBackupService.instance.decodeAndRestore(ai);
   }
 
   /// 只取进度那一段，给热路径分片用。
@@ -115,6 +162,14 @@ class LibraryBackupService {
     if (!LibraryStore.instance.isInitialized || !ShelfStore.instance.isReady) {
       throw StateError('本机数据尚未初始化');
     }
+    // Validate and pre-merge the AI section before touching shelf/history.
+    // A malformed AI blob must not leave a half-restored bookshelf behind.
+    AiBackupRestorePlan? aiPlan;
+    final ai = backup.aiData;
+    if (ai != null && ai.isNotEmpty) {
+      await AiReadingController.instance.init();
+      aiPlan = await AiBackupService.instance.prepareEncoded(ai);
+    }
     final groupStore = ShelfGroupStore.instance;
     // A backup that carries groups cannot be restored into a store that is
     // not ready; refuse before any write so a retry stays idempotent.
@@ -140,6 +195,9 @@ class LibraryBackupService {
     final searchHistory = await SearchHistoryStore.instance.merge(
       backup.searchHistory,
     );
+    lastAiRestore = aiPlan == null
+        ? null
+        : await AiBackupService.instance.commit(aiPlan);
     return (
       shelf: shelf,
       history: library.history,

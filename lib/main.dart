@@ -23,6 +23,9 @@ import 'pages/library_page.dart';
 import 'pages/mine_page.dart';
 import 'services/app_log.dart';
 import 'services/app_theme.dart';
+import 'services/app_theme_style.dart';
+import 'services/api_client.dart';
+import 'services/ai_reading/ai_controller.dart';
 import 'services/audio_download_store.dart';
 import 'services/audio_floating_routes.dart';
 import 'services/drama_cache_preferences.dart';
@@ -190,6 +193,8 @@ Future<void> _initializeLocalData() async {
     optional(HiveDramaDownloadStore.instance.warmUp),
     // 听书音频离线记录箱：与短剧箱分开，同样只在就绪时才查离线命中。
     optional(HiveAudioDownloadStore.instance.warmUp),
+    // AI 设置/缓存/反馈箱：失败只让 AI 功能退化，不能拖住阅读。
+    optional(AiReadingController.instance.init),
   ]);
   // 听书后台播放开关：异步读取 SharedPreferences，失败退化为默认开启。
   unawaited(AudioPreferences.instance.load());
@@ -223,6 +228,7 @@ Future<void> _initializeLocalData() async {
   // 否则广播到达时 Dart 侧还没有处理函数，原生侧只能按“未处理”回。
   FairMemoryService.instance.init();
   final sp = await SharedPreferences.getInstance();
+  await AppThemeStyleStore.instance.load();
   // Note: Optional preference schemas cannot block local data startup; see
   // .agents/notes/implemented/bug-fix/2026-09-17-persistent-data-and-web-cancellation.md.
   final savedTheme = sp.get(themeModeKey);
@@ -333,69 +339,6 @@ class _FqAppState extends State<FqApp> {
                     backendStarter: BackendService.instance.start,
                     child: const RootShell(),
                   ),
-                );
-              },
-            );
-          },
-        );
-      },
-    );
-  }
-
-  ThemeData _theme(
-    Brightness brightness, {
-    bool eink = false,
-    bool oled = false,
-  }) => AppTheme.createTheme(brightness, einkMode: eink, oledMode: oled);
-}
-
-/// Opens local data before any page can access LibraryStore's boxes. Failed
-/// initialization is retryable without clearing or replacing the user's data.
-/// See .agents/notes/implemented/bug-fix/2026-09-17-reviewed-runtime-boundaries.md.
-///
-/// When [backendStarter] is provided, the backend starts concurrently with
-/// local-data init instead of waiting for it (the two chains are independent:
-/// the backend only needs the asset bundle + app dir, never Hive/SharedPrefs
-/// stores). The backend future is deliberately NOT awaited here: RootShell
-/// awaits the same shared future (BackendService.start is idempotent) and
-/// owns backend-error UI. When null (widget tests), no backend starts here.
-class AppBootstrap extends StatefulWidget {
-  final Widget child;
-  final Future<void> Function()? initializer;
-  final Future<void> Function()? backendStarter;
-
-  const AppBootstrap({
-    super.key,
-    required this.child,
-    this.initializer,
-    this.backendStarter,
-  });
-
-  @override
-  State<AppBootstrap> createState() => _AppBootstrapState();
-}
-
-class _AppBootstrapState extends State<AppBootstrap> {
-  bool _initializing = false;
-  bool _ready = false;
-  bool _failed = false;
-  Future<void>? _backendFuture;
-
-  @override
-  void initState() {
-    super.initState();
-    _initialize();
-  }
-
-  Future<void> _initialize() async {
-    if (_initializing || _ready) return;
-    setState(() {
-      _initializing = true;
-      _failed = false;
-    });
-    // Start the backend before awaiting local data (see class doc): the
-    // two chains run concurrently; a retry must not start it twice.
-    _backendFuture ??= widget.backendStarter?.call();
     // Attach a no-op error handler so a backend failure is never reported
     // as an unhandled async error if RootShell never mounts to await the
     // same future (e.g. local-data init keeps failing). RootShell awaiting
@@ -708,7 +651,7 @@ class _RootShellState extends State<RootShell> with WidgetsBindingObserver {
           return LazyIndexedStack(
             index: index,
             children: [
-              const HomePage(),
+              HomePage(cueLoader: ApiClient.instance.searchCue),
               const DramaPage(),
               LibraryPage(
                 onBrowse: () => desktopTab.value = 0,
@@ -762,7 +705,10 @@ class _RootShellState extends State<RootShell> with WidgetsBindingObserver {
         child: LazyIndexedStack(
           index: _index,
           children: [
-            HomePage(scrollController: _homeScroll),
+            HomePage(
+              scrollController: _homeScroll,
+              cueLoader: ApiClient.instance.searchCue,
+            ),
             // iOS 首版没有原生播放器实现：把短剧页换成「暂不支持」占位，
             // 避免进入播放页时触发缺失的 fqapp/native_player 通道。
             if (supportsVideoPlayback)

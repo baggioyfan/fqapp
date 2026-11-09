@@ -31,6 +31,7 @@ import '../services/native_player.dart';
 import '../services/webdav_auto_sync.dart';
 import '../services/playback_issue.dart';
 import '../services/player_history.dart';
+import '../services/video_catalogue.dart';
 import '../services/player_layout_preferences.dart';
 import '../services/player_load_diagnostics.dart';
 import '../services/player_preferences.dart';
@@ -384,11 +385,13 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       _seriesStatus = status;
       _seriesTitle = series.title;
       _seriesCover = series.cover;
-      _episodeLabel = seriesEpisodeLabel(
-        status: series.status,
-        count: episodes,
-        currentIndex: _index,
-      );
+      _episodeLabel = !hasCompleteEpisodeCatalogue(widget.eps)
+          ? '完整目录暂不可用'
+          : seriesEpisodeLabel(
+              status: series.status,
+              count: episodes,
+              currentIndex: _index,
+            );
       _commentCount = series.commentCount;
       _originalBook = book == null
           ? null
@@ -1245,6 +1248,8 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   }
 
   Future<void> _autoCacheNext() async {
+    // 目录不完整时「下一集」不可信：拿到的 ahead 序号可能落在别的集上。
+    if (!hasCompleteEpisodeCatalogue(widget.eps)) return;
     final index = _index;
     final prefs = DramaCachePreferences.instance;
     final ahead = prefs.ahead.value;
@@ -1301,6 +1306,8 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       final summaries = await store.dramas();
       for (final summary in summaries) {
         if (summary.drama.id != widget.bookId) continue;
+        // 目录不完整时 order 也不完整，按它判定集位置会误伤别的集。
+        if (!hasCompleteEpisodeCatalogue(summary.drama.episodes)) continue;
         // 集记录里的 index 是「入队时的相对序号」，不能当全集位置用；
         // 目录 `drama.episodes` 的顺序才是权威的。
         final order = {
@@ -1643,6 +1650,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     };
     _loadTrace?.fail(errorCode: errorCode, httpStatusCode: httpStatusCode);
     _sources.invalidate(widget.eps[_index].itemId);
+    if (error is! OfflineEpisodeUnavailable && _retrySilently()) return;
     _prefetchTimer?.cancel();
     _prefetchTimer = null;
     ++_loadGeneration;
@@ -1869,7 +1877,9 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       'seriesId': widget.bookId,
       'episodeId': widget.eps[index].itemId,
       'chapterId': widget.eps[index].itemId,
-      'episode': index,
+      // 目录序号未知时不写 episode：写进去等于告诉别的设备「这是第 N 集」，
+      // 换机续播会跳到错集。身份与秒数仍然照常往返。
+      if (widget.eps[index].hasKnownIndex) 'episode': index,
       'progress': durationMs > 0 ? positionMs / durationMs : 0.0,
       'position': positionMs / 1000,
       'duration': durationMs / 1000,
@@ -2210,7 +2220,11 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
         if (_error == null && (waiting || _player!.buffering))
           PlayerLoadingFeedback(
             key: ValueKey('player-loading-$generation'),
-            label: waiting ? '正在加载第 ${_index + 1} 集' : null,
+            label: waiting
+                ? widget.eps[_index].hasKnownIndex
+                      ? '正在加载第 ${_index + 1} 集'
+                      : '正在加载当前视频'
+                : null,
             onRetry: retry,
           ),
       ],
