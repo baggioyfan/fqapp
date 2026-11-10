@@ -43,6 +43,9 @@ class _ReaderBrightnessHudState extends State<ReaderBrightnessHud> {
     if (initial != null) {
       _last = initial.clamp(0.0, 1.0);
       _visible = true;
+      // 挂载时就非空（页面重建、浮层被重新插入）也必须自己淡出：这里只设
+      // `_visible` 不排计时，浮层会一直挡着正文，直到下一次手势来救。
+      _scheduleHide();
     }
   }
 
@@ -61,6 +64,13 @@ class _ReaderBrightnessHudState extends State<ReaderBrightnessHud> {
     super.dispose();
   }
 
+  void _scheduleHide() {
+    _hideTimer?.cancel();
+    _hideTimer = Timer(widget.autoHide, () {
+      if (mounted) setState(() => _visible = false);
+    });
+  }
+
   void _onValue() {
     final level = widget.value.value;
     if (level == null) {
@@ -69,10 +79,7 @@ class _ReaderBrightnessHudState extends State<ReaderBrightnessHud> {
       if (mounted && _visible) setState(() => _visible = false);
       return;
     }
-    _hideTimer?.cancel();
-    _hideTimer = Timer(widget.autoHide, () {
-      if (mounted) setState(() => _visible = false);
-    });
+    _scheduleHide();
     if (!mounted) return;
     setState(() {
       _last = level.clamp(0.0, 1.0);

@@ -80,23 +80,12 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
-  testWidgets('浮层松手后自行淡出', (tester) async {
-    final value = ValueNotifier<double?>(.6);
+  testWidgets('浮层收到亮度后自行淡出', (tester) async {
+    final value = ValueNotifier<double?>(null);
     addTearDown(value.dispose);
-    await tester.pumpWidget(
-      MaterialApp(
-        home: Stack(
-          children: [
-            Positioned.fill(
-              child: ReaderBrightnessHud(
-                value: value,
-                autoHide: const Duration(milliseconds: 300),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
+    await _mountHud(tester, value);
+
+    value.value = .6;
     await tester.pump();
 
     expect(find.text('60%'), findsOneWidget);
@@ -111,9 +100,47 @@ void main() {
 
     await tester.pumpWidget(const SizedBox.shrink());
   });
+
+  testWidgets('挂载时亮度已非空，浮层同样会自己淡出', (tester) async {
+    // 回归：initState 里只设「可见」不排计时，页面重建后浮层会永久留着。
+    final value = ValueNotifier<double?>(.6);
+    addTearDown(value.dispose);
+    await _mountHud(tester, value);
+
+    expect(find.text('60%'), findsOneWidget);
+
+    await tester.pump(const Duration(milliseconds: 320));
+    await tester.pump(const Duration(milliseconds: 200));
+    expect(
+      tester.widget<AnimatedOpacity>(find.byType(AnimatedOpacity)).opacity,
+      0,
+      reason: '挂载路径也要排自动隐藏，否则浮层永远消不掉',
+    );
+
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
 }
 
 final _surface = find.byKey(const ValueKey('reader-page-surface'));
+
+/// 单独挂浮层：不牵整页，只钉「显示 / 自动隐藏」这一层时序。
+Future<void> _mountHud(WidgetTester tester, ValueNotifier<double?> value) async {
+  await tester.pumpWidget(
+    MaterialApp(
+      home: Stack(
+        children: [
+          Positioned.fill(
+            child: ReaderBrightnessHud(
+              value: value,
+              autoHide: const Duration(milliseconds: 300),
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
+  await tester.pump();
+}
 
 Offset _surfaceCenter(WidgetTester tester) => tester.getRect(_surface).center;
 
