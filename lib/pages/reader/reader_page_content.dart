@@ -93,6 +93,12 @@ extension _ReaderPageContent on _ReaderPageState {
             onDoubleTapDown: _doubleTapArmed
                 ? (details) => _seekToTappedSentence(details.globalPosition)
                 : null,
+            // 上下滑调亮度：只挂翻页模式 —— 滚动模式下上下滑是滚正文，
+            // 抢过来就读不了书了。没有原生桥（桌面）时手势自己会空转。
+            onVerticalDragStart: _paged ? _onBrightnessDragStart : null,
+            onVerticalDragUpdate: _paged ? _onBrightnessDragUpdate : null,
+            onVerticalDragEnd: _paged ? _onBrightnessDragEnd : null,
+            onVerticalDragCancel: _paged ? _onBrightnessDragCancel : null,
             child: Stack(
               key: _selectionOverlayKey,
               children: [

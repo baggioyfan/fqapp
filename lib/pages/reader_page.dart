@@ -52,6 +52,7 @@ import '../services/system_tts.dart';
 import '../services/webdav_auto_sync.dart';
 import '../widgets/chapter_cache_sheet.dart';
 import '../widgets/reader/reader_appearance_sheet.dart';
+import '../widgets/reader/reader_brightness_hud.dart';
 import '../widgets/reader/reader_bubble.dart';
 import '../widgets/reader/reader_chapter_layout.dart';
 import '../widgets/reader/reader_joined_scroll.dart';
@@ -75,6 +76,7 @@ import 'audio_page.dart';
 import 'text_replacement_page.dart';
 
 part 'reader/reader_page_fields.dart';
+part 'reader/reader_page_brightness.dart';
 part 'reader/reader_page_listening.dart';
 part 'reader/reader_page_listening_launch.dart';
 part 'reader/reader_page_selection.dart';
@@ -466,6 +468,7 @@ class _ReaderPageState extends State<ReaderPage>
       _onEinkFlashRequest,
     );
     _einkFlashTimer?.cancel();
+    _brightnessHud.dispose();
     _scrollController.dispose();
     super.dispose();
   }

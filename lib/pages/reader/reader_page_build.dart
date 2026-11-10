@@ -201,6 +201,10 @@ extension _ReaderPageBuild on _ReaderPageState {
                     ],
                   ),
                 ),
+                if (_paged)
+                  Positioned.fill(
+                    child: ReaderBrightnessHud(value: _brightnessHud),
+                  ),
                 if (!_settingsPreviewActive && !_progressPreviewActive)
                   ReaderEdgeBlur(animation: _chrome),
                 _menuEdge(top: true, child: _buildToolbar(preset)),

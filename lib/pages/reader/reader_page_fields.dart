@@ -160,6 +160,18 @@ mixin _ReaderPageFields on State<ReaderPage> {
   bool _preferencesDirty = false;
   int _deviceGeneration = 0;
   int _brightnessGeneration = 0;
+
+  /// 上下滑调亮度的浮层值（0.02–1），`null` = 隐藏；由手势直接喂给
+  /// [ReaderBrightnessHud]，不经过 setState —— 整章重排太重，拖动跟不上。
+  final ValueNotifier<double?> _brightnessHud = ValueNotifier<double?>(null);
+
+  /// 这一轮亮度手势的起手亮度与起手 Y；null = 没在拖动。
+  double? _brightnessGestureBase;
+  double? _brightnessGestureStartY;
+
+  /// 上一帧已经下发给原生侧的亮度，用于 1% 节流。
+  double? _brightnessGestureSent;
+
   int _fontGeneration = 0;
   String? _fontFamily;
   final _viewportKey = GlobalKey();
