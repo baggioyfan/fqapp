@@ -14,6 +14,7 @@ import '../models/media_item.dart';
 import '../models/playlet_comment.dart';
 import '../models/series_detail.dart';
 import '../services/api_client.dart';
+import '../services/app_breakpoints.dart';
 import '../services/backend_transport.dart';
 import '../services/drama_channel_preferences.dart';
 import '../services/drama_mute_preferences.dart';
@@ -1739,7 +1740,7 @@ class _DramaPageState extends ConsumerState<DramaPage>
 
   /// 瀑布格的惰性副本：同样的列数、间距与卡片，但不滚动、不通知、不点击。
   Widget _previewGrid(_ChannelSnapshot snapshot) {
-    final wide = isWindowsDesktop || MediaQuery.sizeOf(context).width >= 840;
+    final wide = appIsWideLayout(context);
     final columns = wide ? dramaDesktopColumns(context) : snapshot.columns;
     return GridView.builder(
       // 预览跟着当前内容一起被 Transform 平移，自己不该能滚。
@@ -1815,7 +1816,7 @@ class _DramaPageState extends ConsumerState<DramaPage>
       }
       return _GridMessage(key: Key('$gridKey.empty'), message: '暂无内容');
     }
-    final wide = isWindowsDesktop || MediaQuery.sizeOf(context).width >= 840;
+    final wide = appIsWideLayout(context);
     if (wide) {
       columns = dramaDesktopColumns(context);
     }
@@ -3997,7 +3998,7 @@ class _InlineVideoLayer extends StatelessWidget {
     return LayoutBuilder(
       builder: (context, constraints) {
         final window = constraints.biggest;
-        final wide = isWindowsDesktop || window.width >= 840;
+        final wide = appIsWideLayout(context, width: window.width);
         final cacheWidth =
             (window.width * MediaQuery.devicePixelRatioOf(context)).ceil();
         return AnimatedBuilder(
@@ -4699,7 +4700,7 @@ class _LocalListState extends State<_LocalList> {
           // 桌面端跟看剧/漫剧同口径铺列（[dramaDesktopColumns]，行距也放到
           // 16）；手机保持官方的双列 8dp。原先这里恒写 2 列，桌面上两列会被
           // 拉到近 700dp 宽，和隔壁频道完全两种排版。
-          final desktopGrid = isWindowsDesktop || MediaQuery.sizeOf(context).width >= 840;
+          final desktopGrid = appIsWideLayout(context);
           final columns = desktopGrid ? dramaDesktopColumns(context) : 3;
           final body = filtered.isEmpty
               ? empty

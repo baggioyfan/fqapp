@@ -5,6 +5,7 @@ import 'package:flutter_lucide/flutter_lucide.dart';
 
 import '../models/rank.dart';
 import '../services/api_client.dart';
+import '../services/app_breakpoints.dart';
 import '../services/rank_cache.dart';
 import '../services/user_facing_error.dart';
 import '../widgets/home/home_back_button.dart';
@@ -264,8 +265,9 @@ class _RankPageState extends State<RankPage> {
       ),
       body: Align(
         alignment: Alignment.topCenter,
+        // 榜单固定阅读宽度（桌面也压），与全站宽屏断点同一个数。
         child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 840),
+          constraints: const BoxConstraints(maxWidth: appWideBreakpoint),
           child: Column(
             children: [
               if (_catalog.tabs.isNotEmpty)

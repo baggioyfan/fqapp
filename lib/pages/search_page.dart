@@ -9,8 +9,8 @@ import '../models/media_item.dart';
 import '../models/media_id.dart';
 import '../models/search_discovery.dart';
 import '../services/api_client.dart';
+import '../services/app_breakpoints.dart';
 import '../services/backend_transport.dart';
-import '../services/desktop_platform.dart';
 import '../services/search_history_store.dart';
 import '../services/user_facing_error.dart';
 import '../widgets/search/search_discovery.dart';
@@ -654,7 +654,9 @@ class _SearchPageState extends State<SearchPage> {
             alignment: Alignment.topCenter,
             child: ConstrainedBox(
               constraints: BoxConstraints(
-                maxWidth: isWindowsDesktop ? double.infinity : 840,
+                maxWidth: appIsWideLayout(context)
+                    ? double.infinity
+                    : appWideBreakpoint,
               ),
               // Upstream pads the whole search plane by the tab height, so
               // the scroll viewport starts below the search capsule and rows
@@ -683,7 +685,9 @@ class _SearchPageState extends State<SearchPage> {
     alignment: Alignment.topCenter,
     child: ConstrainedBox(
       constraints: BoxConstraints(
-        maxWidth: isWindowsDesktop ? double.infinity : 840,
+        maxWidth: appIsWideLayout(context)
+            ? double.infinity
+            : appWideBreakpoint,
       ),
       child: Column(
         children: [

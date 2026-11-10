@@ -112,9 +112,10 @@ mixin _LibraryClassicViews on _LibraryClassicChrome {
   Widget _classicGrid(List<_ShelfEntry> entries) => LayoutBuilder(
     builder: (context, constraints) {
       // 宽屏按可用宽度排：每格约 170dp，夹在 3–10 列；窄屏（手机）仍是固定 3 列。
-      // 用宽度而非平台判断 —— isDesktopHost 只认 Windows/macOS，会把 Android
-      // 平板漏掉（平板一直是 3 列）。840 与短剧页、首页的宽屏口径一致。
-      final columns = constraints.maxWidth >= 840
+      // 「是不是宽屏」走全站统一口径 appIsWideLayout（窗口宽度 ≥ 840 或 Windows
+      // 桌面），与首页、短剧页一致 —— 之前用 isDesktopHost 只认 Windows/macOS，
+      // Android 平板书架恒 3 列，而隔壁短剧页早已按宽度铺开。
+      final columns = appIsWideLayout(context)
           ? (constraints.maxWidth / 170).floor().clamp(3, 10)
           : ShelfTokens.gridColumns;
       return GridView.builder(
