@@ -111,10 +111,10 @@ mixin _LibraryClassicViews on _LibraryClassicChrome {
 
   Widget _classicGrid(List<_ShelfEntry> entries) => LayoutBuilder(
     builder: (context, constraints) {
-      // 桌面按可用宽度排：每格约 170dp，夹在 3–10 列。手机端仍是固定 3 列。
-      // 这段是旧版（master）原有口径，合并后取经典视图时丢了，导致桌面窗口
-      // 再宽也只排 3 列。
-      final columns = isDesktopHost
+      // 宽屏按可用宽度排：每格约 170dp，夹在 3–10 列；窄屏（手机）仍是固定 3 列。
+      // 用宽度而非平台判断 —— isDesktopHost 只认 Windows/macOS，会把 Android
+      // 平板漏掉（平板一直是 3 列）。840 与短剧页、首页的宽屏口径一致。
+      final columns = constraints.maxWidth >= 840
           ? (constraints.maxWidth / 170).floor().clamp(3, 10)
           : ShelfTokens.gridColumns;
       return GridView.builder(
