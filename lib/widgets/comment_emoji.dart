@@ -117,19 +117,25 @@ class CommentEmojiText extends StatelessWidget {
     required this.style,
     this.maxLines,
     this.overflow,
+    this.textAlign,
   });
 
   final String text;
   final TextStyle style;
-
-  /// 长书评列表里按行截断；空行等默认行为交给 [Text] 自己。
   final int? maxLines;
   final TextOverflow? overflow;
+  final TextAlign? textAlign;
 
   @override
   Widget build(BuildContext context) {
     if (!hasCommentEmoji(text)) {
-      return Text(text, style: style, maxLines: maxLines, overflow: overflow);
+      return Text(
+        text,
+        style: style,
+        maxLines: maxLines,
+        overflow: overflow,
+        textAlign: textAlign,
+      );
     }
     return Text.rich(
       TextSpan(
@@ -138,6 +144,7 @@ class CommentEmojiText extends StatelessWidget {
       ),
       maxLines: maxLines,
       overflow: overflow,
+      textAlign: textAlign,
     );
   }
 }
