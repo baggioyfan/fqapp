@@ -119,8 +119,8 @@ class BookTxtExportState {
 /// the network, assembled in the same shape the backend's `/api/download`
 /// serves (`# 标题` line, body, blank line).
 ///
-/// Nothing is written until the last chapter is in hand: a cancelled or failed
-/// export must not leave a half book in Downloads that looks complete.
+/// Nothing is written until the last chapter is in hand. Cancellation is only
+/// available during fetching; once saving begins, the platform result wins.
 ///
 /// Chapter bodies are fetched through [chapterLoader], which production wires to
 /// `ApiClient.contentText` — the single request funnel CRIT-005 requires.
@@ -195,6 +195,14 @@ class BookTxtExport extends ValueNotifier<BookTxtExportState> {
     }
     if (!_alive(job)) return;
 
+    value = BookTxtExportState(
+      running: true,
+      writing: true,
+      completed: completed,
+      total: chapters.length,
+      failed: failed,
+    );
+    if (!_alive(job)) return;
     final ExportTarget target;
     try {
       target = await sink.saveText(
@@ -217,9 +225,10 @@ class BookTxtExport extends ValueNotifier<BookTxtExportState> {
     );
   }
 
-  /// Stops the running export. Nothing was written yet, so nothing is left
-  /// behind in Downloads.
+  /// Stops fetching before any file is written. A submitted platform write
+  /// must finish and report its actual result.
   void cancel() {
+    if (_disposed || !value.canCancel) return;
     ++_job;
     final state = value;
     value = BookTxtExportState(

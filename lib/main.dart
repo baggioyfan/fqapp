@@ -365,11 +365,17 @@ class _FqAppState extends State<FqApp> {
                                       ? Brightness.light
                                       : Brightness.dark,
                                 ),
-                        child: AudioFloatingRouteScope(
-                          routes: _audioRoutes,
-                          child: isDesktopHost
-                              ? DesktopAppFrame(child: playback)
-                              : playback,
+                        // Playback reads recent history in initState, so local
+                        // data must be ready before it or routes mount.
+                        child: AppBootstrap(
+                          backendStarter: BackendService.instance.start,
+                          initializer: _initializeData,
+                          child: AudioFloatingRouteScope(
+                            routes: _audioRoutes,
+                            child: isDesktopHost
+                                ? DesktopAppFrame(child: playback)
+                                : playback,
+                          ),
                         ),
                       ),
                     );
@@ -385,11 +391,7 @@ class _FqAppState extends State<FqApp> {
                   locale: const Locale('zh', 'CN'),
                   supportedLocales: const [Locale('zh', 'CN'), Locale('en')],
                   localizationsDelegates: GlobalMaterialLocalizations.delegates,
-                  home: AppBootstrap(
-                    backendStarter: BackendService.instance.start,
-                    initializer: _initializeData,
-                    child: const RootShell(),
-                  ),
+                  home: const RootShell(),
                 );
               },
             );
