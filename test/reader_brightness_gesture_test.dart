@@ -61,6 +61,17 @@ void main() {
     );
     expect(
       device.brightness.last,
+      greaterThan(0),
+      reason: '短距离下滑只走一段，不该一碰就掉到最暗',
+    );
+
+    // 一路拖到底：屏高六成的量程（这里 480*.6=288）之外继续下滑必须夹在下限上。
+    // 以前跌到 2% 就停，暗环境里仍然刺眼；现在要能真正压到 0（面板最暗）。
+    await tester.dragFrom(_surfaceCenter(tester), const Offset(0, 600));
+    await tester.pump();
+
+    expect(
+      device.brightness.last,
       0,
       reason: '下滑到底要能压到 0（面板最暗）：以前夹在 2%，暗环境里仍然刺眼',
     );
