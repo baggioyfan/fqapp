@@ -94,7 +94,10 @@ extension _ReaderPageListeningLaunch on _ReaderPageState {
       // 2026-11-02 修复：11-01 合并上游时这段取了上游版本（只认入参 textId），
       // 于是菜单进来的系统朗读一路 null 回落到 offset 0，也就是章节开头。
       // 页锚点在函数开头已经算好，这里按「显式传入优先、否则用页首段」取。
-      final ttsTextId = textId ?? anchor.textId;
+      final ttsTextId = resolveListeningTextId(
+        explicit: textId,
+        pageAnchor: anchor.textId,
+      );
       var offset = 0;
       if (ttsTextId != null) {
         final body = replacement.bodyBlocks(chapter.title);
@@ -333,18 +336,24 @@ extension _ReaderPageListeningLaunch on _ReaderPageState {
   ({int? startMs, int? textId}) _currentPageAnchor() {
     final layout = _chapterLayout;
     if (layout == null || layout.pages.isEmpty) {
-      return (startMs: null, textId: null);
+      return emptyListeningAnchor;
     }
     final page = layout.pages[_pageIndex.clamp(0, layout.pages.length - 1)];
-    ({int? startMs, int? textId})? carried;
-    for (final fragment in page.fragments) {
-      final block = fragment.block;
-      if (block.isTitle || block.isImage || block.text.isEmpty) continue;
-      final anchor = (startMs: block.startMs, textId: block.textId);
-      if (fragment.firstLine == 0) return anchor;
-      carried ??= anchor;
-    }
-    return carried ?? (startMs: null, textId: null);
+    // 判定本身在 services/listening_anchor.dart：合并上游时这段被整份覆盖过
+    // （系统朗读从章首开口 / 无时间轴的书从本段听落到章首），抽出去之后
+    // test/listening_anchor_test.dart 能直接钉住它。
+    return currentPageListeningAnchor(
+      page.fragments.map(
+        (fragment) => ListeningAnchorCandidate(
+          firstLine: fragment.firstLine,
+          textId: fragment.block.textId,
+          startMs: fragment.block.startMs,
+          isEmpty: fragment.block.text.isEmpty,
+          isTitle: fragment.block.isTitle,
+          isImage: fragment.block.isImage,
+        ),
+      ),
+    );
   }
 
   /// The spoken start of the paragraph identified by [textId], plus the keys

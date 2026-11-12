@@ -30,6 +30,7 @@ import '../services/chapter_text_formatter.dart';
 import '../services/text_replacement_engine.dart';
 import '../services/text_replacement_store.dart';
 import '../services/library_store.dart';
+import '../services/listening_anchor.dart';
 import '../services/listening_session.dart';
 import '../services/reader_device.dart';
 import '../services/reader_follow_poll.dart';
