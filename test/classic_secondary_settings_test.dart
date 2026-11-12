@@ -17,6 +17,7 @@ import 'package:fqapp/pages/library_backup_page.dart';
 import 'package:fqapp/pages/log_viewer_page.dart';
 import 'package:fqapp/pages/reading_statistics_page.dart';
 import 'package:fqapp/pages/settings_page.dart';
+import 'package:fqapp/services/app_log.dart';
 import 'package:fqapp/pages/system_tts_settings_page.dart';
 import 'package:fqapp/pages/text_replacement_page.dart';
 import 'package:fqapp/services/app_theme.dart';
@@ -131,6 +132,9 @@ void main() {
   testWidgets(
     'classic log page keeps the settings AppBar and its empty state',
     (tester) async {
+      // 同一文件里前面的用例会通过代理探测往 AppLog 写条目；先清空，
+      // 让这条用例真正验证空态而不受进程级日志污染。
+      AppLog.instance.clear();
       final store = await pumpStyled(tester, const LogViewerPage());
 
       expect(find.byType(SettingsScaffold), findsOneWidget);
@@ -383,7 +387,8 @@ void main() {
 
     expect(find.byType(AppBar), findsOneWidget);
     expect(find.byType(WenkuPage), findsNothing);
-    for (final title in ['导出备份', '按书导出 AI 资产', '从备份文件恢复', '导入番茄书架']) {
+    // AI 阅读整簇不收，按书导出 AI 资产的入口随之移除。
+    for (final title in ['导出备份', '从备份文件恢复', '导入番茄书架']) {
       expect(find.text(title), findsOneWidget);
     }
     expect(find.byType(SettingsGroupCard), findsWidgets);

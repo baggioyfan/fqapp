@@ -290,6 +290,28 @@ class _LibraryBackupPageState extends State<LibraryBackupPage> {
                       color: classic ? palette.muted : scheme.onSurfaceVariant,
                     ),
                   ),
+                  const SizedBox(height: 14),
+                  SettingsStats(
+                    values: {
+                      '收藏': preview.shelf.length,
+                      '进度': preview.history.length,
+                      '已看剧集': preview.episodeCount,
+                      if (preview.groupsIncluded) ...{
+                        '分组': preview.groupCount,
+                        '归属': preview.assignmentCount,
+                      },
+                    },
+                  ),
+                  const SizedBox(height: 14),
+                  Text(
+                    preview.groupsIncluded
+                        ? '只补充缺失的收藏、进度与分组，保留本机已有分组与记录。'
+                              '已看剧集会合并，可重复导入。'
+                        : '只补充缺失的收藏与进度，保留本机已有记录。'
+                              '已看剧集会合并，可重复导入。',
+                    style: muted.copyWith(fontSize: 12),
+                  ),
+                  const SizedBox(height: 16),
                   GlassTextButton(
                     key: const ValueKey('backup-import'),
                     onPressed: enabled ? _pick : null,

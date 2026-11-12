@@ -209,7 +209,8 @@ void main() {
   });
 
   testWidgets('档案主题保持 Wenku8 顶栏与玻璃坞', (tester) async {
-    final store = AppThemeStyleStore();
+    // fork 默认 classic，这两个用例验的是档案布局与切换，显式从 archive 起始。
+    final store = AppThemeStyleStore()..value = AppThemeStyle.archive;
     addTearDown(store.dispose);
     await _mountReader(tester, store);
     await _openControls(tester);
@@ -228,7 +229,8 @@ void main() {
   });
 
   testWidgets('切换 style 保留 State、正文 pager/layout 与章内原文位置', (tester) async {
-    final store = AppThemeStyleStore();
+    // fork 默认 classic，这两个用例验的是档案布局与切换，显式从 archive 起始。
+    final store = AppThemeStyleStore()..value = AppThemeStyle.archive;
     addTearDown(store.dispose);
     final loads = <String>[];
     await _mountReader(tester, store, loads: loads);

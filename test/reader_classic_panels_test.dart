@@ -53,7 +53,7 @@ void main() {
 
   group('目录', () {
     testWidgets(
-      'classic restores search/order/status/volume rows and AI/cache',
+      'classic restores search/order/status/volume rows and cache',
       (tester) async {
         final store = await _style(AppThemeStyle.classic);
         final launched = await _launch<int>(
@@ -80,8 +80,7 @@ void main() {
         await tester.tap(find.byKey(const ValueKey('reader-volume-卷二')));
         await tester.pumpAndSettle();
         expect(find.text('暮色'), findsOneWidget);
-        // AI status and cache markers are the classic trailing labels.
-        expect(find.text('已校验'), findsOneWidget);
+        // fork 不收 AI 校对，经典目录右端只有离线缓存标记。
         expect(find.text('已缓存'), findsOneWidget);
 
         // Search penetrates the collapsed volume, including its name.
@@ -137,7 +136,7 @@ void main() {
     });
 
     for (final scale in const [1.5, 2.0]) {
-      testWidgets('directory AI/cache markers fit 320dp at ${scale}x', (
+      testWidgets('directory cache marker fits 320dp at ${scale}x', (
         tester,
       ) async {
         final store = await _style(AppThemeStyle.classic);
@@ -157,10 +156,7 @@ void main() {
         );
         await tester.pumpAndSettle();
         expect(tester.takeException(), isNull);
-        // m0 carries both markers at once; m1 AI only; m2 cache only.
-        expect(find.text('已校验'), findsOneWidget);
-        expect(find.text('失败'), findsOneWidget);
-        // m0 shows both markers, m2 shows cache only.
+        // m0 与 m2 各有缓存标记；AI 校对状态列在 fork 中不存在。
         expect(find.text('已缓存'), findsNWidgets(2));
 
         await tester.ensureVisible(
@@ -1333,11 +1329,12 @@ void main() {
       find.byKey(const ValueKey('reader-selection-glass-bar')),
       findsNothing,
     );
+    // fork 的段落条只保留能真正执行的动作：复制 / 划线。听书入口只有
+    // 工具栏那一个（起点固定为当前页第一段），长按段落不再给「从本段听」，
+    // 也没有段落级书签。
     for (final key in const [
-      'reader-action-listen',
       'reader-action-copy',
       'reader-action-underline',
-      'reader-action-bookmark',
     ]) {
       expect(
         find.byKey(ValueKey(key)).hitTestable(),

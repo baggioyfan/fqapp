@@ -268,7 +268,9 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.byType(ArchiveSection), findsNWidgets(2));
+    // 本机数据 / 云端同步 / 其他来源。上游客器端经典 UI 分支合入 WebDAV
+    // 时保留了「云端同步」分区（41fd0bc4），所以是 3 个而不是 2 个。
+    expect(find.byType(ArchiveSection), findsNWidgets(3));
     expect(find.byType(ContentPanel), findsWidgets);
     expect(find.byType(FeatureEntry), findsOneWidget);
     // The three data rows stay individually pinned: export, restore, 番茄.
