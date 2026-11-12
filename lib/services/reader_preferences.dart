@@ -345,7 +345,7 @@ class ReaderPreferences {
       showSystemStatusBar: showSystemStatusBar,
       showSystemNavigationBar: showSystemNavigationBar,
       followSystemBrightness: followSystemBrightness,
-      brightness: brightness.isFinite ? brightness.clamp(0.02, 1) : 0.5,
+      brightness: brightness.isFinite ? brightness.clamp(0, 1) : 0.5,
       fontPath: fontPath,
       fontName: fontPath.isEmpty ? '' : fontName,
       pageMode: pageMode,

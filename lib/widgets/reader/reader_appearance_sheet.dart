@@ -662,7 +662,7 @@ class _ReaderAppearanceSheetState
         value: value.followSystemBrightness
             ? widget.systemBrightness ?? value.brightness
             : value.brightness,
-        min: .02,
+        min: 0,
         max: 1,
         format: (n) => '${(n * 100).round()}%',
         preset: _displayPreset,

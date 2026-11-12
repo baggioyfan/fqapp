@@ -161,7 +161,7 @@ mixin _ReaderPageFields on State<ReaderPage> {
   int _deviceGeneration = 0;
   int _brightnessGeneration = 0;
 
-  /// 上下滑调亮度的浮层值（0.02–1），`null` = 隐藏；由手势直接喂给
+  /// 上下滑调亮度的浮层值（0–1），`null` = 隐藏；由手势直接喂给
   /// [ReaderBrightnessHud]，不经过 setState —— 整章重排太重，拖动跟不上。
   final ValueNotifier<double?> _brightnessHud = ValueNotifier<double?>(null);
 

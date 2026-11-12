@@ -8,8 +8,14 @@ import kotlin.math.roundToInt
  * 只做纯计算，不碰任何 Android 对象，便于在 JVM 单测里覆盖各 ROM 的量程差异。
  */
 object NativeGestureLevels {
-    /** 窗口亮度下限：0 等于关屏，官方播放器的手势也停在这里。 */
-    const val BRIGHTNESS_FLOOR = 0.02f
+    /**
+     * 窗口亮度下限。
+     *
+     * 0 是「本窗口最暗」，不是关屏 —— `screenBrightness` 里 **-1 才是跟随系统**，
+     * 0 只是把背光压到面板的低端，画面仍然可见。以前压在 0.02，暗环境里偏亮，
+     * 用户拉到底还刺眼，所以放开到 0（与 Dart 侧 `_readerBrightnessFloor` 同一个值）。
+     */
+    const val BRIGHTNESS_FLOOR = 0f
 
     /**
      * `Settings.System.SCREEN_BRIGHTNESS` 的原始值按面板量程归一化。

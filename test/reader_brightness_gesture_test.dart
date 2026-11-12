@@ -61,8 +61,8 @@ void main() {
     );
     expect(
       device.brightness.last,
-      greaterThanOrEqualTo(.02),
-      reason: '不能把窗口亮度压到 0（等于关屏）',
+      0,
+      reason: '下滑到底要能压到 0（面板最暗）：以前夹在 2%，暗环境里仍然刺眼',
     );
 
     await tester.pumpWidget(const SizedBox.shrink());

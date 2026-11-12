@@ -1299,9 +1299,9 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
   void _applyGestureLevel() {
     final base = _gestureBase;
     if (base == null) return;
-    // 亮度与原生侧同一下限：窗口亮度 0 等于关屏，原生夹在 0.02，
-    // HUD 也必须从 2% 起，不能显示「0% 但画面没到最暗」。
-    final floor = _gestureKind == _GestureKind.brightness ? .02 : 0.0;
+    // 亮度与原生侧同一下限：0 是「本窗口最暗」而不是关屏（Android 上 -1 才是
+    // 跟随系统），所以 HUD 的 0% 与画面最暗是同一个点，不再像以前停在 2%。
+    const double floor = 0;
     var value = (base + _gestureDelta / _gestureHeight).clamp(floor, 1.0);
     if (_gestureKind == _GestureKind.volume && _volumeSteps > 0) {
       // 设备音量是离散档位（本机 160 档）：先把值落到真实档位，HUD 与

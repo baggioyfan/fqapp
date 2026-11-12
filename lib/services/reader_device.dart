@@ -31,7 +31,7 @@ class ReaderDeviceStatus {
           : null,
       charging: value['charging'] == true,
       systemBrightness: brightness is num && brightness.isFinite
-          ? brightness.toDouble().clamp(0.02, 1)
+          ? brightness.toDouble().clamp(0, 1)
           : null,
     );
   }

@@ -1,10 +1,15 @@
 part of '../reader_page.dart';
 
-/// 与原生侧 `NativeGestureLevels.BRIGHTNESS_FLOOR` 同一个下限：窗口亮度
-/// 0 等于关屏，浮层不能显示「0% 但画面没到最暗」。
+/// 亮度下限：**0 就是面板最暗**，不再像以前那样停在 2%。
+///
+/// 以前这里（和原生 `NativeGestureLevels.BRIGHTNESS_FLOOR`）都把下限压在
+/// 0.02，理由是「窗口亮度 0 等于关屏」。实际上 Android 的
+/// `WindowManager.LayoutParams.screenBrightness` 里 **-1 才是「跟随系统」**，
+/// 0 只是「本窗口最暗」——背光压到底，画面仍然可见（极暗环境里比 2% 更不刺眼）。
+/// 想看回正常亮度上滑即可，手势在 Flutter 层，屏幕再暗也照样响应。
 ///
 /// 放顶层而不是 extension 里：Dart 的 extension 不许声明 static 成员。
-const double _readerBrightnessFloor = .02;
+const double _readerBrightnessFloor = 0;
 
 /// 翻页模式下上下滑调亮度。
 ///

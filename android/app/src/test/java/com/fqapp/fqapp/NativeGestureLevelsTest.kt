@@ -7,7 +7,7 @@ import org.junit.Test
 class NativeGestureLevelsTest {
     @Test
     fun brightnessUsesStandardEightBitScale() {
-        assertEquals(0.02f, NativeGestureLevels.normaliseBrightness(0), 0.0001f)
+        assertEquals(0f, NativeGestureLevels.normaliseBrightness(0), 0.0001f)
         assertEquals(128f / 255f, NativeGestureLevels.normaliseBrightness(128), 0.0001f)
         assertEquals(1f, NativeGestureLevels.normaliseBrightness(255), 0.0001f)
     }
@@ -22,8 +22,9 @@ class NativeGestureLevelsTest {
     }
 
     @Test
-    fun brightnessNeverFallsBelowTheScreenOffFloor() {
-        assertEquals(0.02f, NativeGestureLevels.normaliseBrightness(-5), 0.0001f)
+    fun brightnessNeverGoesNegative() {
+        // 下限是 0（面板最暗），不是以前的 0.02；负数一律夹到最暗。
+        assertEquals(0f, NativeGestureLevels.normaliseBrightness(-5), 0.0001f)
     }
 
     @Test

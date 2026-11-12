@@ -214,7 +214,8 @@ class ReaderDevicePlugin : FlutterPlugin, ActivityAware,
                     return
                 }
                 val raw = call.argument<Number>("brightness")?.toFloat()
-                if (raw == null || !raw.isFinite() || (raw != -1f && raw !in 0.02f..1f)) {
+                // 0 是合法值（本窗口最暗）；-1 单独放行，表示跟随系统。
+                if (raw == null || !raw.isFinite() || (raw != -1f && raw !in 0f..1f)) {
                     result.error("BAD_BRIGHTNESS", "亮度值无效", null)
                     return
                 }

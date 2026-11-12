@@ -6,8 +6,8 @@ import 'package:flutter_lucide/flutter_lucide.dart';
 
 /// 阅读页「上下滑调亮度」的浮层。
 ///
-/// [value] 由手势层喂入 0.02–1 的亮度，`null` 表示这一轮手势结束；浮层收到
-/// 非空值就显示并重置自动隐藏计时，到时自己淡出。
+/// [value] 由手势层喂入 0–1 的亮度（0 = 面板最暗，不是关屏），`null` 表示这一轮
+/// 手势结束；浮层收到非空值就显示并重置自动隐藏计时，到时自己淡出。
 ///
 /// 刻意用 [ValueListenable] 而不是 setState 驱动：阅读页每次重建都要重排
 /// 整章文字，而拖动期间一秒要更新几十次，只能让浮层自己重建。
@@ -18,7 +18,7 @@ class ReaderBrightnessHud extends StatefulWidget {
     this.autoHide = const Duration(milliseconds: 900),
   });
 
-  /// 当前亮度（0.02–1）；`null` = 立即隐藏。
+  /// 当前亮度（0–1）；`null` = 立即隐藏。
   final ValueListenable<double?> value;
 
   /// 松手后多久自动淡出。

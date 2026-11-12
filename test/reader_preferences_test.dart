@@ -136,7 +136,11 @@ void main() {
     expect(restored.titleAlignment, ReaderTitleAlignment.start);
     expect(restored.showReadingInfo, isTrue);
     expect(restored.followSystemBrightness, isTrue);
-    expect(restored.brightness, 0.02);
+    expect(
+      restored.brightness,
+      0,
+      reason: '0 是合法值（面板最暗）：以前被规范化到 0.02，读回来又变亮',
+    );
     expect(restored.pageMode, ReaderPageMode.paged);
     // A wrong-typed stored value falls back to the default (on).
     expect(restored.continuousReading, isTrue);
