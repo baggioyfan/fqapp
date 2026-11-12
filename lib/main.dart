@@ -206,7 +206,8 @@ Future<void> _loadLocalData() async {
     optional(HiveAudioDownloadStore.instance.warmUp),
   ]);
   // WebDAV 为可选功能；网络或安全存储故障不阻塞本机阅读。
-  unawaited(optional(WebdavSyncService.instance.init));
+  // fork 的同步由 WebdavAutoSync 单例承担（见退出路径的 flush），
+  // WebdavSyncService 是按需创建的服务，没有启动期的 init。
   // 听书后台播放开关：异步读取 SharedPreferences，失败退化为默认开启。
   unawaited(AudioPreferences.instance.load());
   // 短剧「边看边往后缓存」的开关与集数：同一条装配链里读，避免播放页
