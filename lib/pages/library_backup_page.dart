@@ -293,7 +293,7 @@ class _LibraryBackupPageState extends State<LibraryBackupPage> {
                   GlassTextButton(
                     key: const ValueKey('backup-import'),
                     onPressed: enabled ? _pick : null,
-                    child: AppText(preview == null ? '从备份文件恢复' : '重新选择其他备份文件'),
+                    child: const AppText('重新选择其他备份文件'),
                   ),
                   if (preview.excludedLocalRecords > 0) ...[
                     const SizedBox(height: 8),

@@ -6,7 +6,6 @@ import '../widgets/desktop_chapter_sidebar.dart';
 
 import 'dart:async';
 import 'dart:collection';
-import 'dart:math' as math;
 
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
@@ -45,7 +44,6 @@ import '../widgets/reader/reader_narration_visibility.dart';
 import '../widgets/reader/reader_sync_pill.dart';
 import '../services/eink_refresh.dart';
 import '../services/fair_memory.dart';
-import '../services/haptic_preferences.dart';
 import '../services/volume_key.dart';
 import '../services/reader_bookmark_store.dart';
 import '../services/reader_history.dart';

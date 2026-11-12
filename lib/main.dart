@@ -341,7 +341,7 @@ class _FqAppState extends State<FqApp> {
                     final playback = AudioPlaybackScope(
                       key: _audioScopeKey,
                       navigatorKey: _navigatorKey,
-                      recentListen: loadRecentListen,
+                      recentListen: _loadRecentListenWhenReady,
                       child: child ?? const SizedBox.shrink(),
                     );
                     // Routes without an AppBar need a live fallback above the
