@@ -78,22 +78,6 @@ extension _DetailPageClassic on _DetailPageState {
       ),
     ),
     actions: [
-      if (_isBook && _allChapters.isNotEmpty)
-        IconButton(
-          key: const Key('detail_action_ai'),
-          tooltip: '本书 AI 阅读优化',
-          onPressed: () => Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (_) => AiBookSettingsPage(
-                bookId: _contentId,
-                title: widget.item.title,
-                chapters: _allChapters,
-              ),
-            ),
-          ),
-          icon: const Icon(LucideIcons.sparkles, size: 20),
-        ),
       Padding(
         padding: const EdgeInsets.only(right: 10),
         child: Center(

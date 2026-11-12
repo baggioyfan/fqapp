@@ -346,7 +346,13 @@ class BackendService {
   /// are cancelled by that shutdown - the UI asks for confirmation before
   /// calling this. The caller owns the persisted preference; this method only
   /// acts on whatever [LanSharePreferences] currently says.
-  Future<void> restartForListenMode() async {
+  Future<void> restartForListenMode() => restartForConfiguration();
+
+  /// Redeploys persisted settings and retires requests owned by the old core.
+  ///
+  /// 代理配置、监听地址这类只在 core 启动时读一次的设置，改动后必须换一个
+  /// 新的 core 才生效；在途请求随旧 core 一起作废，调用方负责先确认。
+  Future<void> restartForConfiguration() async {
     await stop();
     await start();
   }

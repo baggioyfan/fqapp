@@ -227,6 +227,10 @@ extension _ReaderPageSelection on _ReaderPageState {
       child: ReaderParagraphMenu(
         underlined: underlined,
         paragraphScoped: selection.isWholeParagraph,
+        // fork 的段评只有复制 / 划线两个动作：听书只有一个起点（当前页
+        // 第一段），书签和 AI 校对各有自己的入口。上游经典条默认带
+        // 「从本段听」，这里关掉，免得点到一个没有实现的按钮。
+        showListening: false,
         isDark: preset.isDark,
         belowAnchor: below,
         onAction: (action) {
@@ -286,6 +290,11 @@ extension _ReaderPageSelection on _ReaderPageState {
         if (mounted) _showMessage('已复制');
       // 长按段落不给「从本段听」：听书只有一个起点（当前页第一段），
       // 入口也只有工具栏那一个按钮，见 reader_paragraph_menu.dart 的说明。
+      case ReaderParagraphAction.listen:
+      case ReaderParagraphAction.bookmark:
+      case ReaderParagraphAction.missedChange:
+        // 未在 fork 中实现（对应入口已由工具栏承担），菜单也不显示它们。
+        break;
       case ReaderParagraphAction.underline:
       case ReaderParagraphAction.removeUnderline:
         await _toggleSelectionUnderline(

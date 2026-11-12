@@ -213,15 +213,6 @@ class _LibraryBackupPageState extends State<LibraryBackupPage> {
             onPressed: _export,
           ),
           SettingsActionRow(
-            key: const ValueKey('backup-export-ai'),
-            icon: CupertinoIcons.doc_on_doc,
-            classicIcon: LucideIcons.files,
-            title: '按书导出 AI 资产',
-            subtitle: '单个备份仍超 16 MB 时使用；每本书一个文件',
-            enabled: enabled,
-            onPressed: _exportBook,
-          ),
-          SettingsActionRow(
             key: const ValueKey('backup-import'),
             icon: CupertinoIcons.tray_arrow_up,
             classicIcon: LucideIcons.file_input,
@@ -248,7 +239,7 @@ class _LibraryBackupPageState extends State<LibraryBackupPage> {
         enabled: enabled,
         onTap: () => Navigator.push(
           context,
-          MaterialPageRoute<void>(builder: (_) => const WebDavSyncPage()),
+          MaterialPageRoute<void>(builder: (_) => const WebdavSyncPage()),
         ),
       ),
       const SizedBox(height: 24),

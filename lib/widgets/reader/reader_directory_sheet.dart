@@ -693,98 +693,24 @@ class _ReaderDirectorySheetState extends State<ReaderDirectorySheet> {
     ],
   );
 
-  Widget _classicStatusWidget(
-    ReaderThemePreset preset,
-    AiChapterCheckStatus status,
-  ) {
-    final eink = preset.isEink;
-    final color = switch (status.state) {
-      AiChapterCheckState.checked =>
-        eink ? Colors.black : const Color(0xFF617348),
-      AiChapterCheckState.failed =>
-        eink ? Colors.black : const Color(0xFFAD4634),
-      AiChapterCheckState.running => preset.accentColor,
-      AiChapterCheckState.unchecked => preset.mutedTextColor,
-    };
-    final icon = switch (status.state) {
-      AiChapterCheckState.checked => Icons.check_circle_outline,
-      AiChapterCheckState.failed => Icons.error_outline,
-      AiChapterCheckState.running => null,
-      AiChapterCheckState.unchecked => null,
-    };
-    final label = switch (status.state) {
-      AiChapterCheckState.checked => '已校验',
-      AiChapterCheckState.failed => '失败',
-      AiChapterCheckState.running => '校对中',
-      AiChapterCheckState.unchecked => '未校验',
-    };
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        SizedBox(
-          width: 14,
-          height: 14,
-          child: status.state == AiChapterCheckState.running
-              ? Padding(
-                  padding: const EdgeInsets.all(1),
-                  child: CircularProgressIndicator(
-                    strokeWidth: 1.6,
-                    color: color,
-                  ),
-                )
-              : Icon(icon, size: 14, color: color),
-        ),
-        const SizedBox(width: 5),
-        Flexible(
-          child: Text(
-            label,
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              fontSize: 11,
-              height: 1.15,
-              color: color,
-              fontWeight: status.state == AiChapterCheckState.running
-                  ? FontWeight.w500
-                  : FontWeight.w400,
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
+  // fork 不收 AI 阅读，章节没有「校对状态」这一列；经典目录右端只留离线
+  // 缓存标记。上游的 _classicStatusWidget 因此整段移除。
   Widget _classicTrailing(
     BuildContext context,
     ReaderThemePreset preset,
     Chapter chapter,
   ) {
-    final status = _statusFor(chapter);
     final cached = widget.cachedIds.contains(chapter.itemId);
-    final hasStatus = status != null;
-    if (!hasStatus && !cached) return const SizedBox.shrink();
-    final statusLine = hasStatus ? _classicStatusWidget(preset, status) : null;
-    final cacheLine = cached
-        ? Tooltip(
-            message: '已缓存',
-            child: _classicCacheWidget(preset, prominent: !hasStatus),
-          )
-        : null;
-    // Intrinsic size instead of a fixed 64x30 box: at 2.0x text scale the old
-    // box overflowed both axes inside ListTile. The Column is allowed to wrap
-    // its labels within the same width the rows budgeted for it.
+    if (!cached) return const SizedBox.shrink();
     return ConstrainedBox(
       constraints: BoxConstraints(maxWidth: _classicTrailingWidth(context)),
-      child: statusLine != null && cacheLine != null
-          ? Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [statusLine, const SizedBox(height: 2), cacheLine],
-            )
-          : Align(
-              alignment: Alignment.centerRight,
-              child: statusLine ?? cacheLine,
-            ),
+      child: Align(
+        alignment: Alignment.centerRight,
+        child: Tooltip(
+          message: '已缓存',
+          child: _classicCacheWidget(preset, prominent: true),
+        ),
+      ),
     );
   }
 

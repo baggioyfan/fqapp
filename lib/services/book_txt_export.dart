@@ -82,6 +82,7 @@ class PlatformTxtSink implements TxtSink {
 class BookTxtExportState {
   const BookTxtExportState({
     this.running = false,
+    this.writing = false,
     this.completed = 0,
     this.total = 0,
     this.failed = 0,
@@ -90,6 +91,10 @@ class BookTxtExportState {
   });
 
   final bool running;
+
+  /// 正文已抓完、正在落盘。这段窗口里取消会留下半个文件，所以不允许。
+  final bool writing;
+
   final int completed;
   final int total;
 
@@ -105,6 +110,9 @@ class BookTxtExportState {
   final String? message;
 
   double get fraction => total == 0 ? 0 : completed / total;
+
+  /// 抓取中才允许取消；落盘期间取消会留下不完整的书。
+  bool get canCancel => running && !writing;
 }
 
 /// Whole-book TXT export: a fresh directory plus every chapter re-fetched from

@@ -151,10 +151,6 @@ void main() {
               Chapter(itemId: 'm2', title: '第三章', volumeName: ''),
             ],
             cachedIds: const {'m0', 'm2'},
-            aiStatuses: [
-              _aiStatus('m0', AiChapterCheckState.checked),
-              _aiStatus('m1', AiChapterCheckState.failed),
-            ],
           ),
           size: const Size(320, 700),
           textScale: scale,
@@ -1418,28 +1414,10 @@ final _manyChapters = [
 Widget _directory({
   required List<Chapter> chapters,
   Set<String> cachedIds = const {},
-  List<AiChapterCheckStatus>? aiStatuses,
 }) => ReaderDirectorySheet(
   chapters: chapters,
   currentIndex: 0,
   cachedIds: cachedIds,
-  bookId: 'directory-book',
-  aiStatuses:
-      aiStatuses ??
-      [_aiStatus('c1', AiChapterCheckState.checked, version: 'v1')],
-  aiController: AiReadingController.instance,
-);
-
-AiChapterCheckStatus _aiStatus(
-  String chapterId,
-  AiChapterCheckState state, {
-  String version = '',
-}) => AiChapterCheckStatus(
-  bookId: 'directory-book',
-  chapterId: chapterId,
-  chapterVersion: version,
-  state: state,
-  updatedAt: DateTime(2026),
 );
 
 ReaderBookmark _mark(int offset, {String? text}) => ReaderBookmark(

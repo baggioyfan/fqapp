@@ -112,7 +112,7 @@ Future<void> _prepareRuntime() async {
       AudioDownloader.instance.pauseAll();
       await FairMemoryService.instance.flushForExit();
       try {
-        if (isMediaDesktop) await NativePlayer.pauseOthers();
+        if (isDesktopHost) await NativePlayer.pauseOthers();
       } catch (error, stack) {
         // 退出路径继续往下走，但失败要留痕：否则「关闭后还有声音」无从查起。
         AppLog.w('exit', '退出前暂停播放器失败', error: error, stack: stack);
@@ -206,7 +206,7 @@ Future<void> _loadLocalData() async {
     optional(HiveAudioDownloadStore.instance.warmUp),
   ]);
   // WebDAV 为可选功能；网络或安全存储故障不阻塞本机阅读。
-  unawaited(optional(WebDavSyncService.instance.init));
+  unawaited(optional(WebdavSyncService.instance.init));
   // 听书后台播放开关：异步读取 SharedPreferences，失败退化为默认开启。
   unawaited(AudioPreferences.instance.load());
   // 短剧「边看边往后缓存」的开关与集数：同一条装配链里读，避免播放页
@@ -695,7 +695,9 @@ class _RootShellState extends State<RootShell>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     dramaLightPageNotifier.removeListener(_onDramaChromeChanged);
+    _pageMotion.removeStatusListener(_onPageMotionStatus);
     _homeScroll.dispose();
+    _pageMotion.dispose();
     super.dispose();
   }
 
@@ -842,15 +844,6 @@ class _RootShellState extends State<RootShell>
     } catch (_) {
       if (mounted) setState(() => _backendError = '代理配置保存失败，请重试。');
     }
-  }
-
-  @override
-  void dispose() {
-    dramaLightPageNotifier.removeListener(_onDramaChromeChanged);
-    _pageMotion.removeStatusListener(_onPageMotionStatus);
-    _homeScroll.dispose();
-    _pageMotion.dispose();
-    super.dispose();
   }
 
   @override
@@ -1023,7 +1016,6 @@ class _RootShellState extends State<RootShell>
         onSelected: _selectTab,
         overVideo: dramaOnVideo,
         staticMaterial: shellDockStaticMaterial(overVideo: dramaOnVideo),
-        animating: _pageMotion.isAnimating,
       ),
     );
   }

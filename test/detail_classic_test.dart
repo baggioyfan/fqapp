@@ -660,6 +660,7 @@ void main() {
       expect((page as AudioPage).bookId, 'book');
       await tester.pumpWidget(const SizedBox.shrink());
     });
+  });
 
   group('style scope', () {
     testWidgets('switching to 档案 keeps the page state and the loaded data', (

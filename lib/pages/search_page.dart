@@ -13,6 +13,7 @@ import '../models/search_discovery.dart';
 import '../services/api_client.dart';
 import '../services/app_breakpoints.dart';
 import '../services/app_theme_style.dart';
+import '../services/desktop_platform.dart';
 import '../services/backend_transport.dart';
 import '../services/search_history_store.dart';
 import '../services/user_facing_error.dart';
