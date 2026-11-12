@@ -1,9 +1,13 @@
 import 'package:flutter/gestures.dart';
+
 import '../services/desktop_platform.dart';
 import '../services/audio_floating_routes.dart';
 import '../widgets/desktop_chapter_sidebar.dart';
+
 import 'dart:async';
 import 'dart:collection';
+import 'dart:math' as math;
+
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -41,6 +45,7 @@ import '../widgets/reader/reader_narration_visibility.dart';
 import '../widgets/reader/reader_sync_pill.dart';
 import '../services/eink_refresh.dart';
 import '../services/fair_memory.dart';
+import '../services/haptic_preferences.dart';
 import '../services/volume_key.dart';
 import '../services/reader_bookmark_store.dart';
 import '../services/reader_history.dart';
@@ -48,9 +53,11 @@ import '../services/audio_preferences.dart';
 import '../services/reader_preferences.dart';
 import '../services/reader_tap_zones.dart';
 import '../services/reader_underline_store.dart';
+import '../services/shelf_store.dart';
 import '../services/shelf_toggle.dart';
 import '../services/system_tts.dart';
 import '../services/webdav_auto_sync.dart';
+import '../widgets/app_ui/app_ui_scope.dart';
 import '../widgets/chapter_cache_sheet.dart';
 import '../widgets/reader/reader_appearance_sheet.dart';
 import '../widgets/reader/reader_brightness_hud.dart';
@@ -60,6 +67,7 @@ import '../widgets/reader/reader_joined_scroll.dart';
 import '../widgets/reader/cue_index.dart';
 import '../widgets/reader/reader_bookmarks_panel.dart';
 import '../widgets/reader/reader_chrome.dart';
+import '../widgets/reader/reader_classic_chrome.dart';
 import '../widgets/reader/reader_find_panel.dart';
 import '../widgets/reader/reader_controls.dart';
 import '../widgets/reader/reader_cutout_insets.dart';

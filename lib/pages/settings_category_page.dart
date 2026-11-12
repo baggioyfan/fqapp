@@ -44,6 +44,11 @@ class SettingsCategory {
   /// About page).
   final WidgetBuilder? pageBuilder;
 
+  /// Optional current value shown on the trailing side (e.g. the selected
+  /// theme). It sits next to the chevron, leaving [subtitle] free for the
+  /// description on every presentation.
+  final String? value;
+
   const SettingsCategory({
     required this.icon,
     required this.title,
@@ -51,6 +56,7 @@ class SettingsCategory {
     this.items = const [],
     this.itemsBuilder,
     this.pageBuilder,
+    this.value,
   });
 }
 
@@ -122,6 +128,7 @@ class _SettingsCategoryPageState extends State<SettingsCategoryPage> {
     if (AppStyleTokens.of(context).isClassic) {
       return SettingsScaffold(
         title: widget.title,
+        showBack: Navigator.of(context).canPop(),
         body: ListView(
           key: PageStorageKey('settings-category-classic-${widget.title}'),
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
