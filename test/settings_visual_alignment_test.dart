@@ -272,7 +272,8 @@ void main() {
     // 时保留了「云端同步」分区（41fd0bc4），所以是 3 个而不是 2 个。
     expect(find.byType(ArchiveSection), findsNWidgets(3));
     expect(find.byType(ContentPanel), findsWidgets);
-    expect(find.byType(FeatureEntry), findsOneWidget);
+    // WebDAV 同步与番茄导入各一张入口卡（前者随上游经典 UI 分支保留）。
+    expect(find.byType(FeatureEntry), findsNWidgets(2));
     // The three data rows stay individually pinned: export, restore, 番茄.
     expect(find.byKey(const ValueKey('backup-export')), findsOneWidget);
     expect(find.byKey(const ValueKey('backup-import')), findsOneWidget);
