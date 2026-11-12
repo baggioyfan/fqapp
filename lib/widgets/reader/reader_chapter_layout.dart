@@ -24,6 +24,8 @@ class ReaderLayoutSpec {
   final double horizontalPadding;
   final double verticalPadding;
   final double paragraphSpacing;
+  final bool firstLineIndent;
+  final bool justifyText;
 
   ReaderLayoutSpec({
     required this.viewport,
@@ -33,12 +35,14 @@ class ReaderLayoutSpec {
   }) : horizontalPadding = preferences.horizontalPadding,
        verticalPadding = preferences.verticalPadding,
        paragraphSpacing = preferences.paragraphSpacing,
+       firstLineIndent = preferences.firstLineIndent,
+       justifyText = preferences.justifyText,
        titleAlign = preferences.titleAlignment == ReaderTitleAlignment.center
            ? TextAlign.center
            : TextAlign.start,
        bodyStyle = TextStyle(
          inherit: false,
-         color: preferences.themePreset.textColor,
+         color: preferences.effectiveTextColor,
          fontFamily: fontFamily,
          fontSize: preferences.fontSize,
          fontWeight: FontWeight.values[preferences.fontWeight ~/ 100 - 1],
@@ -48,7 +52,7 @@ class ReaderLayoutSpec {
        ),
        titleStyle = TextStyle(
          inherit: false,
-         color: preferences.themePreset.textColor,
+         color: preferences.effectiveTextColor,
          fontFamily: fontFamily,
          fontSize: preferences.titleSize,
          fontWeight: FontWeight.w600,
@@ -73,7 +77,9 @@ class ReaderLayoutSpec {
       titleAlign == other.titleAlign &&
       horizontalPadding == other.horizontalPadding &&
       verticalPadding == other.verticalPadding &&
-      paragraphSpacing == other.paragraphSpacing;
+      paragraphSpacing == other.paragraphSpacing &&
+      firstLineIndent == other.firstLineIndent &&
+      justifyText == other.justifyText;
 
   @override
   int get hashCode => Object.hash(
@@ -85,6 +91,8 @@ class ReaderLayoutSpec {
     horizontalPadding,
     verticalPadding,
     paragraphSpacing,
+    firstLineIndent,
+    justifyText,
   );
 }
 
@@ -715,6 +723,7 @@ class ReaderChapterLayout {
   /// First-line indent width. Shared by [_measureBlock] and [blockPainter] so
   /// hit-testing and glyph boxes wrap exactly like the rendered text.
   static double _indentWidth(TextStyle style, ReaderLayoutSpec spec) {
+    if (!spec.firstLineIndent) return 0;
     final scale = spec.textScaler.scale(style.fontSize!) / style.fontSize!;
     return math.min(
       (style.fontSize! + (style.letterSpacing ?? 0)) * 2,
@@ -888,7 +897,11 @@ class ReaderChapterLayout {
       decorationStyle: TextDecorationStyle.solid,
       decorationThickness: 1.6,
     );
-    final align = title ? spec.titleAlign : TextAlign.justify;
+    final align = title
+        ? spec.titleAlign
+        : spec.justifyText
+        ? TextAlign.justify
+        : TextAlign.start;
     final indent = _indentWidth(style, spec);
     // The bubble rides at the very end of the paragraph's text, so it follows
     // the last line and wraps only when that line has no room left. Measuring it

@@ -45,6 +45,7 @@ import 'api_service_page.dart';
 import 'cached_books_page.dart';
 import 'cached_dramas_page.dart';
 import 'library_backup_page.dart';
+import 'reader_preferences_page.dart';
 import 'settings_category_page.dart';
 import 'system_tts_settings_page.dart';
 import 'webdav_sync_page.dart';
@@ -82,6 +83,15 @@ class SettingsPage extends StatelessWidget {
         title: '阅读',
         subtitle: '阅读入口、正文替换',
         items: [
+          SettingsItem(
+            icon: LucideIcons.book_open_check,
+            title: '小说阅读器',
+            subtitle: '阅读背景、翻页、字体与版面',
+            onTap: (context, _) => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const ReaderPreferencesPage()),
+            ),
+          ),
           _shelfDirectReaderItem(),
           _discoverDirectReaderItem(),
           SettingsItem(
