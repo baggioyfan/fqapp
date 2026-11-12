@@ -461,7 +461,10 @@ class _AudioPlaybackController extends ChangeNotifier
   }
 
   Future<void> _pauseForOtherMedia() async {
-    if (_closed || !_wantPlay) return;
+    _visibilityResumeGeneration = null;
+    if (_closed) return;
+    _cancelAdvanceCountdown(this);
+    if (!_wantPlay) return;
     _update(() => _wantPlay = false);
     _listenTime.stop();
     final player = _player;
@@ -1143,6 +1146,7 @@ class _AudioPlaybackController extends ChangeNotifier
 
   void _fail(Object error, int generation) {
     if (!_current(generation)) return;
+    _cancelAdvanceCountdown(this);
     ListeningSession.instance.clear();
     unawaited(NativePlayer.stopListenForeground(owner: _mediaOwner));
     ++_generation;
@@ -1207,6 +1211,7 @@ class _AudioPlaybackController extends ChangeNotifier
   Future<void> _togglePlayback() async {
     final player = _player;
     if (!_ready || player == null) return;
+    _cancelAdvanceCountdown(this);
     final generation = _generation;
     if (_wantPlay) {
       _update(() => _wantPlay = false);
