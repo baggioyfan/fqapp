@@ -141,9 +141,12 @@ done
 echo "    AppIcon.appiconset 已生成 10 个尺寸（16 → 512@2x）"
 
 # --- macOS 专用的依赖覆盖 ---------------------------------------------------
-# macOS 构建机只有 Xcode 16.4（macOS 15.5 SDK），connectivity_plus 7.1.0+ 用到的
-# NWPath.isUltraConstrained 编译不过；Android 侧继续用 7.3.x。这里用 pub 官方的
-# pubspec_overrides.yaml 做局部覆盖，pubspec.yaml / pubspec.lock 保持 Android 取值。
+# 原始起因：macOS 构建机是 Xcode 16.4（macOS 15.5 SDK），connectivity_plus 7.1.0+
+# 用到的 NWPath.isUltraConstrained 编译不过；Android 侧继续用 7.3.x。这里用 pub
+# 官方的 pubspec_overrides.yaml 做局部覆盖，pubspec.yaml / pubspec.lock 保持
+# Android 取值。
+# 现在 CI 已换 macos-26（Xcode 26 / macOS 26 SDK），这条覆盖理论上不再必要，
+# 但换镜像的当次只动一个变量，等新镜像稳定出包后再单独去掉。
 # 覆盖文件与 lock 只在本次构建期间变化，脚本退出（含失败）时一律还原 ——
 # Android 的 CI 带 --enforce-lockfile，留着 7.0.0 的 lock 会直接把那次构建打红。
 OVERRIDES_FILE="pubspec_overrides.yaml"

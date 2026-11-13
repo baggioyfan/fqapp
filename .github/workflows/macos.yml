@@ -16,12 +16,16 @@ name: macOS build (universal arm64 + x86_64)
 # 上游没有 macos/ 平台目录，构建前由 scripts/build_macos.sh 用
 # `flutter create --platforms=macos` 生成。
 #
-# runner 选择：universal 只能在 Apple Silicon 上构建（macos-15，M1，3 vCPU /
-# 7 GB，GA）—— Xcode 的 ARCHS_STANDARD 在 macOS 上就是双架构，单跑一次即得
-# 两条 slice，比另起一台 Intel runner 各编一遍省一整个 job 的墙钟。macos-26
-# 已可用但仍是新镜像，且 Xcode 26 的 macOS 26 SDK 会让 connectivity_plus 的
-# 7.0.0 覆盖失去必要性 —— 稳定优先，先钉 macos-15。
-# macos-14 已于 2026-11-02 退役，不要再用。
+# runner 选择：universal 只能在 Apple Silicon 上构建 —— Xcode 的 ARCHS_STANDARD
+# 在 macOS 上就是双架构，单跑一次即得两条 slice，比另起一台 Intel runner 各编
+# 一遍省一整个 job 的墙钟。
+#
+# 现在钉 macos-26（macOS 26 + Xcode 26，Apple Silicon）。此前钉 macos-15 的理由
+# 是「新镜像太新、稳定优先」，实际付出的是排队：macos-15 的 arm64 池多次拿不到
+# runner，job 在队列里待 15+ 分钟被取消（同一 commit 的 APK 早就编完了，发版却
+# 卡在 mac 这一步）。换到新镜像池。
+# macos-14 已于 2026-11-02 退役，不要再用；macos-15-intel 只给 x86_64 单片用
+# （2027-08 退役）。
 
 on:
   workflow_dispatch:
@@ -67,7 +71,7 @@ concurrency:
 # 留到用户机器上 —— 单 leg 反而更安全。
 jobs:
   build-macos:
-    runs-on: macos-15
+    runs-on: macos-26
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -103,11 +107,15 @@ jobs:
           df -h /
 
       - name: Pin connectivity_plus to 7.0.0 for the macOS SDK
-        # 本 runner 只有 Xcode 16.4（macOS 15.5 SDK），connectivity_plus 7.1.0+ 的
-        # NWPath.isUltraConstrained 编译不过。用 pub 的局部覆盖降到 7.0.0，
-        # pubspec.yaml / pubspec.lock 保持 Android 的 7.3.x（覆盖文件在 .gitignore 里）。
-        # build_macos.sh 也会写同一份覆盖（它负责在退出时还原 lock），内容一致，
-        # 这里提前写是为了让下面的 analyze / test 也在同一套依赖下跑。
+        # 降到 7.0.0 的原始理由是 Xcode 16.4（macOS 15.5 SDK）编不过
+        # connectivity_plus 7.1.0+ 的 NWPath.isUltraConstrained；macos-26 的
+        # Xcode 26 / macOS 26 SDK 已够新，覆盖理论上可以去掉。
+        # 但首次换镜像只动一个变量：这一版仍钉 7.0.0，确认新镜像能出包之后，
+        # 再单独去掉覆盖、验证 7.3.x 编译。
+        # 用 pub 的局部覆盖，pubspec.yaml / pubspec.lock 保持 Android 的 7.3.x
+        # （覆盖文件在 .gitignore 里）。build_macos.sh 也会写同一份覆盖（它负责
+        # 在退出时还原 lock），内容一致，这里提前写是为了让下面的 analyze /
+        # test 也在同一套依赖下跑。
         run: |
           printf 'dependency_overrides:\n  connectivity_plus: 7.0.0\n' > pubspec_overrides.yaml
           cat pubspec_overrides.yaml
