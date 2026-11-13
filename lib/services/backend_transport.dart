@@ -377,10 +377,18 @@ class RustBackendTransport implements BackendTransport {
           // a provisioning failure never blocks startup.
           final poolKey = await SecureKeyProvider().devicePoolKey();
           checkCurrent();
+          // Linux has no plaintext fallback: if the keyring cannot hand over
+          // the pool key, the pool file must not be written unencrypted (see
+          // the fail-closed policy in `EncryptedHive`).
+          if (poolKey == null &&
+              defaultTargetPlatform == TargetPlatform.linux) {
+            throw StateError('Linux 设备池密钥不可用');
+          }
           if (poolKey != null) {
             try {
               await rust.setDevicePoolKey(key: poolKey);
             } catch (_) {
+              if (defaultTargetPlatform == TargetPlatform.linux) rethrow;
               // Keep starting: the pool falls back to plaintext + a warning.
             }
             checkCurrent();

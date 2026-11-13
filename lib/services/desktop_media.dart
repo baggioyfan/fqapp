@@ -13,8 +13,13 @@ typedef _Free = void Function(Pointer<Utf8>);
 
 /// The core ships beside the executable on every desktop host: `fqapp.exe`
 /// next to `fqapi_core.dll` on Windows, `Contents/MacOS/fqapp` next to
-/// `libfqapi_core.dylib` inside the macOS bundle.
+/// `libfqapi_core.dylib` inside the macOS bundle, and `/usr/lib/fqapp/lib/`
+/// next to the launcher on Linux (the Arch package installs the `.so` there so
+/// the binary directory itself stays free of libraries).
 String desktopCoreLibraryPath() {
+  if (Platform.isLinux) {
+    return '${File(Platform.resolvedExecutable).parent.path}/lib/libfqapi_core.so';
+  }
   final name = Platform.isMacOS ? 'libfqapi_core.dylib' : 'fqapi_core.dll';
   final bundled = File(
     '${File(Platform.resolvedExecutable).parent.path}/$name',

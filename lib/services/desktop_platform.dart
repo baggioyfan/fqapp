@@ -29,10 +29,17 @@ bool get isWindowsDesktop =>
 bool get isMacDesktop =>
     !kIsWeb && defaultTargetPlatform == TargetPlatform.macOS;
 
-/// Desktop hosts (Windows / macOS) share every path in this file except the
-/// handful of OS-specific primitives below (`_updateAwake`, `decodeDesktopText`,
-/// SMTC media keys, the TTS settings deep link).
-bool get isDesktopHost => isWindowsDesktop || isMacDesktop;
+bool get isLinuxDesktop =>
+    !kIsWeb && defaultTargetPlatform == TargetPlatform.linux;
+
+/// Desktop hosts (Windows / macOS / Linux) share every path in this file except
+/// the handful of OS-specific primitives below (`_updateAwake`,
+/// `decodeDesktopText`, SMTC media keys, the TTS settings deep link).
+///
+/// Linux is the youngest port: it reuses the same window/ media-channel
+/// assembly, but its TTS and system-session bridges come from
+/// `native/linux/` and are still experimental — see `LINUX.md`.
+bool get isDesktopHost => isWindowsDesktop || isMacDesktop || isLinuxDesktop;
 
 /// Real host operating system, for code that picks a native library or binary.
 ///
@@ -42,6 +49,7 @@ bool get isDesktopHost => isWindowsDesktop || isMacDesktop;
 /// fail with "Failed to load dynamic library 'kernel32.dll'".
 bool get isMacHost => !kIsWeb && Platform.isMacOS;
 bool get isWindowsHost => !kIsWeb && Platform.isWindows;
+bool get isLinuxHost => !kIsWeb && Platform.isLinux;
 
 /// On Windows/macOS an inactive window is still visible; it simply lacks input
 /// focus. Only hidden/paused/detached windows should defer foreground video
