@@ -14,10 +14,12 @@ name: Preview Release
 #
 # 与上游 release.yml 的其余差异，都是 fork 的交付面不同，不是简化：
 #
-# 1. **只收 APK**。fork 只构建 arm64 一个 ABI（32 位 split 随 armv7 的 Rust
-#    target 一起删掉了）；macOS / Windows job 只在 dispatch 且勾选时跑，所以
-#    一次 run 里很常见「没有桌面产物」。照抄上游「等 Android + Windows 两边
-#    齐了再发」会变成「永远等不到另一半」。
+# 1. **只收 APK，外加「这次构建真的有」的桌面产物**。fork 只构建 arm64 一个
+#    ABI（32 位 split 随 armv7 的 Rust target 一起删掉了）；macOS 只在手动
+#    发版时构建，Windows 也只在勾选时构建 —— 所以一次 run 里「没有桌面产物」
+#    是常态。照抄上游「等 Android + Windows 两边齐了再发」会变成「永远等不到
+#    另一半」。这里改成按实际存在的产物拼资产清单：勾了 windows 就带上便携包，
+#    没勾就只有 APK。
 # 2. **不硬卡「必须是正式签名证书」**。fork 没配 release 签名密钥时，APK 带的
 #    是构建机生成的 debug 身份（见 build.yml 的 signing step），硬卡这
 #    一条会让预览版永远发不出来。改成：把实际指纹写进核验记录，并在与正式版
@@ -120,6 +122,14 @@ jobs:
           mkdir -p out
           cp "$apk" out/fqapp-preview-arm64-v8a.apk
           cp "$info" out/build-info.txt
+          # Windows 便携包是可选的：那次 dispatch 勾了 windows 才会有。
+          win=$(find artifacts -name 'fqapp-windows-x64-preview.zip' -print -quit)
+          if [ -n "$win" ]; then
+            cp "$win" out/fqapp-preview-windows-x64.zip
+            win_scope='范围：Android arm64 + Windows x64 便携包（本次构建勾选了 windows）。macOS 包只在正式发版时构建，预览版不含它'
+          else
+            win_scope='范围：只含 Android arm64。macOS 随正式版走，Windows 只在勾选时才构建 —— 这次没勾，所以预览版不含桌面端产物'
+          fi
           (cd out && sha256sum * > SHA256SUMS)
 
           built_at=$(date -u '+%Y-%m-%d %H:%M UTC')
@@ -136,8 +146,7 @@ jobs:
             echo "- APK versionName：${base_version}（已与 pubspec 核对一致）"
             echo "- APK 签名证书 SHA-256：\`${signer_primary}\`"
             echo "- 签名身份：${cert_note}"
-            echo "- 范围：只含 Android arm64。macOS 包只在手动发版时构建，Windows"
-            echo "  构建已改为仅手动触发，所以预览版不含桌面端产物"
+            echo "- ${win_scope}"
             echo
             echo '```'
             cat out/SHA256SUMS
@@ -152,6 +161,15 @@ jobs:
           built_at="${{ steps.assemble.outputs.built_at }}"
           short_sha="${SHA:0:7}"
 
+          # 资产清单同样按实际产物拼：勾了 windows 就有便携包，没勾就只发 APK。
+          if [ -f out/fqapp-preview-windows-x64.zip ]; then
+            win_line='- Windows：`fqapp-preview-windows-x64.zip`（x64 便携包，解压即用）'
+            desktop_note='桌面端只含本次构建产出的 Windows 包；macOS 随正式版走。'
+          else
+            win_line=''
+            desktop_note='本仓库只构建 arm64 一个 ABI；这次没勾桌面端（macOS 随正式版走，'
+            desktop_note+='Windows 只在勾选时才构建），所以预览版不含桌面产物。'
+          fi
           {
             echo "## 最新预览版（滚动更新）"
             echo
@@ -160,9 +178,9 @@ jobs:
             echo
             echo "- 版本：${base_version}（提交 \`${short_sha}\`，构建于 ${built_at}）"
             echo "- Android：\`fqapp-preview-arm64-v8a.apk\`（arm64，主流机型）"
+            if [ -n "$win_line" ]; then printf '%s\n' "$win_line"; fi
             echo
-            echo "本仓库只构建 arm64 一个 ABI；桌面端产物不在预览版里（macOS 随正式版走，"
-            echo "Windows 构建改成手动触发后不再随 push 产出）。"
+            echo "$desktop_note"
             echo
             echo "签名情况、版本核对与校验值见 \`VALIDATION.md\` 与 \`SHA256SUMS\`。"
             echo

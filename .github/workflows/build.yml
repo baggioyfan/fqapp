@@ -14,10 +14,11 @@ on:
   # 还会和 dispatch 的发布 run 抢同一个 concurrency 组（cancel-in-progress
   # 会让发布 run 被顶掉）。恢复自动构建就把 branches 那行贴回来。
   #
-  # 交付面固定为两个文件：APK + macOS universal 包。一次 dispatch 就能
-  # 全出（`macos` 输入默认勾选），Release 也固定挂这两个资产 + build-info。
-  # Windows / Linux 是可选产物（默认不勾）：能出包、能下载，但不进 Release
-  # 资产，也不拖住发版。
+  # 交付基线是 APK + macOS universal 包：一次 dispatch 就全出（`macos` 默认
+  # 勾选），Release 至少挂这两个资产 + build-info。Windows 便携包是可选的
+  # **可发布**资产：默认不勾（一台 runner 约 45 分钟），勾了且构建成功就随
+  # release_tag 一并挂进 Release，没勾则完全不参与发版判定。Linux 仍只进
+  # Artifacts，不进 Release 资产（LINUX.md 红线 4）。
   push:
     # 打 tag 仍出包：tag 推送不走 paths 过滤（native-crypto 在 v1.0.117
     # tag 推送时已跑过一次可作证），所以推 v* 会触发一次完整构建，APK 在
@@ -79,10 +80,11 @@ on:
         type: boolean
         default: false
       windows:
-        # 一台 windows-latest 大约 45 分钟，所以默认关；产物同样只进 Artifacts
-        # （publish 的 needs 与资产清单里都没有它）。要让它进正式 Release，
-        # 得同时改 publish 的 needs 与资产拷贝，别只把这里打开。
-        description: 同时构建 Windows 便携包（产物只进 Artifacts，不随 Release 发布）
+        # 一台 windows-latest 大约 45 分钟，所以默认关。勾上并成功构建时，
+        # 便携包会随 release_tag 一起挂进正式 Release（publish 用
+        # `success || skipped` 判定，没勾不会挡住发版）；不发版时它照旧留在
+        # Artifacts 里供人下载。
+        description: 同时构建 Windows 便携包（勾选后，若填了 release_tag 则随 Release 一并发布）
         required: false
         type: boolean
         default: false
@@ -785,10 +787,10 @@ jobs:
   # windows.yml 自己还要能单独 dispatch（排障时带 verify_player 跑 libmpv 验证），
   # 抄一份就得维护两处。
   #
-  # 默认不跑、不进 Release 资产、也不在 publish 的 needs 里 —— 一台 windows
-  # runner 45 分钟，且这个包还没做过验收（WINDOWS.md 之外的实测记录为零）。
-  # 要出包时勾 windows；要让它进正式 Release，得同时改 publish 的 needs 与
-  # 资产拷贝，只开这个开关是不够的。
+  # 默认不跑 —— 一台 windows runner 45 分钟，且这个包还没做过真机验收
+  # （WINDOWS.md 之外的实测记录为零）。发布口径按「勾了才算」：publish 的
+  # needs 里带上它，但判定放宽成 `success || skipped`，没勾时不会挡住发版；
+  # 勾了且成功，便携包就作为额外资产进正式 Release。
   windows:
     if: >-
       github.event_name == 'workflow_dispatch'
@@ -882,16 +884,18 @@ jobs:
           retention-days: 14
 
   publish:
-    needs: [apk, macos, dart-gate]
-    # 原子发布：两个包都成功、测试也通过才建 Release。除了「不出现只有一半
-    # 资产的版本」，还要挡住一种新情况 —— dart-gate 拆出去并行后，apk job
+    needs: [apk, macos, dart-gate, windows]
+    # 原子发布：基线的两个包都成功、测试也通过才建 Release。除了「不出现只有
+    # 一半资产的版本」，还要挡住一种新情况 —— dart-gate 拆出去并行后，apk job
     # 不再自己跑测试，如果这里不看 dart-gate，测试挂了包照样会发出去。
     # 注意 `!cancelled()` 会覆盖 needs 失败时的默认跳过，所以每个依赖都要
     # 显式检查 result。job 名带连字符，必须用下标写法。
     #
-    # linux 与 windows 故意不在 needs 里：两者的产物只当 Artifacts 供人下载
-    # 试装，不出现在正式 Release 资产里（Linux 见 LINUX.md 红线 4；Windows 是
-    # 还没做过验收），也就不能让它俩的失败拖住发版。
+    # windows 在 needs 里，但判定放宽成 `success || skipped`：它是可选产物
+    # （默认不勾），没勾时整个 job skipped，不能因此挡住发版；反过来勾了就
+    # 必须成功 —— 用户点了「要 Windows」，发出去的版本却没有，比不发更糟。
+    # linux 仍不在 needs 里：产物只当 Artifacts 供人下载试装，不进 Release
+    # 资产（LINUX.md 红线 4），也就不能让它拖住发版。
     if: >-
       !cancelled()
       && github.event_name == 'workflow_dispatch'
@@ -899,6 +903,7 @@ jobs:
       && needs.apk.result == 'success'
       && needs.macos.result == 'success'
       && needs['dart-gate'].result == 'success'
+      && (needs.windows.result == 'success' || needs.windows.result == 'skipped')
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -930,6 +935,16 @@ jobs:
           name: fqapp-macos-universal
           path: release
 
+      - name: Download the Windows artifacts
+        # 没勾 windows 时那个 job 整个 skipped，这里没有东西可下 —— 跳过。
+        if: needs.windows.result == 'success'
+        uses: actions/download-artifact@v4
+        with:
+          # windows.yml 的唯一产物：便携包 zip（外加一份构建日志 artifact，
+          # 那是有失败才看的东西，不进 Release）。
+          name: fqapp-windows-x64-preview
+          path: release
+
       - name: Publish the GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -955,6 +970,8 @@ jobs:
           apk_src="$(find release -name 'app-arm64-v8a-release.apk' -print -quit)"
           mac_src="$(find release -name 'fqapp-macos.zip' -print -quit)"
           info_src="$(find release -name 'build-info.txt' -print -quit)"
+          # Windows 是可选资产：没勾 windows 时这里为空，不是错误。
+          win_src="$(find release -name 'fqapp-windows-x64-preview.zip' -print -quit)"
           for f in "$apk_src" "$mac_src" "$info_src"; do
             if [ -z "$f" ]; then
               echo "::error::发布资产缺失（APK / macOS universal zip / build-info.txt）" >&2
@@ -965,16 +982,25 @@ jobs:
           cp "$apk_src" "dist/fqapp-$RELEASE_TAG-arm64-v8a.apk"
           cp "$mac_src" "dist/fqapp-$RELEASE_TAG-macos.zip"
           cp "$info_src" dist/build-info.txt
+          # 资产清单按实际构建出来的东西拼，而不是写死三个路径：写死的话
+          # 没勾 windows 时 gh 会因为文件不存在而整条发版失败。
+          assets=(
+            "dist/fqapp-$RELEASE_TAG-arm64-v8a.apk"
+            "dist/fqapp-$RELEASE_TAG-macos.zip"
+            dist/build-info.txt
+          )
+          if [ -n "$win_src" ]; then
+            cp "$win_src" "dist/fqapp-$RELEASE_TAG-windows-x64.zip"
+            assets+=("dist/fqapp-$RELEASE_TAG-windows-x64.zip")
+          fi
           ls -l dist
 
           gh release create "$RELEASE_TAG" \
             --title "$RELEASE_TAG" \
             --notes-file .github/release-notes.md \
             --target "$GITHUB_SHA" \
-            "dist/fqapp-$RELEASE_TAG-arm64-v8a.apk" \
-            "dist/fqapp-$RELEASE_TAG-macos.zip" \
-            dist/build-info.txt
-          printf 'Published %s with the APK and the universal macOS build\n' "$RELEASE_TAG"
+            "${assets[@]}"
+          printf 'Published %s with %s assets\n' "$RELEASE_TAG" "${#assets[@]}"
 
       - name: Summarise the release
         env:
@@ -984,5 +1010,10 @@ jobs:
             printf '## 已发布 %s\n\n' "$RELEASE_TAG"
             printf -- '- `fqapp-%s-arm64-v8a.apk` — Android arm64\n' "$RELEASE_TAG"
             printf -- '- `fqapp-%s-macos.zip` — macOS 13+，universal（Apple Silicon 原生 / Intel 原生），解压后是 .app\n' "$RELEASE_TAG"
+            # 有没有 Windows 包取决于这次 dispatch 勾没勾，按实际文件判断，
+            # 免得摘要里写了一个不存在的资产。
+            if [ -f "dist/fqapp-$RELEASE_TAG-windows-x64.zip" ]; then
+              printf -- '- `fqapp-%s-windows-x64.zip` — Windows 10/11 便携包，解压即用（未做真机验收）\n' "$RELEASE_TAG"
+            fi
             printf -- '- `build-info.txt` — Rust 核心与签名指纹\n'
           } >> "$GITHUB_STEP_SUMMARY"
