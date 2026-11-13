@@ -2011,6 +2011,7 @@ class _DetailPageState extends State<DetailPage> {
         shelfItem: widget.item,
       ),
       _ => ReaderPage(
+        bookDetail: _bookDetail,
         bookId: _contentId,
         title: widget.item.title,
         cover: widget.item.cover,
