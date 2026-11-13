@@ -24,6 +24,7 @@ import '../widgets/home/home_design.dart';
 import '../widgets/settings/core_proxy_settings_panel.dart';
 import '../widgets/settings/settings_adaptive.dart';
 import '../widgets/settings/settings_archive_page.dart';
+import '../widgets/settings/core_proxy_settings_panel.dart';
 import '../widgets/settings/settings_archive_rows.dart';
 import '../widgets/settings/settings_scroll_anchor.dart';
 import '../widgets/settings/settings_widgets.dart';

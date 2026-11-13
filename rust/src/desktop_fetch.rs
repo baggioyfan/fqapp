@@ -3,10 +3,7 @@
 use reqwest::{blocking::Client, header};
 use std::{
     io::Read,
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        OnceLock,
-    },
+    sync::atomic::{AtomicBool, Ordering},
     thread,
     time::Duration,
 };
@@ -79,23 +76,32 @@ const BACKOFF: [Duration; 2] = [Duration::from_millis(300), Duration::from_milli
 
 /// One pool for every session: switching episodes reuses the CDN connection
 /// (and its TLS session) of the previous episode instead of a new handshake.
-pub(crate) fn shared_client() -> Option<&'static Client> {
-    static CLIENT: OnceLock<Client> = OnceLock::new();
-    if let Some(client) = CLIENT.get() {
-        return Some(client);
-    }
-    let _ = rustls::crypto::ring::default_provider().install_default();
-    let client = Client::builder()
-        .connect_timeout(Duration::from_secs(5))
-        .pool_idle_timeout(Duration::from_secs(120))
-        .build()
-        .ok()?;
-    let _ = CLIENT.set(client);
-    CLIENT.get()
+///
+/// 桌面媒体实际走的是 `desktop_media::media_client` 的**按 host 缓存**（那边要
+/// 按 host 把 A 记录排到 AAAA 前面，一个全局 client 装不下，见那处注释）。这条
+/// 通用池留着给本文件的测试与将来的调用点，所以非 test 构建下允许它未被引用。
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn shared_client() -> Option<Client> {
+    static CLIENT: crate::network::ClientCache<Client> = crate::network::ClientCache::new();
+    CLIENT
+        .get(|policy| {
+            let _ = rustls::crypto::ring::default_provider().install_default();
+            policy
+                .configure_blocking(Client::builder())
+                .connect_timeout(Duration::from_secs(5))
+                .pool_idle_timeout(Duration::from_secs(120))
+                .build()
+                .map_err(|e| format!("build media client: {e}"))
+        })
+        .ok()
 }
 
 /// Fetches `bytes=start-end` and checks the answer describes exactly that span.
 /// Returns the body and the total length from `Content-Range`.
+///
+/// 媒体侧读流走的是 `fetch_known_range`（已知总长，省一次探测）；这个不带长度
+/// 的变体只在测试里用，所以非 test 构建下允许它未被引用。
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn fetch_range(
     client: &Client,
     url: &str,
@@ -251,7 +257,7 @@ mod tests {
         let client = shared_client().unwrap();
         let cancelled = AtomicBool::new(false);
         let (data, total) = with_retries(&cancelled, || {
-            fetch_range(client, &url, 0, 0, PROBE_TIMEOUT)
+            fetch_range(&client, &url, 0, 0, PROBE_TIMEOUT)
         })
         .unwrap();
         assert_eq!((data.as_slice(), total), (&b"x"[..], 42));
@@ -266,7 +272,7 @@ mod tests {
         let client = shared_client().unwrap();
         let cancelled = AtomicBool::new(false);
         let error = with_retries(&cancelled, || {
-            fetch_range(client, &url, 0, 0, PROBE_TIMEOUT)
+            fetch_range(&client, &url, 0, 0, PROBE_TIMEOUT)
         })
         .unwrap_err();
         assert_eq!(error, FetchError::Status(403));
@@ -291,7 +297,7 @@ mod tests {
         let client = shared_client().unwrap();
         let cancelled = AtomicBool::new(false);
         let error = with_retries(&cancelled, || {
-            fetch_range(client, &url, 0, 0, PROBE_TIMEOUT)
+            fetch_range(&client, &url, 0, 0, PROBE_TIMEOUT)
         })
         .unwrap_err();
         assert_eq!(error, FetchError::Status(200));

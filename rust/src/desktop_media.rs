@@ -4,8 +4,8 @@
 // 上游侧新增了全局 shared_client 与按已知长度的分段拉取，两边代码在合并后同时
 // 存在，所以两套符号都要引；net 里 Shutdown 只给上游的 socket 收尾用。
 use crate::desktop_fetch::{
-    content_range, fetch_known_range, fetch_range, shared_client, with_retries, FetchError,
-    OpenError, CHUNK_TIMEOUT, PROBE_TIMEOUT,
+    content_range, fetch_known_range, with_retries, FetchError, OpenError, CHUNK_TIMEOUT,
+    PROBE_TIMEOUT,
 };
 use reqwest::{blocking::Client, header};
 use serde::Deserialize;
@@ -87,10 +87,15 @@ fn media_client(url: &str) -> Result<&'static Client, OpenError> {
             return Ok(client);
         }
     }
-    let mut builder = Client::builder()
-        .connect_timeout(Duration::from_secs(8))
-        .timeout(Duration::from_secs(15))
-        .pool_idle_timeout(Duration::from_secs(120));
+    // 核心代理是「按需配置」的：Windows 上用户选了代理之后，媒体取流也必须
+    // 走它，否则视频绕开代理直连（要走代理才通的 CDN 会整段取不到）。
+    // macOS 没有代理配置界面，那里的 policy 是透传，行为不变。
+    let mut builder = crate::network::policy().configure_blocking(
+        Client::builder()
+            .connect_timeout(Duration::from_secs(8))
+            .timeout(Duration::from_secs(15))
+            .pool_idle_timeout(Duration::from_secs(120)),
+    );
     // `domain()` is None for IP literals, which must keep the default resolver.
     if let Some(parsed) = &parsed {
         if let Some(host) = parsed.domain() {
