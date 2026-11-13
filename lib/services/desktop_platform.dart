@@ -75,6 +75,42 @@ bool desktopInactiveStillVisible(AppLifecycleState state) =>
                 defaultTargetPlatform == TargetPlatform.linux)) &&
         state == AppLifecycleState.inactive);
 
+/// 桌面系统会话（锁屏 / 挂起）的共享状态。
+///
+/// 只有 Linux 有真实的 logind 事件源（`native/linux/bridge.cc` 推
+/// `fqapp/desktop_session_events`）；Windows/macOS 既不推也不读，
+/// [blocked] 保持 false，所以朗读与后台播放的判断在那两个平台上是原样。
+class DesktopSystemSession extends ChangeNotifier {
+  static final instance = DesktopSystemSession();
+  bool locked = false;
+  bool suspended = false;
+  bool serviceAvailable = false;
+  bool get blocked => locked || suspended;
+
+  void accept(dynamic event) {
+    if (event is! Map || event['value'] is! bool) return;
+    final value = event['value'] as bool;
+    switch (event['type']) {
+      case 'locked':
+        if (locked == value) return;
+        locked = value;
+      case 'suspend':
+        if (suspended == value) return;
+        suspended = value;
+      case 'service':
+        serviceAvailable = value;
+        if (!value) AppLog.w('session', 'logind 不可用，无法保证锁屏/挂起通知');
+      default:
+        return;
+    }
+    notifyListeners();
+  }
+
+  AppLifecycleState get lifecycle => blocked
+      ? AppLifecycleState.hidden
+      : WidgetsBinding.instance.lifecycleState ?? AppLifecycleState.resumed;
+}
+
 class DesktopPlatform with WindowListener {
   DesktopPlatform._();
   static final instance = DesktopPlatform._();
@@ -94,6 +130,7 @@ class DesktopPlatform with WindowListener {
   Process? _caffeinate;
   String? _readerSession;
   Timer? _readerTimer;
+  StreamSubscription<dynamic>? _sessionEvents;
 
   Stream<dynamic> events(String name) =>
       (_events[name] ??= StreamController<dynamic>.broadcast()).stream;
@@ -168,6 +205,20 @@ class DesktopPlatform with WindowListener {
         _smtc = null;
       }
     }
+    // Linux 的系统会话事件由 native bridge 推上来（logind 的 lock/unlock 与
+    // suspend/resume）。Windows/macOS 没有这条通道，就不订阅——朗读与后台
+    // 播放的判断读 [DesktopSystemSession.blocked]，保持 false 即原行为。
+    if (isLinuxDesktop) _bindLinuxSession();
+  }
+
+  void _bindLinuxSession() {
+    _sessionEvents = const EventChannel(
+      'fqapp/desktop_session_events',
+    ).receiveBroadcastStream().listen(
+      DesktopSystemSession.instance.accept,
+      onError: (Object error) =>
+          AppLog.w('session', 'Linux session unavailable: $error'),
+    );
   }
 
   Widget videoSurface(int id, {Key? key}) {
@@ -216,6 +267,8 @@ class DesktopPlatform with WindowListener {
       await _smtc?.disableSmtc();
       _readerTimer?.cancel();
       _readerAwake = _playerAwake = false;
+      await _sessionEvents?.cancel();
+      _sessionEvents = null;
       _updateAwake();
     } finally {
       await windowManager.destroy();

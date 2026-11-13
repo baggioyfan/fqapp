@@ -53,6 +53,11 @@ class _AudioPlaybackController extends ChangeNotifier
   // 小米公平运行内存 KILL 广播的刷盘注销函数，见 reader_page.dart。
   VoidCallback? _unregisterFairMemoryFlush;
   bool _appActive = true;
+
+  /// Linux 锁屏/挂起造成的那次暂停：恢复要等它落定再续播，否则 stop 与
+  /// play 会抢同一个原生播放器。世代号防止恢复期间会话又换了章节。
+  Future<void>? _visibilityPause;
+  int? _visibilityResumeGeneration;
   bool _loading = true;
   bool _wantPlay = true;
   bool _completed = false;
@@ -197,12 +202,19 @@ class _AudioPlaybackController extends ChangeNotifier
   bool get _ready =>
       !_closed && !_loading && _error == null && (_player?.isCreated ?? false);
 
+  /// 本次播放会话的媒体远端拥有者（见 `NativePlayer.allocateRemoteOwner`）。
+  final String _mediaOwner = NativePlayer.allocateRemoteOwner();
+
   void start() {
     WidgetsBinding.instance.addObserver(this);
+    if (isLinuxDesktop) {
+      DesktopSystemSession.instance.addListener(_systemSessionChanged);
+    }
     // 小米公平运行内存：KILL 广播到达时刷一次听书进度，避免被杀丢进度。
     _unregisterFairMemoryFlush = FairMemoryService.instance
         .registerFlushHandler(_persistProgress);
     NativePlayer.setRemoteCommandHandler(
+      owner: _mediaOwner,
       onAction: _handleRemoteAction,
       onBecomingNoisy: _handleBecomingNoisy,
     );
@@ -398,8 +410,11 @@ class _AudioPlaybackController extends ChangeNotifier
 
   void _syncForeground() {
     if (_closed || _index < 0 || _index >= _chapters.length) return;
-    if (!AudioPreferences.instance.backgroundPlayback.value) {
-      unawaited(NativePlayer.stopListenForeground());
+    // Linux 的 MPRIS 会话即使关掉「后台播放」也要挂着（系统媒体键与锁屏
+    // 控件都靠它），所以那个开关只在移动端决定要不要撤通知。
+    if (!isLinuxDesktop &&
+        !AudioPreferences.instance.backgroundPlayback.value) {
+      unawaited(NativePlayer.stopListenForeground(owner: _mediaOwner));
       return;
     }
     final player = _player;
@@ -407,6 +422,7 @@ class _AudioPlaybackController extends ChangeNotifier
         (player?.playing ?? false) && _wantPlay && !_completed && !_loading;
     unawaited(
       NativePlayer.startListenForeground(
+        owner: _mediaOwner,
         title: _title,
         episode: _chapters[_index].title,
         // 通知大图 / 媒体卡封面用的是当前书籍封面，不是应用图标。
@@ -463,21 +479,59 @@ class _AudioPlaybackController extends ChangeNotifier
     _syncForeground();
   }
 
+  void _systemSessionChanged() =>
+      didChangeAppLifecycleState(DesktopSystemSession.instance.lifecycle);
+
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (_closed) return;
-    _appActive = state == AppLifecycleState.resumed;
+    _appActive = isLinuxDesktop
+        ? desktopInactiveStillVisible(state)
+        : state == AppLifecycleState.resumed;
+    if (isLinuxDesktop && state == AppLifecycleState.detached) {
+      _visibilityResumeGeneration = null;
+      unawaited(close());
+      return;
+    }
+    if (isLinuxDesktop &&
+        !DesktopSystemSession.instance.suspended &&
+        (_appActive || AudioPreferences.instance.backgroundPlayback.value)) {
+      unawaited(_resumeAfterVisibility());
+    }
     if (!_appActive) {
       // 切换到后台或锁屏时立即持久化当前进度，防止后续被系统杀后台导致进度丢失。
       unawaited(_persistProgress());
-      // 若后台听书开关关闭，切后台自动暂停播放并移除前台通知。
-      if (!AudioPreferences.instance.backgroundPlayback.value) {
-        unawaited(_pauseForOtherMedia());
-        unawaited(NativePlayer.stopListenForeground());
+      // 若后台听书开关关闭，切后台自动暂停播放并移除前台通知。Linux 锁屏
+      // 也算「不可见」，但那里不撤会话 —— 只暂停，回来还要用它续播。
+      if ((!AudioPreferences.instance.backgroundPlayback.value ||
+              (isLinuxDesktop && DesktopSystemSession.instance.suspended)) &&
+          _wantPlay) {
+        final resume = isLinuxDesktop && _wantPlay;
+        _visibilityPause = _pauseForOtherMedia();
+        if (resume) _visibilityResumeGeneration = _generation;
+        unawaited(NativePlayer.stopListenForeground(owner: _mediaOwner));
       }
     }
     _syncListenClock();
     if (!_closed) _update(() {});
+  }
+
+  Future<void> _resumeAfterVisibility() async {
+    final generation = _visibilityResumeGeneration;
+    if (generation == null) return;
+    await _visibilityPause;
+    if (_closed ||
+        (!_appActive && !AudioPreferences.instance.backgroundPlayback.value) ||
+        !NativePlayer.ownsRemoteOwner(_mediaOwner) ||
+        DesktopSystemSession.instance.suspended ||
+        _generation != generation ||
+        _visibilityResumeGeneration != generation) {
+      return;
+    }
+    _visibilityResumeGeneration = null;
+    _update(() => _wantPlay = true);
+    final player = _player;
+    if (_ready && player != null) await _play(player, generation);
   }
 
   Future<void> _openChapter(
@@ -1090,7 +1144,7 @@ class _AudioPlaybackController extends ChangeNotifier
   void _fail(Object error, int generation) {
     if (!_current(generation)) return;
     ListeningSession.instance.clear();
-    unawaited(NativePlayer.stopListenForeground());
+    unawaited(NativePlayer.stopListenForeground(owner: _mediaOwner));
     ++_generation;
     _saveTimer?.cancel();
     _listenTime.stop();
@@ -1114,6 +1168,10 @@ class _AudioPlaybackController extends ChangeNotifier
 
   Future<void> _play(NativePlayer player, int generation) async {
     if (!_current(generation, player) || !_wantPlay) return;
+    // Linux：锁屏/挂起期间不要开播（否则 MPRIS 上显示在播、实际没声），
+    // 开播前先把媒体 owner 抢回来。
+    if (isLinuxDesktop) NativePlayer.claimRemoteOwner(_mediaOwner);
+    if (isLinuxDesktop && DesktopSystemSession.instance.suspended) return;
     if (!_appActive && !AudioPreferences.instance.backgroundPlayback.value) {
       await _pauseForOtherMedia();
       return;
@@ -1489,7 +1547,10 @@ class _AudioPlaybackController extends ChangeNotifier
     AudioPreferences.instance.backgroundPlayback.removeListener(
       _preferencesChanged,
     );
-    NativePlayer.clearRemoteCommandHandler();
+    if (isLinuxDesktop) {
+      DesktopSystemSession.instance.removeListener(_systemSessionChanged);
+    }
+    NativePlayer.clearRemoteCommandHandler(owner: _mediaOwner);
     ListeningSession.instance.clear();
     final saved = _persistProgress().catchError((Object _) {});
     // 离开听书也推一次进度，与 player_page / reader_page 对齐：应用还在前台，
@@ -1503,7 +1564,7 @@ class _AudioPlaybackController extends ChangeNotifier
     // session teardown forever if the platform never answers (engine
     // shutdown, or a widget test with no channel mock), which in turn
     // stalls the acquire queue waiting on close().
-    unawaited(NativePlayer.stopListenForeground());
+    unawaited(NativePlayer.stopListenForeground(owner: _mediaOwner));
     await Future.wait([saved, released]);
     // Views/sheets may still be detaching during close; their listenables
     // remain readable until they release this controller for collection.

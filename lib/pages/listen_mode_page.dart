@@ -8,6 +8,7 @@ import '../services/api_client.dart';
 import '../services/app_theme.dart';
 import '../services/audio_floating_routes.dart';
 import '../services/audio_preferences.dart';
+import '../services/desktop_platform.dart';
 import '../services/episode_source_cache.dart';
 import '../services/native_player.dart';
 import '../services/player_preferences.dart';
@@ -66,6 +67,10 @@ class _ListenModePageState extends State<ListenModePage>
   static const _rates = <double>[0.75, 1.0, 1.25, 1.5, 2.0];
   double _rate = 1.0;
 
+  /// 本页的媒体远端拥有者；MPRIS 回调靠它认领。
+  final String _mediaOwner = NativePlayer.allocateRemoteOwner();
+  int? _systemResumeIndex;
+
   /// 播放位置（原生位置流约 5Hz）：只喂给进度区，不触发整页重建。
   final ValueNotifier<Duration> _position = ValueNotifier(Duration.zero);
 
@@ -84,8 +89,12 @@ class _ListenModePageState extends State<ListenModePage>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    if (isLinuxDesktop) {
+      DesktopSystemSession.instance.addListener(_systemSessionChanged);
+    }
     unawaited(AudioPreferences.instance.load());
     NativePlayer.setRemoteCommandHandler(
+      owner: _mediaOwner,
       onAction: _handleRemoteAction,
       onBecomingNoisy: _handleBecomingNoisy,
     );
@@ -121,12 +130,32 @@ class _ListenModePageState extends State<ListenModePage>
     if (mounted) setState(() {});
   }
 
+  void _systemSessionChanged() =>
+      didChangeAppLifecycleState(DesktopSystemSession.instance.lifecycle);
+
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state != AppLifecycleState.resumed &&
-        !AudioPreferences.instance.backgroundPlayback.value) {
+    if (!isLinuxDesktop) {
+      if (state != AppLifecycleState.resumed &&
+          !AudioPreferences.instance.backgroundPlayback.value) {
+        unawaited(_player?.pause());
+        unawaited(_stopForeground());
+        if (mounted) setState(() {});
+      }
+      return;
+    }
+    // Linux：窗口失焦不算离开；只有锁屏/挂起才停，回来按索引续播。
+    if (DesktopSystemSession.instance.blocked) {
+      _systemResumeIndex = _index;
       unawaited(_player?.pause());
-      unawaited(_stopForeground());
+      if (mounted) setState(() {});
+      return;
+    }
+    final resume = _systemResumeIndex;
+    _systemResumeIndex = null;
+    if (resume != null && mounted && !_popped) {
+      unawaited(_player?.play());
+      unawaited(_startForeground());
       if (mounted) setState(() {});
     }
   }
@@ -134,8 +163,11 @@ class _ListenModePageState extends State<ListenModePage>
   @override
   void dispose() {
     _popped = true;
+    if (isLinuxDesktop) {
+      DesktopSystemSession.instance.removeListener(_systemSessionChanged);
+    }
     WidgetsBinding.instance.removeObserver(this);
-    NativePlayer.clearRemoteCommandHandler();
+    NativePlayer.clearRemoteCommandHandler(owner: _mediaOwner);
     _completedSub?.cancel();
     _positionSub?.cancel();
     _durationSub?.cancel();
@@ -228,6 +260,7 @@ class _ListenModePageState extends State<ListenModePage>
   }
 
   Future<void> _togglePlay() async {
+    if (isLinuxDesktop) NativePlayer.claimRemoteOwner(_mediaOwner);
     final player = _player;
     if (player == null) return;
     if (player.playWhenReady) {
@@ -246,17 +279,29 @@ class _ListenModePageState extends State<ListenModePage>
     await _load(target, autoplay: true);
   }
 
-  Future<void> _startForeground() {
-    if (!AudioPreferences.instance.backgroundPlayback.value) {
+  Future<void> _startForeground({bool seeked = false}) {
+    // Linux 的 MPRIS 会话常驻（系统媒体键、锁屏控件都靠它），「后台播放」
+    // 开关只决定移动端要不要撤通知。
+    if (!isLinuxDesktop &&
+        !AudioPreferences.instance.backgroundPlayback.value) {
       return _stopForeground();
     }
     final player = _player;
     return NativePlayer.startListenForeground(
+      owner: _mediaOwner,
+      seeked: seeked,
+      linuxPlayerId: player?.playerId,
+      minimumRate: 0.75,
+      maximumRate: 2,
       title: widget.seriesTitle,
       episode: _episodeTitle(_index),
       // 通知左上角与系统媒体卡片显示的就是这张封面（对齐官方）。
       coverUrl: widget.coverUrl,
-      playing: player?.playWhenReady ?? true,
+      // MPRIS 的「正在播放」要同时看 playWhenReady 与实际 playing，否则
+      // 缓冲中会显示成在播。
+      playing: isLinuxDesktop
+          ? (player?.playing ?? false) && (player?.playWhenReady ?? false)
+          : player?.playWhenReady ?? true,
       hasPrev: _index > 0,
       hasNext: _index < widget.episodes.length - 1,
       // 位置 + 倍速交给系统外推；总时长决定媒体卡片两侧的时间。
@@ -266,7 +311,8 @@ class _ListenModePageState extends State<ListenModePage>
     );
   }
 
-  Future<void> _stopForeground() => NativePlayer.stopListenForeground();
+  Future<void> _stopForeground() =>
+      NativePlayer.stopListenForeground(owner: _mediaOwner);
 
   Future<void> _seekTo(double value) async {
     final player = _player;

@@ -14,6 +14,9 @@ import 'audio_preferences.dart';
 import 'backend_transport.dart';
 import 'chapter_cache_store.dart';
 import 'chapter_text_formatter.dart';
+// isLinuxDesktop 也定义在 desktop_platform 里（与 Windows/macOS 并列），
+// 这里不再单独 import linux_platform，避免同名符号二义。
+import 'desktop_platform.dart';
 import 'listening_session.dart';
 import 'narration_sentence.dart';
 import 'native_player.dart';
@@ -29,9 +32,14 @@ class SystemTts {
   static const _events = AppEventChannel('fqapp/system_tts_events');
   static final events = _events.receiveBroadcastStream();
 
-  static Future<T?> _call<T>(String method, [Object? arguments]) => _channel
-      .invokeMethod<T>(method, arguments)
-      .timeout(const Duration(seconds: 20));
+  static Future<T?> _call<T>(String method, [Object? arguments]) {
+    final pending = _channel.invokeMethod<T>(method, arguments);
+    // Linux worker 在确认前一直持有这次操作（包括 close），超时会把一次
+    // 正常的合成判成失败，所以那里不加 timeout。
+    return isLinuxDesktop
+        ? pending
+        : pending.timeout(const Duration(seconds: 20));
+  }
 
   static Future<({List<SystemTtsEngine> engines, String? defaultEngine})>
   engines() async {
@@ -50,6 +58,9 @@ class SystemTts {
       await _call<int>('initialize', {
         'engine': prefs.engine,
         'rate': prefs.rate,
+        // 音量只有 Linux 的 speech-dispatcher 侧需要，Android 的内部引擎
+        // 不认这个参数（传了也无害，但少一个字段少一次误解）。
+        if (isLinuxDesktop && prefs.volume != null) 'volume': prefs.safeVolume,
       }) ??
       4000;
 
@@ -77,15 +88,25 @@ class SystemTts {
 }
 
 class SystemTtsPreferences {
-  const SystemTtsPreferences({this.engine, this.rate = 1});
+  const SystemTtsPreferences({this.engine, this.rate = 1, this.volume});
   final String? engine;
   final double rate;
+
+  /// 0..1 映射到 libspeechd 的 -100..100；null 表示沿用守护进程的默认值。
+  /// 只有 Linux 的 speech-dispatcher 后端读它（见 `native/linux/tts.cc`）。
+  final double? volume;
+  double get safeVolume => volume?.isFinite == true ? volume!.clamp(0, 1) : 1;
 
   static Future<SystemTtsPreferences> load() async {
     final sp = await SharedPreferences.getInstance();
     final rate = sp.getDouble('system_tts_rate') ?? 1;
     return SystemTtsPreferences(
       engine: sp.getString('system_tts_engine'),
+      volume: sp.containsKey('system_tts_volume')
+          ? SystemTtsPreferences(
+              volume: sp.getDouble('system_tts_volume'),
+            ).safeVolume
+          : null,
       rate: rate.isFinite ? rate.clamp(0.5, 3) : 1,
     );
   }
@@ -98,6 +119,7 @@ class SystemTtsPreferences {
       await sp.setString('system_tts_engine', engine!);
     }
     await sp.setDouble('system_tts_rate', rate);
+    if (volume != null) await sp.setDouble('system_tts_volume', safeVolume);
   }
 }
 
@@ -253,6 +275,11 @@ class SystemTtsPlayback extends ChangeNotifier with WidgetsBindingObserver {
   Future<void> _pumps = Future<void>.value();
   Future<void> _engineQueue = Future<void>.value();
   Future<void>? _closeFuture;
+
+  /// Linux 锁屏/挂起造成的那次暂停：恢复时要等它落定再续播，否则 stop 和
+  /// speak 会抢同一个 worker。世代号防止恢复期间会话又变了。
+  Future<void>? _visibilityPause;
+  int? _visibilityResumeGeneration;
   BackendRequest? _loadRequest;
   TextReplacementCancellation? _replacementCancellation;
 
@@ -260,7 +287,11 @@ class SystemTtsPlayback extends ChangeNotifier with WidgetsBindingObserver {
   double get progress =>
       _text.isEmpty ? 0 : (_offset / _text.length).clamp(0, 1);
   bool get _allowed =>
-      _appActive || AudioPreferences.instance.backgroundPlayback.value;
+      !(isLinuxDesktop && DesktopSystemSession.instance.suspended) &&
+      (_appActive || AudioPreferences.instance.backgroundPlayback.value);
+
+  /// 本次朗读会话的媒体远端拥有者（见 `NativePlayer.allocateRemoteOwner`）。
+  final String _mediaOwner = NativePlayer.allocateRemoteOwner();
 
   void start() {
     if (_started || closed) return;
@@ -273,10 +304,19 @@ class SystemTtsPlayback extends ChangeNotifier with WidgetsBindingObserver {
       return;
     }
     WidgetsBinding.instance.addObserver(this);
+    if (isLinuxDesktop) {
+      DesktopSystemSession.instance.addListener(_systemSessionChanged);
+    }
     book.replacementStore.changes.addListener(_replacementChanged);
-    _appActive =
-        WidgetsBinding.instance.lifecycleState == null ||
-        WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed;
+    final lifecycle = WidgetsBinding.instance.lifecycleState;
+    _appActive = lifecycle == null ||
+        // 桌面上窗口失焦只是 inactive，仍然看得见、朗读不该停；移动端保持
+        // 原来的「只有 resumed 才算活跃」。Linux 用与 Windows/macOS 相同的
+        // 判定（desktopInactiveStillVisible），但这里只对 Linux 生效，避免
+        // 改动另外两个桌面端已经稳定的行为。
+        (isLinuxDesktop
+            ? desktopInactiveStillVisible(lifecycle)
+            : lifecycle == AppLifecycleState.resumed);
     AudioPreferences.instance.backgroundPlayback.addListener(
       _preferencesChanged,
     );
@@ -287,9 +327,27 @@ class SystemTtsPlayback extends ChangeNotifier with WidgetsBindingObserver {
       },
     );
     NativePlayer.setRemoteCommandHandler(
+      owner: _mediaOwner,
+      // Linux 的 MPRIS 把音量/速率改过来时走这里；Android/Windows 不会发
+      // 这个回调，注册了也无害。
+      onSetting: (property, value) async {
+        if (closed) throw StateError('Closed TTS');
+        await SystemTts._call<void>(
+          property == 'Volume' ? 'setVolume' : 'setRate',
+          {property == 'Volume' ? 'volume' : 'rate': value},
+        );
+        if (closed) throw StateError('Closed TTS');
+        final settings = await SystemTts._call<Map>('getPlaybackSettings');
+        return (settings![property == 'Volume' ? 'volume' : 'rate'] as num)
+            .toDouble();
+      },
       onAction: (action) {
         if (closed) return;
         switch (action) {
+          case 'play':
+            unawaited(resume());
+          case 'pause':
+            unawaited(pause());
           case 'playPause':
             unawaited(toggle());
           case 'prev':
@@ -567,6 +625,9 @@ class SystemTtsPlayback extends ChangeNotifier with WidgetsBindingObserver {
     }
     final token = ++_generation;
     wantPlay = true;
+    // Linux：暂停期间媒体会话可能已交给别的页面（听书页、音频页），续播前
+    // 把 owner 抢回来，否则 MPRIS 上的播放键仍然发给别人。
+    if (isLinuxDesktop) NativePlayer.claimRemoteOwner(_mediaOwner);
     error = null;
     if (completed) {
       _offset = 0;
@@ -659,10 +720,16 @@ class SystemTtsPlayback extends ChangeNotifier with WidgetsBindingObserver {
     if (notification) {
       _notificationQueue = _notificationQueue.then((_) async {
         if (closed) return;
-        if (!AudioPreferences.instance.backgroundPlayback.value) {
-          await NativePlayer.stopListenForeground();
+        // Linux 的 MPRIS 会话即使关掉「后台播放」也要挂着：它同时承载
+        // 系统媒体键与锁屏控件的元数据，撤掉会让正在前台播的朗读失去控制。
+        if (!isLinuxDesktop &&
+            !AudioPreferences.instance.backgroundPlayback.value) {
+          await NativePlayer.stopListenForeground(owner: _mediaOwner);
         } else {
           await NativePlayer.startListenForeground(
+            owner: _mediaOwner,
+            linuxTts: true,
+            minimumRate: 0.25,
             title: book.title,
             episode: '系统朗读 · ${chapter.title}',
             coverUrl: book.coverUrl,
@@ -696,8 +763,31 @@ class SystemTtsPlayback extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   @override
+  void _systemSessionChanged() {
+    if (DesktopSystemSession.instance.suspended) _ready = false;
+    didChangeAppLifecycleState(DesktopSystemSession.instance.lifecycle);
+  }
+
+  @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    _appActive = state == AppLifecycleState.resumed;
+    _appActive = isLinuxDesktop
+        ? desktopInactiveStillVisible(state)
+        : state == AppLifecycleState.resumed;
+    if (isLinuxDesktop && state == AppLifecycleState.detached) {
+      // Linux 关窗口走的是 detached：直接收摊，别留一个 worker 在后台念。
+      _visibilityResumeGeneration = null;
+      unawaited(close());
+      return;
+    }
+    if (isLinuxDesktop) {
+      if (!_allowed && wantPlay) {
+        _visibilityPause = _pauseForInterruption();
+        _visibilityResumeGeneration = _generation;
+      } else if (_allowed && _visibilityResumeGeneration != null) {
+        unawaited(_resumeAfterVisibility());
+      }
+      return;
+    }
     if (!_allowed) {
       // 切后台不是用户想停朗读（电话期间几乎必然走这一条）：按系统打断
       // 处理，等回到前台时若有欠下的 focus_resume 就补上续播。
@@ -711,6 +801,21 @@ class SystemTtsPlayback extends ChangeNotifier with WidgetsBindingObserver {
     }
   }
 
+  Future<void> _resumeAfterVisibility() async {
+    final generation = _visibilityResumeGeneration;
+    await _visibilityPause;
+    if (closed ||
+        !_allowed ||
+        !NativePlayer.ownsRemoteOwner(_mediaOwner) ||
+        generation == null ||
+        generation != _generation ||
+        _visibilityResumeGeneration != generation) {
+      return;
+    }
+    _visibilityResumeGeneration = null;
+    await resume();
+  }
+
   Future<void> close() => _closeFuture ??= _close();
 
   Future<void> _close() async {
@@ -721,11 +826,14 @@ class SystemTtsPlayback extends ChangeNotifier with WidgetsBindingObserver {
     _loadRequest?.cancel();
     _resetQueue(_offset);
     wantPlay = false;
+    if (isLinuxDesktop) {
+      DesktopSystemSession.instance.removeListener(_systemSessionChanged);
+    }
     WidgetsBinding.instance.removeObserver(this);
     AudioPreferences.instance.backgroundPlayback.removeListener(
       _preferencesChanged,
     );
-    NativePlayer.clearRemoteCommandHandler();
+    NativePlayer.clearRemoteCommandHandler(owner: _mediaOwner);
     ListeningSession.instance.clear();
     notifyListeners();
     // Do not await the EventChannel cancel: awaiting a platform-stream
@@ -738,7 +846,7 @@ class SystemTtsPlayback extends ChangeNotifier with WidgetsBindingObserver {
       await _engineCall<void>(() => SystemTts.shutdown());
     } catch (_) {}
     await _notificationQueue;
-    await NativePlayer.stopListenForeground();
+    await NativePlayer.stopListenForeground(owner: _mediaOwner);
     dispose();
   }
 }

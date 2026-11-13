@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 
 import 'app_log.dart';
 import 'audio_preferences.dart';
+import 'linux_platform.dart' show isLinuxDesktop;
 import 'player_preferences.dart';
 
 // Codec metadata only: never log the whole platform payload or exception text.
@@ -79,6 +80,38 @@ class NativePlayer {
   }
 
   static void Function(String action)? _onRemoteAction;
+  static void Function(int positionMs)? _onRemoteSeek;
+
+  /// 媒体「远端拥有者」：同一时刻只允许一个会话（阅读页朗读、听书页、
+  /// 音频页）接管系统媒体控制。Android 用前台服务、Windows 用 SMTC，
+  /// Linux 用 MPRIS —— 后者的回调里带 owner，必须对得上才执行，否则一个
+  /// 已关闭的页面能把活着的会话暂停掉。
+  static int _remoteGeneration = 0;
+  static String allocateRemoteOwner() => 'media-${++_remoteGeneration}';
+  static String? _remoteOwner;
+  static String? _remoteEpisode;
+  static int _foregroundGeneration = 0;
+  static bool ownsRemoteOwner(String owner) => _remoteOwner == owner;
+  static final _remoteHandlers =
+      <
+        String,
+        ({
+          void Function(String)? action,
+          void Function(int)? seek,
+          VoidCallback? noisy,
+          Future<double> Function(String, double)? setting,
+        })
+      >{};
+
+  static void claimRemoteOwner(String owner) {
+    final handler = _remoteHandlers[owner];
+    if (handler == null) return;
+    _remoteOwner = owner;
+    _onRemoteAction = handler.action;
+    _onRemoteSeek = handler.seek;
+    _onBecomingNoisy = handler.noisy;
+  }
+
   static VoidCallback? _onBecomingNoisy;
   static int? _floatingHandlerOwner;
   static void Function(String action)? _onFloatingAction;
@@ -127,13 +160,30 @@ class NativePlayer {
   static void setRemoteCommandHandler({
     void Function(String action)? onAction,
     VoidCallback? onBecomingNoisy,
+    String? owner,
+    void Function(int positionMs)? onSeek,
+    Future<double> Function(String, double)? onSetting,
   }) {
+    if (owner != null) {
+      _remoteHandlers[owner] = (
+        action: onAction,
+        seek: onSeek,
+        noisy: onBecomingNoisy,
+        setting: onSetting,
+      );
+    }
+    _remoteOwner = owner;
+    _onRemoteSeek = onSeek;
     _onRemoteAction = onAction;
     _onBecomingNoisy = onBecomingNoisy;
     _channel.setMethodCallHandler(_handleMethodCall);
   }
 
-  static void clearRemoteCommandHandler() {
+  static void clearRemoteCommandHandler({String? owner}) {
+    if (owner != null) _remoteHandlers.remove(owner);
+    if (owner != null && owner != _remoteOwner) return;
+    _remoteOwner = null;
+    _onRemoteSeek = null;
     _onRemoteAction = null;
     _onBecomingNoisy = null;
   }
@@ -176,6 +226,22 @@ class NativePlayer {
 
   static Future<dynamic> _handleMethodCall(MethodCall call) async {
     switch (call.method) {
+      case 'onMediaSetting':
+        // MPRIS 上的音量/速率是「从系统那边改过来」的，要回调到当前会话；
+        // owner 不匹配说明会话已经换人了，直接拒绝，别让旧页面改新播放器。
+        final raw = call.arguments as Map;
+        final owner = raw['owner'] as String?;
+        final handler = _remoteHandlers[owner]?.setting;
+        if (!isLinuxDesktop || owner != _remoteOwner || handler == null) {
+          throw PlatformException(code: 'stale_owner');
+        }
+        final result = await handler(
+          raw['property'] as String,
+          (raw['value'] as num).toDouble(),
+        );
+        if (owner != _remoteOwner) throw PlatformException(code: 'stale_owner');
+        return result;
+
       case 'onNotificationAction':
         final raw = call.arguments;
         final action = raw is Map
@@ -183,7 +249,18 @@ class NativePlayer {
             : raw is String
             ? raw
             : null;
-        if (action != null) {
+        if (isLinuxDesktop && (raw is! Map || raw['owner'] != _remoteOwner)) {
+          return null;
+        }
+        if (action == 'seekTo' &&
+            raw is Map &&
+            raw['episode'] != null &&
+            raw['episode'] != _remoteEpisode) {
+          return null;
+        }
+        if (action == 'seekTo' && raw is Map && raw['positionMs'] is int) {
+          _onRemoteSeek?.call(raw['positionMs'] as int);
+        } else if (action != null) {
           _onRemoteAction?.call(action);
         }
       case 'onAudioBecomingNoisy':
@@ -487,13 +564,42 @@ class NativePlayer {
     int positionMs = 0,
     int durationMs = 0,
     double speed = 1,
+    String? owner,
+    bool seeked = false,
+    int? linuxPlayerId,
+    bool linuxTts = false,
+    double minimumRate = 0.5,
+    double maximumRate = 3,
   }) async {
+    // Linux 上 MPRIS 会话是「独占」的：owner 对不上说明已有别的会话接管，
+    // 这时再推一条会把正在播的那页的元数据覆盖掉。
+    if (isLinuxDesktop && (owner == null || owner != _remoteOwner)) return;
+    final generation = ++_foregroundGeneration;
+    _remoteEpisode = episode;
     try {
+      Map? settings;
+      if (isLinuxDesktop && (linuxPlayerId != null || linuxTts)) {
+        settings = await AppMethodChannel(
+          linuxTts ? 'fqapp/system_tts' : 'fqapp/native_player',
+        ).invokeMethod<Map>('getPlaybackSettings', {'id': linuxPlayerId});
+        if (owner != _remoteOwner || generation != _foregroundGeneration) {
+          return;
+        }
+      }
       // No .timeout() here on purpose: the call is best-effort and the
       // plugin replies synchronously, while Future.timeout() leaves a
       // pending 10s timer that breaks widget tests under FakeAsync when
       // the fire-and-forget call is still in flight at test end.
       await _channel.invokeMethod<void>('startListenForeground', {
+        if (isLinuxDesktop) ...{
+          'owner': owner,
+          'transportV2': true,
+          'seekSupported': _onRemoteSeek != null,
+          'seeked': seeked,
+          'volume': settings?['volume'] ?? 1.0,
+          'minimumRate': minimumRate,
+          'maximumRate': maximumRate,
+        },
         'title': title,
         'episode': episode,
         'coverUrl': coverUrl,
@@ -502,17 +608,24 @@ class NativePlayer {
         'hasNext': hasNext,
         'positionMs': positionMs,
         'durationMs': durationMs,
-        'speed': speed,
+        'speed': settings?['rate'] ?? speed,
       });
+    } on PlatformException catch (error) {
+      if (isLinuxDesktop) AppLog.w('media', 'Linux 媒体会话不可用: ${error.code}');
     } catch (_) {
       // Best effort when channel/platform is unavailable or testing.
     }
   }
 
-  static Future<void> stopListenForeground() async {
+  static Future<void> stopListenForeground({String? owner}) async {
     try {
       // Same as startListenForeground: no .timeout(), see above.
-      await _channel.invokeMethod<void>('stopListenForeground');
+      await _channel.invokeMethod<void>(
+        'stopListenForeground',
+        isLinuxDesktop && owner != null ? {'owner': owner} : null,
+      );
+    } on PlatformException catch (error) {
+      if (isLinuxDesktop) AppLog.w('media', 'Linux 媒体会话不可用: ${error.code}');
     } catch (_) {
       // Best effort when channel/platform is unavailable or testing.
     }
