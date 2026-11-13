@@ -725,6 +725,12 @@ jobs:
       - name: Analyze
         run: flutter analyze --no-pub
 
+      # PR 历史守卫（.github/workflows/pr-history.yml）的脚本自身要有人测：
+      # 它只在 pull_request_target 里跑，平时没人看，坏掉的表现是「静默放行
+      # 一个超大 PR」而不是报错。用例 5 条、0.6 秒，比不测划算。
+      - name: Test the PR history guard
+        run: python3 -m unittest test/pr_history_guard_test.py
+
       # Size is review context, not a quality gate. Even a reporting error
       # must not block the build; analysis and functional checks stay enforced.
       # 上游 11-02 把这条从「冻结行数债务」的阻塞门禁降级成信息报告，
