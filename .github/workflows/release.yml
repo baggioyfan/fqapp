@@ -1,0 +1,188 @@
+name: Preview Release
+
+# 滚动预览版：master 每次成功构建 APK 之后，把 `preview` 这个 prerelease 刷新
+# 到该提交的产物 —— 想试新功能的人随时能拿到最新包，不必等正式版。正式版仍然
+# 是手动的：dispatch `Android APK` 并填 release_tag（见 android-apk.yml 的
+# publish job），版本号与时机由人把关。
+#
+# 与上游 release.yml 的差异，都是 fork 的交付面不同，不是简化：
+#
+# 1. **只收 APK**。fork 只构建 arm64 一个 ABI（32 位 split 随 armv7 的 Rust
+#    target 一起删掉了）；macOS job 只在 dispatch 时跑，master push 那次 run
+#    里没有 macOS 产物；Windows workflow 为了省额度已改成仅手动触发，push
+#    根本不会带起它。所以照抄上游「等 Android + Windows 两边齐了再发」会变成
+#    「永远等不到另一半」。
+# 2. **不硬卡「必须是正式签名证书」**。fork 没配 release 签名密钥时，APK 带的
+#    是构建机生成的 debug 身份（见 android-apk.yml 的 signing step），硬卡这
+#    一条会让预览版永远发不出来。改成：把实际指纹写进核验记录，并在与正式版
+#    不一致时明确写「安装前须先卸载另一签名的版本」。
+# 3. **不用 `gh run list --commit` 反查构建 run**。本 workflow 就是被那次 run
+#    触发的，run id 直接取事件负载，少一次 API 调用，也不会在同一个 commit
+#    有多个 run 时挑错（重跑会产生多个）。
+
+on:
+  workflow_run:
+    workflows: ['Android APK']
+    types: [completed]
+
+permissions:
+  contents: write
+  actions: read
+
+concurrency:
+  group: preview-release
+  cancel-in-progress: false
+
+jobs:
+  preview:
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'master'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      GH_TOKEN: ${{ github.token }}
+      # 第一个 step 在任何 checkout 之前，此时没有 git remote 让 gh 推断仓库；
+      # GH_REPO 是 gh 唯一会读的东西（上游 7411b5a6 修的正是这个）。
+      GH_REPO: ${{ github.repository }}
+      SHA: ${{ github.event.workflow_run.head_sha }}
+      RUN_ID: ${{ github.event.workflow_run.id }}
+      PREVIEW_TAG: preview
+      # 正式签名证书（SHA-256）。与 android-apk.yml 用同一个仓库变量、同一个
+      # 默认值，只用来判断「这个包能不能覆盖安装正式版」，不参与放行。
+      RELEASE_CERT: ${{ vars.RELEASE_SIGNER_SHA256 || 'e8471cd8a935fd71fd8197355b5558d245449d5bc8294f60f88616f60451c550' }}
+    steps:
+      - name: Check out the commit
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ env.SHA }}
+          fetch-depth: 0
+
+      - name: Download the build artifacts
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          gh run download "$RUN_ID" --dir artifacts
+          find artifacts -type f | head -20
+
+      - name: Assemble and verify the preview
+        id: assemble
+        run: |
+          set -euo pipefail
+          pubspec_version=$(grep -E '^version:' pubspec.yaml | awk '{print $2}')
+          base_version="${pubspec_version%%+*}"
+          echo "base_version=$base_version" >> "$GITHUB_OUTPUT"
+
+          apk=$(find artifacts -name 'app-arm64-v8a-release.apk' -print -quit)
+          report=$(find artifacts -path '*verification/arm64-v8a/report.json' -print -quit)
+          info=$(find artifacts -name 'build-info.txt' -print -quit)
+          for f in "$apk" "$report" "$info"; do
+            if [ -z "$f" ]; then
+              echo "::error::构建产物缺失（APK / verification report / build-info.txt）" >&2
+              find artifacts -type f | head -30 >&2
+              exit 1
+            fi
+          done
+
+          # 报告必须是通过状态、versionName 必须对得上 pubspec —— 别把一次
+          # 「构建跑完了但校验没过」的包推成预览版。
+          signer_digests=$(python3 - "$report" "$base_version" <<'PY'
+          import json, sys
+          path, base_version = sys.argv[1], sys.argv[2]
+          with open(path) as source:
+              report = json.load(source)
+          if report.get('status') != 'passed':
+              raise SystemExit(
+                  f"APK 校验报告不是 passed（{report.get('status')!r}）：{report.get('error')}")
+          name = report['application']['version_name']
+          if name != base_version:
+              raise SystemExit(
+                  f'APK versionName {name!r} 与 pubspec 的 {base_version!r} 不一致')
+          print(','.join(report['signature']['certificate_sha256']))
+          PY
+          )
+          signer_primary="${signer_digests%%,*}"
+          # 归一化再比：仓库变量可能被填成大写或带冒号（keytool 的默认写法），
+          # 直接字符串比较会把「同一个证书」判成不同。
+          normalize_cert() { printf '%s' "${1//:/}" | tr 'A-Z' 'a-z'; }
+          if [ "$(normalize_cert "$signer_primary")" = "$(normalize_cert "$RELEASE_CERT")" ]; then
+            cert_note="与正式版同一签名，可以覆盖安装"
+          else
+            cert_note="与正式版签名不同（仓库没配 release 签名密钥时就是这样），**安装前必须先卸载另一签名的版本**"
+          fi
+
+          mkdir -p out
+          cp "$apk" out/fqapp-preview-arm64-v8a.apk
+          cp "$info" out/build-info.txt
+          (cd out && sha256sum * > SHA256SUMS)
+
+          built_at=$(date -u '+%Y-%m-%d %H:%M UTC')
+          echo "built_at=$built_at" >> "$GITHUB_OUTPUT"
+          {
+            echo "# 预览版核验（自动生成）"
+            echo
+            echo "- 类型：滚动预览版（master 最新成功构建），**不是正式发布**"
+            # 变量一律带花括号：紧贴全角标点（，（））时 bash 会把多字节字符
+            # 当成标识符的一部分，`set -u` 下直接报 unbound variable。
+            echo "- 版本：${pubspec_version}，提交：${SHA}"
+            echo "- 构建于：${built_at}"
+            echo "- CI：Android APK run ${RUN_ID}（master 推送触发且成功）"
+            echo "- APK versionName：${base_version}（已与 pubspec 核对一致）"
+            echo "- APK 签名证书 SHA-256：\`${signer_primary}\`"
+            echo "- 签名身份：${cert_note}"
+            echo "- 范围：只含 Android arm64。macOS 包只在手动发版时构建，Windows"
+            echo "  构建已改为仅手动触发，所以预览版不含桌面端产物"
+            echo
+            echo '```'
+            cat out/SHA256SUMS
+            echo '```'
+          } > out/VALIDATION.md
+          ls -la out
+
+      - name: Publish the rolling preview release
+        run: |
+          set -euo pipefail
+          base_version="${{ steps.assemble.outputs.base_version }}"
+          built_at="${{ steps.assemble.outputs.built_at }}"
+          short_sha="${SHA:0:7}"
+
+          {
+            echo "## 最新预览版（滚动更新）"
+            echo
+            echo "这是 master 最新一次成功构建的**预览版**，主干更新后自动刷新，不是正式发布。"
+            echo "正式版请看 Releases 里标记 Latest 的那一个。"
+            echo
+            echo "- 版本：${base_version}（提交 \`${short_sha}\`，构建于 ${built_at}）"
+            echo "- Android：\`fqapp-preview-arm64-v8a.apk\`（arm64，主流机型）"
+            echo
+            echo "本仓库只构建 arm64 一个 ABI；桌面端产物不在预览版里（macOS 随正式版走，"
+            echo "Windows 构建改成手动触发后不再随 push 产出）。"
+            echo
+            echo "签名情况、版本核对与校验值见 \`VALIDATION.md\` 与 \`SHA256SUMS\`。"
+            echo
+            echo "### 自上个正式版以来的变更"
+            echo
+          } > notes.md
+          prev_tag=$(git tag -l 'v*' | sort -V | tail -1 || true)
+          if [ -n "$prev_tag" ]; then
+            gh api "repos/$GITHUB_REPOSITORY/releases/generate-notes" \
+              -f tag_name="$PREVIEW_TAG" -f target_commitish="$SHA" \
+              -f previous_tag_name="$prev_tag" \
+              --jq '.body' >> notes.md 2>/dev/null \
+              || git log --oneline "$prev_tag..$SHA" | sed 's/^/- /' >> notes.md
+          else
+            git log --oneline -20 "$SHA" | sed 's/^/- /' >> notes.md
+          fi
+
+          # 先删旧的 preview release + tag，再在新提交上重建。这里用 GITHUB_TOKEN
+          # 推送，不会反过来触发 workflow；`preview` 也不匹配 v* 的构建触发条件
+          # —— 不会形成发版循环。重建是安全的：每次都从产物重新组装。
+          gh release delete "$PREVIEW_TAG" --cleanup-tag --yes 2>/dev/null || true
+          git tag -f "$PREVIEW_TAG" "$SHA"
+          git push -f origin "refs/tags/$PREVIEW_TAG"
+          gh release create "$PREVIEW_TAG" out/* \
+            --title "最新预览版（${base_version} @ ${short_sha}）" \
+            --notes-file notes.md \
+            --prerelease
+          echo "Preview refreshed at $SHA."
