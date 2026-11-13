@@ -42,9 +42,13 @@ class AppStyleTokens extends ThemeExtension<AppStyleTokens> {
     AppThemeStyle.archive => const AppStyleTokens.archive(),
   };
 
+  /// 兜底必须是 [classic]：档案版式已从 fork 移除，任何缺少该 extension 的
+  /// 树（单页 widget 测试、未装配 AppStyleTokens 的兼容调用点）若落回档案
+  /// 度量，会拿到 16/24/14 的留白而不是经典界面依赖的 12/16/8，版式会静默
+  /// 偏移却不报任何错。
   static AppStyleTokens of(BuildContext context) =>
       Theme.of(context).extension<AppStyleTokens>() ??
-      const AppStyleTokens.archive();
+      const AppStyleTokens.classic();
 
   final AppThemeStyle style;
   final double panelRadius;
