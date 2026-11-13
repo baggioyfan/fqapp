@@ -5,4 +5,6 @@
 /// media-channel assembly there. This file stays as the import path the
 /// page-level capability gates already use; it re-exports rather than
 /// duplicating the `defaultTargetPlatform` check.
+library;
+
 export 'desktop_platform.dart' show isLinuxDesktop;

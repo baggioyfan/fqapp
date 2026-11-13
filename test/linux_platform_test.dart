@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hive_ce/hive.dart';
 
+import 'package:fqapp/services/desktop_platform.dart';
 import 'package:fqapp/services/encrypted_hive.dart';
 import 'package:fqapp/services/linux_libsecret_key_store.dart';
 import 'package:fqapp/services/secure_key_provider.dart';
