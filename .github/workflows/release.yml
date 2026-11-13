@@ -1,19 +1,25 @@
 name: Preview Release
 
-# 滚动预览版：master 每次成功构建 APK 之后，把 `preview` 这个 prerelease 刷新
+# 滚动预览版：master 上每有一次成功构建，就把 `preview` 这个 prerelease 刷新
 # 到该提交的产物 —— 想试新功能的人随时能拿到最新包，不必等正式版。正式版仍然
-# 是手动的：dispatch `Android APK` 并填 release_tag（见 android-apk.yml 的
+# 是手动的：dispatch `Build & Package` 并填 release_tag（见 build.yml 的
 # publish job），版本号与时机由人把关。
 #
-# 与上游 release.yml 的差异，都是 fork 的交付面不同，不是简化：
+# ⚠️ 触发事件不限于 push：build.yml 的 push 只挂 `tags: ['v*']`，master 推送
+# 根本不构建（省额度）。照上游那样只认 `event == 'push'` 的话，这个 workflow
+# 会永远等不到触发。所以这里只要求「成功 + 目标分支是 master」：
+#   - 在 master 上手动 dispatch（勾不勾 macos/windows 都行）→ 刷新预览版；
+#   - 推 v* tag 的 run，head_branch 是 tag 名 → 被排除，正式发版不会顺手改预览版；
+#   - 在分支上 dispatch → head_branch 是分支名 → 同样排除。
+#
+# 与上游 release.yml 的其余差异，都是 fork 的交付面不同，不是简化：
 #
 # 1. **只收 APK**。fork 只构建 arm64 一个 ABI（32 位 split 随 armv7 的 Rust
-#    target 一起删掉了）；macOS job 只在 dispatch 时跑，master push 那次 run
-#    里没有 macOS 产物；Windows workflow 为了省额度已改成仅手动触发，push
-#    根本不会带起它。所以照抄上游「等 Android + Windows 两边齐了再发」会变成
-#    「永远等不到另一半」。
+#    target 一起删掉了）；macOS / Windows job 只在 dispatch 且勾选时跑，所以
+#    一次 run 里很常见「没有桌面产物」。照抄上游「等 Android + Windows 两边
+#    齐了再发」会变成「永远等不到另一半」。
 # 2. **不硬卡「必须是正式签名证书」**。fork 没配 release 签名密钥时，APK 带的
-#    是构建机生成的 debug 身份（见 android-apk.yml 的 signing step），硬卡这
+#    是构建机生成的 debug 身份（见 build.yml 的 signing step），硬卡这
 #    一条会让预览版永远发不出来。改成：把实际指纹写进核验记录，并在与正式版
 #    不一致时明确写「安装前须先卸载另一签名的版本」。
 # 3. **不用 `gh run list --commit` 反查构建 run**。本 workflow 就是被那次 run
@@ -22,7 +28,7 @@ name: Preview Release
 
 on:
   workflow_run:
-    workflows: ['Android APK']
+    workflows: ['Build & Package']
     types: [completed]
 
 permissions:
@@ -37,7 +43,6 @@ jobs:
   preview:
     if: >-
       github.event.workflow_run.conclusion == 'success' &&
-      github.event.workflow_run.event == 'push' &&
       github.event.workflow_run.head_branch == 'master'
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -49,7 +54,7 @@ jobs:
       SHA: ${{ github.event.workflow_run.head_sha }}
       RUN_ID: ${{ github.event.workflow_run.id }}
       PREVIEW_TAG: preview
-      # 正式签名证书（SHA-256）。与 android-apk.yml 用同一个仓库变量、同一个
+      # 正式签名证书（SHA-256）。与 build.yml 用同一个仓库变量、同一个
       # 默认值，只用来判断「这个包能不能覆盖安装正式版」，不参与放行。
       RELEASE_CERT: ${{ vars.RELEASE_SIGNER_SHA256 || 'e8471cd8a935fd71fd8197355b5558d245449d5bc8294f60f88616f60451c550' }}
     steps:
@@ -127,7 +132,7 @@ jobs:
             # 当成标识符的一部分，`set -u` 下直接报 unbound variable。
             echo "- 版本：${pubspec_version}，提交：${SHA}"
             echo "- 构建于：${built_at}"
-            echo "- CI：Android APK run ${RUN_ID}（master 推送触发且成功）"
+            echo "- CI：Build & Package run ${RUN_ID}（master 上的成功构建）"
             echo "- APK versionName：${base_version}（已与 pubspec 核对一致）"
             echo "- APK 签名证书 SHA-256：\`${signer_primary}\`"
             echo "- 签名身份：${cert_note}"
@@ -150,7 +155,7 @@ jobs:
           {
             echo "## 最新预览版（滚动更新）"
             echo
-            echo "这是 master 最新一次成功构建的**预览版**，主干更新后自动刷新，不是正式发布。"
+            echo "这是 master 最新一次成功构建的**预览版**（master 不随推送自动构建，手动 dispatch 一次即刷新），不是正式发布。"
             echo "正式版请看 Releases 里标记 Latest 的那一个。"
             echo
             echo "- 版本：${base_version}（提交 \`${short_sha}\`，构建于 ${built_at}）"

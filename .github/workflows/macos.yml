@@ -30,7 +30,7 @@ on:
         description: 先重跑 flutter_rust_bridge codegen（仅 Rust API 层变更后需要）
         type: boolean
         default: false
-  # 发布/交付时由 android-apk.yml 复用：同一次 dispatch 里先出 APK 和这个
+  # 发布/交付时由 build.yml 复用：同一次 dispatch 里先出 APK 和这个
   # universal 包，带 release_tag 时再合成一个 Release（见那边的 publish job）。
   # 单独触发时行为不变。
   workflow_call:
@@ -50,13 +50,13 @@ on:
       - 'scripts/generate_app_icons.py'
       - '.github/workflows/macos.yml'
   # 去掉 push 自动触发。日常推代码只想跑 Dart Check，macOS 全量构建留给发布
-  # ——发布时由 android-apk.yml 通过 workflow_call 复用本文件，不受影响。
+  # ——发布时由 build.yml 通过 workflow_call 复用本文件，不受影响。
 
 permissions:
   contents: read
 
 concurrency:
-  # 被 android-apk.yml 复用时 github.workflow 是调用方的名字（Android APK）；
+  # 被 build.yml 复用时 github.workflow 是调用方的名字（Build & Package）；
   # 单独 dispatch 时是本文件的名字。两者 group 不同，不会互相取消。
   group: macos-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true

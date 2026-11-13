@@ -36,7 +36,7 @@ Silicon 装同一个文件都能跑，不需要挑架构。
   构建时由 `build_macos.sh` 用 `sips` 切成 `AppIcon.appiconset` 的 10 个尺寸。
 - 版本号：`CFBundleShortVersionString` / `CFBundleVersion` 来自 `pubspec.yaml`
   的 `version`，`build_macos.sh` 会断言它与 Android 一致（对不上就中止）。
-- 发布：`android-apk.yml` 带 `release_tag` 的 dispatch 会以 `workflow_call`
+- 发布：`build.yml` 带 `release_tag` 的 dispatch 会以 `workflow_call`
   调起本工作流（`arch: universal`），APK 与这个 .app 都成功后由它的 `publish`
   job 建成**同一个 Release**。
 
@@ -121,7 +121,7 @@ Dart 业务层**零改动**：全仓库都用 `Platform.isMacOS` / `isMacHost` �
 | `lib/services/secure_key_provider.dart` | `FlutterSecureStorage` 显式传 `MacOsOptions(useDataProtectionKeyChain: false)` | 插件默认走 data protection keychain，需要 `keychain-access-groups` 授权，ad-hoc 签名下 `SecItemAdd` 返回 `-34018`；拿不到 Hive 密钥等于每次启动都换钥匙，本地数据全成空库 |
 | `assets/branding/app_icon_macos.png`<br>`assets/branding/macos/Contents.json` | 新增（由 `scripts/generate_app_icons.py` 从 Android 的同一份源图生成） | macOS 图标与 Android 同源，覆盖 `flutter create` 的默认 Flutter 图标 |
 | `scripts/build_macos.sh` | 新增 | 生成 `macos/` 壳、换图标、覆盖 entitlements、**按目标架构编 Rust（universal 时双 triple + `lipo -create`）**、抬 `MACOSX_DEPLOYMENT_TARGET` 到 `DEPLOY_MIN`（13.0）、构建期降 `connectivity_plus`、打进 .app、签名、校验**架构 / 包内 Mach-O slice（universal 要求两条都在）/ `minos` / 版本号** |
-| `.github/workflows/macos.yml` | 新增 | `plan` job 算出架构矩阵，默认只跑一个 universal leg（`macos-15`，Apple Silicon 一次出双架构）；显式选 `x86_64` 才用 `macos-15-intel`。暴露 `workflow_call` 供 `android-apk.yml` 发布时复用 |
+| `.github/workflows/macos.yml` | 新增 | `plan` job 算出架构矩阵，默认只跑一个 universal leg（`macos-15`，Apple Silicon 一次出双架构）；显式选 `x86_64` 才用 `macos-15-intel`。暴露 `workflow_call` 供 `build.yml` 发布时复用 |
 
 `macos/` 目录本身没有提交——由构建脚本用 `flutter create --platforms=macos`
 生成，避免手写 Xcode 工程。生成后脚本会覆盖两份 entitlements：关掉 App Sandbox，
@@ -140,7 +140,7 @@ Dart 业务层**零改动**：全仓库都用 `Platform.isMacOS` / `isMacHost` �
   只有 `libfqapi_core.dylib` 是按单一 triple 产的。脚本现在编两条 triple 再
   `lipo -create`，并把校验从「含目标 slice」改成「universal 要求两条都在」——
   fq11 就是这么带着 arm64-only 的 dylib 发出去的（旧校验只验「包含」，漏了）。
-- **发布是原子的**：`android-apk.yml` 的 `publish` job 要求 APK 与 macOS job
+- **发布是原子的**：`build.yml` 的 `publish` job 要求 APK 与 macOS job
   都成功才建 Release，所以 macOS 构建失败时那一版 APK 也不会发布（只会留在
   Artifacts 里 14 天）。
 - **构建产物的 Rust 桥接必须与已提交的 codegen 一致**：本次只动了 cfg 与

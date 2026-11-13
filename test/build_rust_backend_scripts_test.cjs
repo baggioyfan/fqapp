@@ -101,7 +101,7 @@ test('the build scripts target Android ARM64 with the project NDK and 16 KiB pag
 
 test('the APK workflow builds and verifies the arm64-v8a ABI', () => {
   const workflow = fs.readFileSync(
-    path.join(appDir, '.github', 'workflows', 'android-apk.yml'),
+    path.join(appDir, '.github', 'workflows', 'build.yml'),
     'utf8',
   );
   assert.ok(
@@ -131,7 +131,7 @@ test('the APK workflow builds and verifies the arm64-v8a ABI', () => {
 
 test('the product build no longer depends on Go or the private backend', () => {
   const workflow = fs.readFileSync(
-    path.join(appDir, '.github', 'workflows', 'android-apk.yml'),
+    path.join(appDir, '.github', 'workflows', 'build.yml'),
     'utf8',
   );
   assert.ok(
@@ -226,7 +226,7 @@ test('the APK workflow fetches tags before the version-monotonicity gate', () =>
   // fetched tip (verified: 0 tags after a depth-1 --no-tags clone, 8 after
   // `git fetch --tags`).
   const workflow = fs.readFileSync(
-    path.join(appDir, '.github', 'workflows', 'android-apk.yml'),
+    path.join(appDir, '.github', 'workflows', 'build.yml'),
     'utf8',
   );
   // Search the parsed step commands, not the raw file: the comment above the
@@ -251,7 +251,7 @@ test('the APK workflow shares the Dart gate with a parallel job', () => {
   // Flutter SDK, so serialising it behind the NDK/Gradle/Rust setup wasted
   // wall-clock time. It must stay a FULL run, not a reduced suite.
   const workflow = fs.readFileSync(
-    path.join(appDir, '.github', 'workflows', 'android-apk.yml'),
+    path.join(appDir, '.github', 'workflows', 'build.yml'),
     'utf8',
   );
   assert.ok(
@@ -293,7 +293,7 @@ test('the APK workflow cache paths do not use parse-time env expansion', () => {
   // caches never worked while still costing two steps per run. Verified in run
   // 40123765356: `path: /ndk/28.2.13676358`.
   const workflow = fs.readFileSync(
-    path.join(appDir, '.github', 'workflows', 'android-apk.yml'),
+    path.join(appDir, '.github', 'workflows', 'build.yml'),
     'utf8',
   );
   // Strip comments first: the explanatory comment above the cache steps also
@@ -321,7 +321,7 @@ test('the APK job keeps the measured Gradle worker limits', () => {
   // 4 workers was measured on the real 4-vCPU runner and was slower than 2:
   // release APK compile 220s -> 342s, :app:testDebugUnitTest 66s -> 91s.
   const workflow = fs.readFileSync(
-    path.join(appDir, '.github', 'workflows', 'android-apk.yml'),
+    path.join(appDir, '.github', 'workflows', 'build.yml'),
     'utf8',
   );
   assert.ok(
@@ -339,7 +339,7 @@ test('workflow path filters are defined once and referenced by anchor', () => {
   // 变成「PR 跑、master 不跑」，而没有任何测试能发现。两个 workflow 现在都
   // 只在 push 下定义 &anchor，pull_request 用 *anchor 引用。
   const cases = [
-    { file: 'android-apk.yml', anchor: 'app_paths' },
+    { file: 'build.yml', anchor: 'app_paths' },
     { file: 'windows.yml', anchor: 'windows_paths' },
     { file: 'native-crypto.yml', anchor: 'native_paths' },
   ];
@@ -396,7 +396,7 @@ test('the size budget gate runs in the Dart gate, not the Windows build', () => 
   // ffmpeg 下载后面。它必须留在 dart-gate，否则这个门禁会随 Windows job 一起
   // 被跳过或拖慢。
   const apk = fs.readFileSync(
-    path.join(appDir, '.github', 'workflows', 'android-apk.yml'),
+    path.join(appDir, '.github', 'workflows', 'build.yml'),
     'utf8',
   );
   const dartGate = apk.slice(apk.lastIndexOf('dart-gate:'));

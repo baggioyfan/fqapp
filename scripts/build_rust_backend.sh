@@ -6,7 +6,7 @@
 # Only ARM64 is built. The 32-bit target (armv7-linux-androideabi) was dropped
 # together with the 32-bit APK split: it doubled the cross-compile for hardware
 # nobody ships to. Adding it back is one build_android_target call plus the
-# Rust toolchain target in .github/workflows/android-apk.yml.
+# Rust toolchain target in .github/workflows/build.yml.
 #
 # Cargo caches per target, so a rebuild with no Rust changes is fast.
 #

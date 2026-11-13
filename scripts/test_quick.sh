@@ -2,7 +2,7 @@
 # Tiered Flutter test runner for the development loop.
 #
 # The full suite (2000+ tests, minutes locally) is the pre-handoff gate, and
-# CI runs the same set on every master push (.github/workflows/android-apk.yml
+# CI runs the same set on every master push (.github/workflows/build.yml
 # `flutter test --no-pub --concurrency=2`, plus windows.yml). The daily loop
 # rarely needs it: this script runs the tier below it — the test files of the
 # modules actually being touched, in seconds.

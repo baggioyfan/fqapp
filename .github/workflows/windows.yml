@@ -1,17 +1,29 @@
 name: Windows build and regression
 
 on:
-  # 本 fork 只发布 Android 与 macOS，Windows 产物一直没人用，而 push 命中
-  # lib/** 或 rust/** 就会自动起一个 windows-latest 运行（45 分钟额度）。
-  # 故去掉 push / pull_request 两个触发块，只留手动触发。
-  # 需要恢复自动触发时，把上游的这两个 paths 块贴回来即可：
-  #   pull_request: / push: branches: [master]，paths 为
-  #   lib/** test/** rust/** native/** windows/** third_party/** pubspec.*
-  #   scripts/*windows* .github/workflows/windows.yml
+  # 三种入口：
+  # 1. 单独 dispatch（本文件）—— 排障时单独出一台 windows runner，可以勾
+  #    verify_player 跑 libmpv 播放验证。
+  # 2. 被 build.yml 通过 workflow_call 复用 —— 主流程勾了 `windows` 就出包，
+  #    产物仍是 artifact `fqapp-windows-x64-preview`。
+  # 3. 没有 push / pull_request：push 命中 lib/** 或 rust/** 就会起一台
+  #    windows-latest（45 分钟额度），本 fork 的交付面不需要它随每次推送跑。
+  #    要恢复自动触发，把上游的 paths 块贴回来即可（lib/** test/** rust/**
+  #    native/** windows/** third_party/** pubspec.* scripts/*windows*
+  #    .github/workflows/windows.yml）。
   workflow_dispatch:
     inputs:
       verify_player:
         description: 也跑 libmpv 播放验证（需要桌面会话，托管 runner 上不稳定）
+        type: boolean
+        default: false
+  workflow_call:
+    inputs:
+      # 调用方（build.yml）不暴露这个开关，默认 false。声明出来是为了让下面
+      # 那句 `inputs.verify_player` 在 workflow_call 下也是已定义的值，而不是
+      # 依赖「未声明即 null」的隐式行为。
+      verify_player:
+        description: 也跑 libmpv 播放验证
         type: boolean
         default: false
 
@@ -19,7 +31,9 @@ permissions:
   contents: read
 
 concurrency:
-  group: windows-${{ github.ref }}
+  # 带上 github.workflow：被 build.yml 复用（Build & Package）与单独 dispatch
+  # （Windows build and regression）是两件不同的事，不该互相取消。
+  group: windows-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:

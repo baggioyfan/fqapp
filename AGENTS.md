@@ -74,7 +74,7 @@
 1. **版本**：用户可见功能变更递增 `pubspec.yaml` 的 `version: <versionName>+<versionCode>`，同步核对 About 页版本展示。仅文档或无行为变化的整理不升版。
 2. **Rust 库新鲜度**：检查 `git log --oneline <上一归档提交或标签>..HEAD -- rust/`，同时检查未提交及新增的 Rust 文件。Rust 已改变、`.so` 缺失或无法证明来源时，执行 `scripts/build_rust_backend.ps1` 重建；仅 Dart 改动且库已证实匹配时可复用。Gradle 只检查 `.so` 存在，不会重编 Rust。
 3. **原生校验**：重建后运行 `node scripts/check_native_alignment.cjs android/app/src/main/jniLibs/arm64-v8a/libfqapi_core.so`。可用 `node scripts/check_so_freshness.cjs <so路径> --since <归档提交或标签>` 辅查提交时间，但时间戳不能证明未提交代码已编入。
-4. **打包**：执行 `flutter build apk --release --target-platform android-arm64 --split-per-abi --no-pub`，然后运行一次 `python scripts/verify_android_apk.py --apk build/app/outputs/flutter-apk/app-arm64-v8a-release.apk --abi arm64-v8a --build-tools <SDK构建工具目录> --report-dir <报告目录> --expected-signer-sha256 <正式证书SHA256>`。占位符须替换为实际值；正式证书指纹核对 `.github/workflows/android-apk.yml` 与本地签名记录，不输出密码。
+4. **打包**：执行 `flutter build apk --release --target-platform android-arm64 --split-per-abi --no-pub`，然后运行一次 `python scripts/verify_android_apk.py --apk build/app/outputs/flutter-apk/app-arm64-v8a-release.apk --abi arm64-v8a --build-tools <SDK构建工具目录> --report-dir <报告目录> --expected-signer-sha256 <正式证书SHA256>`。占位符须替换为实际值；正式证书指纹核对 `.github/workflows/build.yml` 与本地签名记录，不输出密码。
 5. **安装验收**：在用户已授权的设备上使用 `adb -s <设备序列号> install -r <APK路径>`，核对包名 `com.fqapp.fqapp`、版本和实际画面。点击、滑动或返回前重新确认前台包名；用户切到其他应用时停止输入。以截图 / UI XML 证明页面状态，日志只作辅助；不要为覆盖安装擅自卸载应用或清除数据。
 6. **归档**：验收后立即将 APK、`SHA256SUMS` 和实际验证报告保存到 `release-archives/<tag>/`，注明对应提交及未验项。目录名不代表已创建 Git tag 或已发布 Release；不得覆盖已有归档。
 

@@ -5,7 +5,7 @@ name: Signing probe
 # keystore provisioned at a path we control survives a cache round trip -- in
 # about a minute instead of a 13-minute release build.
 #
-# It also seeds .github/workflows/android-apk.yml's signing cache, so the next
+# It also seeds .github/workflows/build.yml's signing cache, so the next
 # build signs with the certificate printed here. Re-run it after a cache
 # eviction to see the identity a build will pick up; delete it whenever the
 # signing arrangement is no longer in question.

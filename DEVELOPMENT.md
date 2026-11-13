@@ -98,7 +98,7 @@ fqapp/
 ├── assets/                          # 配置示例、过滤器、图片和动画
 ├── test/                            # Flutter 测试及 Node 主机回归
 ├── scripts/                         # 构建、验证和资源生成；见 scripts/README.md
-├── .github/workflows/               # Android APK 与原生库 CI
+├── .github/workflows/               # Build & Package（多平台构建）与原生库 CI
 ├── flutter_rust_bridge.yaml         # FRB 代码生成配置
 └── pubspec.yaml                     # Flutter 版本、依赖与资源声明
 ```
@@ -232,12 +232,12 @@ flutter build apk --release --target-platform android-arm64
 
 ### GitHub Actions 云端编译
 
-打开 [Actions → Android APK](https://github.com/ch6vip/fqapp/actions/workflows/android-apk.yml)，
+打开 [Actions → Build & Package](https://github.com/baggioyfan/fqapp/actions/workflows/build.yml)，
 点击 **Run workflow** 即可从源码构建。`master` 上的应用、原生库及构建配置变更也会自动触发。
 运行成功后，在该次运行的 **Artifacts** 中下载 `fqapp-arm64-运行编号`；其中包含
 `app-release.apk`、SHA-256、签名与 16 KiB 对齐报告、源码版本和工具版本，产物保留 14 天。
 
-[工作流](.github/workflows/android-apk.yml) 固定 Flutter `3.47.9`、Rust 工具链与
+[工作流](.github/workflows/build.yml) 固定 Flutter `3.47.9`、Rust 工具链与
 flutter_rust_bridge `2.13.0`、JDK 17、NDK `28.2.13676358` 和 CMake `3.22.1`。
 Rust 核心与 C 解密库都会在 runner 上编译。CI 设置 `FQAPP_USE_MAVEN_MIRRORS=false`
 使用官方 Maven 源；本地构建默认仍使用国内镜像。
@@ -436,7 +436,7 @@ MuMuManager 确认实例 `0` / Android 12 / `127.0.0.1:16385`，x86_64 经 ARM �
 |---|---|---|---|
 | 模块 | `./scripts/test_quick.sh home` | 秒级 | 改动迭代的每一轮 |
 | 全量 | `./scripts/test_quick.sh --all`（即 `flutter test --no-pub`） | 2000+ 项 / 数分钟 | 交付前收尾 |
-| CI | `android-apk.yml` 与 `windows.yml` 每次 master push 全量 | 同全量 | 兜底 |
+| CI | `dart-check.yml` 每次 push / PR 全量；`build.yml` 只在 tag 推送与手动 dispatch 时出包 | — | 兜底 |
 
 - `test_quick.sh` 的模块词按测试文件名**子串**匹配：`home` 会同时命中 `home_page_test.dart`、`home_scroll_cost_test.dart`、`real_home_payload_test.dart`（子串宽是特性，`provider` 这类词会带出全部 `*_provider_test.dart`）。多个词合并去重后一次跑，也可直接传测试文件路径；拼错的模块词是硬错误，不会静默少跑。
 - 脚本固定带 `--no-pub`：首次 `flutter pub get` 之后，每次运行前的依赖解析是纯启动开销。`--concurrency=N` 可提并行（默认沿用 Flutter 的 4）。

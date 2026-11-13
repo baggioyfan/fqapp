@@ -1,4 +1,11 @@
-name: Android APK
+name: Build & Package
+
+# 构建与打包的唯一入口：日常 push/PR 只出 APK（外加并行的 Dart 门禁），
+# dispatch 时按勾选项追加 macOS / Windows / Linux 包，填了 release_tag 才发
+# Release。文件名 `build.yml`、流程名 `Build & Package` —— 它早就不只是
+# 「Android APK」了（2026-11-13 由 android-apk.yml 改名，被 release.yml 的
+# workflow_run 与 test/build_rust_backend_scripts_test.cjs 按名/按路径引用，
+# 再改名要同步那两处）。
 
 on:
   # 推 master 不再自动构建：本 fork 的发布一律走 workflow_dispatch（带
@@ -9,6 +16,8 @@ on:
   #
   # 交付面固定为两个文件：APK + macOS universal 包。一次 dispatch 就能
   # 全出（`macos` 输入默认勾选），Release 也固定挂这两个资产 + build-info。
+  # Windows / Linux 是可选产物（默认不勾）：能出包、能下载，但不进 Release
+  # 资产，也不拖住发版。
   push:
     # 打 tag 仍出包：tag 推送不走 paths 过滤（native-crypto 在 v1.0.117
     # tag 推送时已跑过一次可作证），所以推 v* 会触发一次完整构建，APK 在
@@ -39,7 +48,7 @@ on:
       - 'scripts/generate_app_icons.py'
       - 'scripts/verify_android_apk.py'
       - 'scripts/verify_audio_cenc.cjs'
-      - '.github/workflows/android-apk.yml'
+      - '.github/workflows/build.yml'
       - '.cargo/config.toml'
   pull_request:
     # Fork PRs receive no signing secrets, so the signing step degrades to an
@@ -69,13 +78,21 @@ on:
         required: false
         type: boolean
         default: false
+      windows:
+        # 一台 windows-latest 大约 45 分钟，所以默认关；产物同样只进 Artifacts
+        # （publish 的 needs 与资产清单里都没有它）。要让它进正式 Release，
+        # 得同时改 publish 的 needs 与资产拷贝，别只把这里打开。
+        description: 同时构建 Windows 便携包（产物只进 Artifacts，不随 Release 发布）
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   # gh release create needs write access; every other step only reads.
   contents: write
 
 concurrency:
-  group: android-apk-${{ github.ref }}
+  group: build-${{ github.ref }}
   cancel-in-progress: true
 
 env:
@@ -764,6 +781,22 @@ jobs:
     permissions:
       contents: read
 
+  # Windows 与 macOS 一样走 workflow_call 复用，而不是把 130 行 pwsh 抄进来：
+  # windows.yml 自己还要能单独 dispatch（排障时带 verify_player 跑 libmpv 验证），
+  # 抄一份就得维护两处。
+  #
+  # 默认不跑、不进 Release 资产、也不在 publish 的 needs 里 —— 一台 windows
+  # runner 45 分钟，且这个包还没做过验收（WINDOWS.md 之外的实测记录为零）。
+  # 要出包时勾 windows；要让它进正式 Release，得同时改 publish 的 needs 与
+  # 资产拷贝，只开这个开关是不够的。
+  windows:
+    if: >-
+      github.event_name == 'workflow_dispatch'
+      && inputs.windows
+    uses: ./.github/workflows/windows.yml
+    permissions:
+      contents: read
+
   # Linux 是实验性构建：Arch 容器里能编出包，但我们没有 Linux 桌面做安装、
   # 朗读、播放的实测（见 LINUX.md 的红线 4）。所以它默认不跑、不进 Release
   # 资产、也不在 publish 的 needs 里 —— 发包不受 Linux 影响，Linux 挂了也不
@@ -856,9 +889,9 @@ jobs:
     # 注意 `!cancelled()` 会覆盖 needs 失败时的默认跳过，所以每个依赖都要
     # 显式检查 result。job 名带连字符，必须用下标写法。
     #
-    # linux 故意不在 needs 里：它没有真机验证，产物只当 Artifacts 供人下载
-    # 试装，不能出现在正式 Release 资产里（LINUX.md 红线 4），也就不能让它
-    # 的失败拖住发版。
+    # linux 与 windows 故意不在 needs 里：两者的产物只当 Artifacts 供人下载
+    # 试装，不出现在正式 Release 资产里（Linux 见 LINUX.md 红线 4；Windows 是
+    # 还没做过验收），也就不能让它俩的失败拖住发版。
     if: >-
       !cancelled()
       && github.event_name == 'workflow_dispatch'

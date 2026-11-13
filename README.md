@@ -61,7 +61,7 @@
 
 其他方式：
 
-1. **GitHub Actions 云端构建**：打开仓库的 [Actions → Android APK](https://github.com/ch6vip/fqapp/actions/workflows/android-apk.yml)，点击 **Run workflow** 运行一次构建；成功后在本次运行的 **Artifacts** 中下载 `fqapp-arm64-运行编号`，解压得到 APK（同样附带校验报告；**产物仅保留 14 天**，需要长期留存请用 Releases）。
+1. **GitHub Actions 云端构建**：打开仓库的 [Actions → Build & Package](https://github.com/baggioyfan/fqapp/actions/workflows/build.yml)，点击 **Run workflow** 运行一次构建；成功后在本次运行的 **Artifacts** 中下载 `fqapp-arm64-运行编号`，解压得到 APK（同样附带校验报告；**产物仅保留 14 天**，需要长期留存请用 Releases）。
 2. **本地构建**：需要 Flutter / Rust / Android NDK 工具链，步骤见 [DEVELOPMENT.md](DEVELOPMENT.md)。
 
 > **在 fork 中构建**：正式签名的密钥只对上游仓库可用，fork 出来的构建拿不到它。此时工作流
