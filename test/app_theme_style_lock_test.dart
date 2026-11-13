@@ -60,10 +60,11 @@ void main() {
     });
   });
 
-  testWidgets('缺少 AppStyleTokens 的树落回经典度量，不是档案度量', (tester) async {
+  testWidgets('主题挂上经典 token 后，页面读到的是经典度量', (tester) async {
     late AppStyleTokens tokens;
     await tester.pumpWidget(
       MaterialApp(
+        theme: ThemeData(extensions: const [AppStyleTokens.classic()]),
         home: Builder(
           builder: (context) {
             tokens = AppStyleTokens.of(context);

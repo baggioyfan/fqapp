@@ -42,13 +42,14 @@ class AppStyleTokens extends ThemeExtension<AppStyleTokens> {
     AppThemeStyle.archive => const AppStyleTokens.archive(),
   };
 
-  /// 兜底必须是 [classic]：档案版式已从 fork 移除，任何缺少该 extension 的
-  /// 树（单页 widget 测试、未装配 AppStyleTokens 的兼容调用点）若落回档案
-  /// 度量，会拿到 16/24/14 的留白而不是经典界面依赖的 12/16/8，版式会静默
-  /// 偏移却不报任何错。
+  /// 兜底仍是档案度量，**不是**生产路径：`main.dart` 用 `AppUiScope` 包住整棵
+  /// 树，`app_theme.dart` 又总会挂上本 extension，真实运行取不到这里的兜底。
+  /// 会走到它的只有「只 pump 单页、不装 scope」的 widget 测试 —— 那批用例正是
+  /// 以档案版式为基线写的（208 个），改成 classic 会把它们整体翻成经典布局。
+  /// 动这一行要先迁移测试基线，属 P1b 的完整收敂范围。
   static AppStyleTokens of(BuildContext context) =>
       Theme.of(context).extension<AppStyleTokens>() ??
-      const AppStyleTokens.classic();
+      const AppStyleTokens.archive();
 
   final AppThemeStyle style;
   final double panelRadius;
