@@ -628,7 +628,18 @@ class WebdavClient implements WebdavTransport {
     if (depth != null) request.headers['Depth'] = depth;
     if (contentType != null) request.headers['Content-Type'] = contentType;
     // 原样透传，不补引号 —— 见 WebdavTransport.upload 的说明。
-    if (ifMatch != null) request.headers['If-Match'] = ifMatch;
+    //
+    // 弱校验（`W/"…"`）是例外：RFC 7232 要求 If-Match 做强比对，拿弱标签去
+    // 问只会被永远拒成 412。上面 `Accept-Encoding: identity` 已经从源头挡住
+    // 「压缩代理把强标签变弱」，但仍有服务器天生只给弱标签。那种情况下不发
+    // 条件，按无条件写走：合并是并集语义（书架取并、进度取更靠后），最坏
+    // 多读一次，而带弱标签重试是一辈子写不上去。
+    final condition = ifMatch;
+    if (condition != null &&
+        !condition.startsWith('W/') &&
+        !condition.startsWith('w/')) {
+      request.headers['If-Match'] = condition;
+    }
     if (destination != null) {
       // MOVE 的 Destination 必须是绝对 URL，即使同一个目录也一样。
       request.headers['Destination'] = destination.toString();
@@ -675,6 +686,10 @@ class WebdavClient implements WebdavTransport {
       'Authorization': 'Basic ${base64Encode(utf8.encode('${config.username}:$password'))}',
     'User-Agent': 'fqapp-webdav-sync/1.0',
     'Accept': '*/*',
+    // 正文是 JSON，不压缩只多一点流量；但压缩代理会把强 ETag 弱化成
+    // `W/"…"`，而 If-Match 只接受强校验 —— 一被弱化，条件写就永远 412。
+    // 版本判断比这点流量值钱，所以正文要求原样传输。
+    'Accept-Encoding': 'identity',
   };
 
   void _requireSuccess(http.Response response, String what) {

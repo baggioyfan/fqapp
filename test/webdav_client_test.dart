@@ -83,6 +83,8 @@ class _FakeServer {
       'content-type',
       'if-match',
       'destination',
+      // 传输层压缩会把强 ETag 弱化，条件写靠这条头保住版本判断。
+      'accept-encoding',
     ]) {
       final value = request.headers.value(name);
       if (value != null) recorded[name] = value;
@@ -623,6 +625,29 @@ void main() {
 
       expect(server.headers['PUT']!['if-match'], tag);
       expect(server.headers['PUT']!['if-match'], isNot(startsWith('"')));
+    });
+
+    test('asks for an uncompressed body so the ETag stays strong', () async {
+      // 压缩代理会把强 ETag 弱化成 `W/"…"`，而 If-Match 只接受强校验：
+      // 一旦被弱化，条件写就永远是 412。这条头是版本判断的前提。
+      server.files[server.path] = body('{"v":1}');
+
+      await clientFor().upload(body('{"v":2}'));
+
+      expect(server.headers['PUT']!['accept-encoding'], 'identity');
+    });
+
+    test('never sends a weak validator as If-Match', () async {
+      // 有些服务端天生只给弱标签。拿它去问 If-Match 会被永远拒成 412，
+      // 所以宁可退成无条件写：合并是并集语义，最坏多读一次，而不是
+      // 一辈子写不上去。
+      server.files[server.path] = body('{"v":1}');
+
+      await clientFor().upload(body('{"v":2}'), ifMatch: 'W/"etag-1"');
+
+      expect(server.headers['PUT']!.containsKey('if-match'), isFalse);
+      expect(server.rejectedByIfMatch, 0);
+      expect(server.files[server.path], body('{"v":2}'));
     });
 
     test('an outdated version is refused with 412 and changes nothing', () async {
