@@ -99,11 +99,11 @@ impl Policy {
         }
     }
 
-    /// macOS 也编译 `desktop_fetch` / `desktop_media`（fork 的 Windows/macOS 共用
-    /// 桌面媒体通道），所以这里必须有一个同名方法，否则 macOS 的 host 构建直接
-    /// E0599。macOS 没有代理配置界面，`apply` 在那里是空实现，语义与 `configure`
-    /// 的非 Windows 分支一致：原样返回 builder。
-    #[cfg(target_os = "macos")]
+    /// macOS / Linux 也编译 `desktop_fetch` / `desktop_media`（三个桌面端口共用
+    /// 媒体通道），所以这里必须有一个同名方法，否则 host 构建直接 E0599。
+    /// 两者都没有代理配置界面，`apply` 在那里是空实现，语义与 `configure` 的
+    /// 非 Windows 分支一致：原样返回 builder。
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     pub(crate) fn configure_blocking(
         &self,
         builder: reqwest::blocking::ClientBuilder,

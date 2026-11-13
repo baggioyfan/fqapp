@@ -19,6 +19,8 @@ on:
     paths: &app_paths
       - 'lib/**'
       - 'android/**'
+      - 'linux/**'
+      - 'packaging/**'
       - 'native/**'
       - 'rust/**'
       - 'assets/**'
@@ -28,6 +30,7 @@ on:
       - 'test/**'
       - 'flutter_rust_bridge.yaml'
       - 'scripts/build_rust_backend.sh'
+      - 'scripts/build_linux_package.sh'
       - 'scripts/build_rust_backend.ps1'
       - 'scripts/run_rust_host_tests.sh'
       - 'scripts/run_rust_host_tests.ps1'
@@ -59,6 +62,13 @@ on:
         required: false
         type: boolean
         default: true
+      linux:
+        # 实验性：Arch 容器里编得出包，但没有 Linux 桌面做安装/朗读/播放实测。
+        # 默认关闭；产物只进 Artifacts，不进 Release（见 LINUX.md 红线 4）。
+        description: 同时构建 Linux Arch 包（实验性，未做真机验证，不随 Release 发布）
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   # gh release create needs write access; every other step only reads.
@@ -748,6 +758,90 @@ jobs:
     permissions:
       contents: read
 
+  # Linux 是实验性构建：Arch 容器里能编出包，但我们没有 Linux 桌面做安装、
+  # 朗读、播放的实测（见 LINUX.md 的红线 4）。所以它默认不跑、不进 Release
+  # 资产、也不在 publish 的 needs 里 —— 发包不受 Linux 影响，Linux 挂了也不
+  # 会挡住发包。要出包时勾 linux（或 dispatch 时 input linux=true）。
+  #
+  # 为什么不另开 linux.yml：一次 dispatch 想把三个平台都拿出来时，多一个
+  # workflow 就要多一次手动点，而且 artifact/Release 的组装逻辑要跨文件对
+  # 齐。放在这里与 macos 的位置对称，发布口径只有这一处。
+  linux:
+    if: >-
+      github.event_name == 'workflow_dispatch'
+      && inputs.linux
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    # 宿主机只负责跑容器，包的 ABI 完全来自这个 Arch 镜像（钉 digest，
+    # 避免 `archlinux:base` 漂移后突然换掉 gcc/glibc）。
+    container:
+      options: --cpus=2 --memory=6g --memory-swap=7g --memory-reservation=4g
+      image: archlinux:base@sha256:d4594bb2300cba11f41c2f27923eb56f63d9988909c402f9c95517d1e362c899
+    env:
+      CARGO_BUILD_JOBS: '2'
+      CMAKE_BUILD_PARALLEL_LEVEL: '2'
+      FLUTTER_ROOT: /opt/flutter
+      PUB_CACHE: /home/builder/.pub-cache
+      CARGO_HOME: /home/builder/.cargo
+      # `cargo fetch` 之后必须离线，任何偷偷访问 crates.io 的行为都要失败：
+      # 否则 PKGBUILD 的源校验就形同虚设。
+      CARGO_NET_OFFLINE: 'true'
+    steps:
+      - name: Prepare isolated Arch snapshot (never the host)
+        run: |
+          # 钉住某一天的归档：Arch 是滚动发行版，今天的 base 镜像明天装的
+          # gcc/glibc 未必能重现同一个包。
+          printf 'Server = https://archive.archlinux.org/repos/2026/11/09/$repo/os/$arch\n' > /etc/pacman.d/mirrorlist
+          pacman -Syyuu --noconfirm
+          pacman -S --needed --noconfirm base-devel git clang cmake ninja pkgconf gtk3 libsecret mpv libepoxy libglvnd libx11 dbus xdg-utils xdg-user-dirs hicolor-icon-theme rust python nodejs ffmpeg patchelf desktop-file-utils zstd unzip xz curl speech-dispatcher libspeechd espeak-ng xdg-desktop-portal
+          useradd -m builder
+          rustc --version | grep -E '^rustc 1\.99\.1 '
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Fetch exact official Flutter SDK
+        run: |
+          curl --fail --location --retry 3 https://storage.googleapis.com/flutter_infra_release/releases/stable/linux/flutter_linux_${FLUTTER_VERSION}-stable.tar.xz -o /tmp/flutter.tar.xz
+          # 3.47.9 的归档哈希，与 env.FLUTTER_VERSION 绑死：改版本必须同时改这里。
+          echo '25ed8c3c29d51a7353f2a944310b478af8214920639524b19c50a19e6c044c5a  /tmp/flutter.tar.xz' | sha256sum -c -
+          tar -xJf /tmp/flutter.tar.xz -C /opt
+          chown -R builder:builder /opt/flutter "$GITHUB_WORKSPACE"
+
+      - name: Resolve locked inputs and build the Arch package
+        shell: bash
+        run: |
+          chown -R builder:builder /home/builder
+          runuser -u builder -- nice -n 10 bash -euo pipefail <<'BUILD'
+          export PATH="$FLUTTER_ROOT/bin:$PATH"
+          mkdir -p build/validation/linux
+          flutter --version --machine > build/validation/linux/flutter.json
+          python -c 'import json; assert json.load(open("build/validation/linux/flutter.json"))["frameworkRevision"] == "c197ca5199e9ee5661e865596c9c07294dfab51c"'
+          grep -q 'flutter_rust_bridge = "=2.13.0"' rust/Cargo.toml
+          flutter precache --linux
+          flutter pub get --enforce-lockfile
+          # SDK 迁移会往 analysis_options.yaml 里塞排除项；仓库里那份是基准。
+          git restore --source=HEAD -- analysis_options.yaml
+          CARGO_NET_OFFLINE=false cargo fetch --manifest-path rust/Cargo.toml --locked
+          flutter analyze --no-pub
+          python test/linux_packaging_test.py
+          bash scripts/build_linux_package.sh /tmp/arch-package HEAD
+          git diff --exit-code -- pubspec.lock rust/Cargo.lock
+          pacman -Q > build/validation/linux/arch-packages.txt
+          printf '%s\n' 'EXPERIMENTAL: no hardware, schema rollback, clean installation or licensing acceptance; no formal Release.' > build/validation/linux/ACCEPTANCE.txt
+          BUILD
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: fqapp-linux-arch-${{ github.sha }}
+          path: |
+            /tmp/arch-package/*.pkg.tar.zst
+            /tmp/arch-package/elf-report.txt
+            build/validation/linux
+          if-no-files-found: error
+          retention-days: 14
+
   publish:
     needs: [apk, macos, dart-gate]
     # 原子发布：两个包都成功、测试也通过才建 Release。除了「不出现只有一半
@@ -755,6 +849,10 @@ jobs:
     # 不再自己跑测试，如果这里不看 dart-gate，测试挂了包照样会发出去。
     # 注意 `!cancelled()` 会覆盖 needs 失败时的默认跳过，所以每个依赖都要
     # 显式检查 result。job 名带连字符，必须用下标写法。
+    #
+    # linux 故意不在 needs 里：它没有真机验证，产物只当 Artifacts 供人下载
+    # 试装，不能出现在正式 Release 资产里（LINUX.md 红线 4），也就不能让它
+    # 的失败拖住发版。
     if: >-
       !cancelled()
       && github.event_name == 'workflow_dispatch'

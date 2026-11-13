@@ -2,8 +2,11 @@ fn main() {
     // Desktop hosts link the C crypto core straight into the Rust library.
     // Android builds the same sources as its own .so through
     // native/CMakeLists.txt (with the JNI bridge), so nothing is compiled here.
+    //
+    // macOS stays in this list even though upstream dropped it: this fork ships
+    // a macOS desktop build that decrypts CENC locally (see `desktop_media.rs`).
     let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
-    if target_os != "windows" && target_os != "macos" {
+    if target_os != "windows" && target_os != "macos" && target_os != "linux" {
         return;
     }
     let sources = [
@@ -17,6 +20,9 @@ fn main() {
     build
         .include("../native/crypto_core")
         .std("c11")
+        // Linux links these objects into a shared library, so they must be
+        // position-independent; the Windows link step does not care.
+        .pic(target_os == "linux")
         .flag_if_supported("/experimental:c11atomics")
         .define("CBC", "0")
         .define("CTR", "0")
