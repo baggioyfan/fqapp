@@ -762,7 +762,6 @@ class SystemTtsPlayback extends ChangeNotifier with WidgetsBindingObserver {
     }
   }
 
-  @override
   void _systemSessionChanged() {
     if (DesktopSystemSession.instance.suspended) _ready = false;
     didChangeAppLifecycleState(DesktopSystemSession.instance.lifecycle);
