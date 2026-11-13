@@ -747,8 +747,13 @@ jobs:
       # PR 历史守卫（.github/workflows/pr-history.yml）的脚本自身要有人测：
       # 它只在 pull_request_target 里跑，平时没人看，坏掉的表现是「静默放行
       # 一个超大 PR」而不是报错。用例 5 条、0.6 秒，比不测划算。
+      #
+      # 用文件路径调用，不要写 `python3 -m unittest test/...`：`test` 是 CPython
+      # 自带的标准库包，`-m unittest test.pr_history_guard_test` 会先命中它，
+      # 在 3.12+ 上直接 ModuleNotFoundError（2026-11-13 第一次发版就是这么挂
+      # 的 —— 本地 macOS 的 python3 没有那个包，所以本地跑得过）。
       - name: Test the PR history guard
-        run: python3 -m unittest test/pr_history_guard_test.py
+        run: python3 test/pr_history_guard_test.py
 
       # Size is review context, not a quality gate. Even a reporting error
       # must not block the build; analysis and functional checks stay enforced.
