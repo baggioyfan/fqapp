@@ -560,35 +560,6 @@ class _RootShellState extends State<RootShell>
   /// inherited 依赖的正常更新。
   final Map<int, Widget> _tabCache = {};
 
-  /// 页面滑动过渡动画：dock 点击 / 拖动松手 / 页面回调统一经 [_selectTab]
-  /// 驱动。页面用 Stack + Transform.translate 按动画值平移（与 PageView
-  /// 的滑动观感一致），但挂载时机完全可控——首次访问的目标页先在静止帧
-  /// 挂载完，再启动滑动，页面构建不会冻住滑动中的 dock 高亮。
-  late final AnimationController _pageMotion = AnimationController(
-    vsync: this,
-    duration: const Duration(milliseconds: 260),
-  )..value = 1;
-
-  /// 滑动动画的起点页码（可为小数：打断上一次动画时从当前显示位置继续）。
-  double _pageFrom = 0;
-
-  /// 首次访问延迟挂载的目标页：静止帧里先挂载（不 Offstage 但 Transform
-  /// 放在屏外），挂载帧结束后清除并启动滑动。
-  int? _premount;
-
-  /// 预挂载世代令牌：每次实际切换自增，使待执行的预挂载 post-frame 回调
-  /// 失效——同帧多次选择时只有最新一次生效，过期回调不得覆盖 _index。
-  int _premountGeneration = 0;
-
-  /// 已挂载过的 tab。未访问的页不进 Stack，避免跨多页切换把沿途页面
-  /// （短剧视频流等）全部提前挂载。
-  final Set<int> _visitedTabs = {0};
-
-  /// 页面 widget 缓存：避免 AnimatedBuilder 每帧重建 widget 对象。
-  /// State 由框架保活，缓存的 widget 只是配置描述，不影响主题等
-  /// inherited 依赖的正常更新。
-  final Map<int, Widget> _tabCache = {};
-
   /// 首页 feed 的滚动控制器，由壳层持有以便底部栏触发回顶部。
   final ScrollController _homeScroll = ScrollController();
 
