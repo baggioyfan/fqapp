@@ -51,12 +51,12 @@ Silicon 装同一个文件都能跑，不需要挑架构。
 
   | 架构 | runner | 说明 |
   |---|---|---|
-  | universal | `macos-26` | 最新 Apple Silicon 镜像（macOS 26 + Xcode 26），一次出双架构 |
+  | universal | `macos-15` | 标准 Apple Silicon runner（M1），一次出双架构 |
   | x86_64 单片 | `macos-15-intel` | 唯一的 x86_64 macOS runner，**2027-08 退役**；CI 里已不再使用 |
 
-  `macos-14` 已于 2026-11-02 退役，不要再用。`macos-15` 的 arm64 池近期频繁拿不到
-  runner（job 排队 15+ 分钟被取消，同一 commit 的 APK 早编完、发版却卡在 mac 这一步），
-  已切到 `macos-26`。
+  `macos-14` 已于 2026-11-02 退役，不要再用。`macos-26`（Xcode 26 / macOS 26 SDK）
+  试过一轮：排队没有变快（13+ 分钟仍未拿到 runner，与 macos-15 同一量级），
+  又不清楚新镜像会不会引入编译差异，已回退。
 - universal 能在一台 arm64 runner 上出双架构的原因：macOS 工程的 `ARCHS_STANDARD`
   本来就是 `arm64 x86_64`，Runner、`App.framework`、Pods 的 framework 天然出
   双份；只有 Rust 核心是按单一 triple 产的，脚本给它补一次 `lipo -create`。
@@ -121,7 +121,7 @@ Dart 业务层**零改动**：全仓库都用 `Platform.isMacOS` / `isMacHost` �
 | `lib/services/secure_key_provider.dart` | `FlutterSecureStorage` 显式传 `MacOsOptions(useDataProtectionKeyChain: false)` | 插件默认走 data protection keychain，需要 `keychain-access-groups` 授权，ad-hoc 签名下 `SecItemAdd` 返回 `-34018`；拿不到 Hive 密钥等于每次启动都换钥匙，本地数据全成空库 |
 | `assets/branding/app_icon_macos.png`<br>`assets/branding/macos/Contents.json` | 新增（由 `scripts/generate_app_icons.py` 从 Android 的同一份源图生成） | macOS 图标与 Android 同源，覆盖 `flutter create` 的默认 Flutter 图标 |
 | `scripts/build_macos.sh` | 新增 | 生成 `macos/` 壳、换图标、覆盖 entitlements、**按目标架构编 Rust（universal 时双 triple + `lipo -create`）**、抬 `MACOSX_DEPLOYMENT_TARGET` 到 `DEPLOY_MIN`（13.0）、构建期降 `connectivity_plus`、打进 .app、签名、校验**架构 / 包内 Mach-O slice（universal 要求两条都在）/ `minos` / 版本号** |
-| `.github/workflows/macos.yml` | 新增 | 单 leg，固定 `macos-26`（Apple Silicon，一次出 universal 双架构）。暴露 `workflow_call` 供 `build.yml` 发布时复用 |
+| `.github/workflows/macos.yml` | 新增 | 单 leg，固定 `macos-15`（Apple Silicon，一次出 universal 双架构）。暴露 `workflow_call` 供 `build.yml` 发布时复用 |
 
 `macos/` 目录本身没有提交——由构建脚本用 `flutter create --platforms=macos`
 生成，避免手写 Xcode 工程。生成后脚本会覆盖两份 entitlements：关掉 App Sandbox，
