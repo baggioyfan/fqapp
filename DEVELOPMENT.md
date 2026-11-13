@@ -233,9 +233,13 @@ flutter build apk --release --target-platform android-arm64
 ### GitHub Actions 云端编译
 
 打开 [Actions → Build & Package](https://github.com/baggioyfan/fqapp/actions/workflows/build.yml)，
-点击 **Run workflow** 即可从源码构建。`master` 上的应用、原生库及构建配置变更也会自动触发。
-运行成功后，在该次运行的 **Artifacts** 中下载 `fqapp-arm64-运行编号`；其中包含
-`app-release.apk`、SHA-256、签名与 16 KiB 对齐报告、源码版本和工具版本，产物保留 14 天。
+点击 **Run workflow** 即可从源码构建。只有推 `v*` tag 会自动构建，推 `master` 不触发
+（日常改动只跑一次快速的 Dart Check）；一次 dispatch 默认出 APK + macOS 包，勾选
+Windows / Linux 会另出对应的桌面端产物，填了 `release_tag` 才建 Release（Windows 便携包
+只在这时勾了才会随 Release 发布）。
+运行成功后，在该次运行的 **Artifacts** 中下载 `fqapp-arm64-<ref>-<sha>-<run_number>`；其中包含
+`app-arm64-v8a-release.apk`、`build-info.txt`、SHA-256、签名与 16 KiB 对齐报告、源码版本和工具版本，
+产物保留 14 天。
 
 [工作流](.github/workflows/build.yml) 固定 Flutter `3.47.9`、Rust 工具链与
 flutter_rust_bridge `2.13.0`、JDK 17、NDK `28.2.13676358` 和 CMake `3.22.1`。

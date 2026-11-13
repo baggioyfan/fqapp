@@ -7,19 +7,19 @@
 <p align="center">不用注册 · 不用付费 · 打开就能看</p>
 
 <p align="center">
-  <a href="https://github.com/ch6vip/fqapp/releases/latest"><img alt="Release" src="https://img.shields.io/github/v/release/ch6vip/fqapp?color=EF5038&label=Release&logo=github"></a>
-  <a href="https://github.com/ch6vip/fqapp/releases"><img alt="Downloads" src="https://img.shields.io/github/downloads/ch6vip/fqapp/total?color=14B8A6&label=Downloads&logo=github"></a>
+  <a href="https://github.com/baggioyfan/fqapp/releases/latest"><img alt="Release" src="https://img.shields.io/github/v/release/baggioyfan/fqapp?color=EF5038&label=Release&logo=github"></a>
+  <a href="https://github.com/baggioyfan/fqapp/releases"><img alt="Downloads" src="https://img.shields.io/github/downloads/baggioyfan/fqapp/total?color=14B8A6&label=Downloads&logo=github"></a>
   <img alt="Android" src="https://img.shields.io/badge/Android-7.0%2B-3DDC84?logo=android&logoColor=white">
   <img alt="Windows" src="https://img.shields.io/badge/Windows-10%2F11-0078D4?logo=windows&logoColor=white">
   <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/License-GPL--3.0-blue"></a>
-  <a href="https://github.com/ch6vip/fqapp/stargazers"><img alt="Stars" src="https://img.shields.io/github/stars/ch6vip/fqapp?style=social"></a>
+  <a href="https://github.com/baggioyfan/fqapp/stargazers"><img alt="Stars" src="https://img.shields.io/github/stars/baggioyfan/fqapp?style=social"></a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/ch6vip/fqapp/releases/latest">
+  <a href="https://github.com/baggioyfan/fqapp/releases/latest">
     <img alt="下载 APK" height="40" src="https://img.shields.io/badge/下载-APK-3DDC84?style=for-the-badge&logo=android&logoColor=white">
   </a>
-  <a href="https://github.com/ch6vip/fqapp/releases/latest">
+  <a href="https://github.com/baggioyfan/fqapp/releases/latest">
     <img alt="下载 Windows" height="40" src="https://img.shields.io/badge/下载-Windows-0078D4?style=for-the-badge&logo=windows&logoColor=white">
   </a>
 </p>
@@ -58,6 +58,9 @@
 **推荐：[GitHub Releases](https://github.com/baggioyfan/fqapp/releases/latest)** —— 下载最新发布版的
 `fqapp-<tag>-arm64-v8a.apk`；同一发布页
 附 `build-info.txt`，里面有构建工具链版本、Rust 核心库与 APK 签名证书的 SHA-256，可自行核对。
+桌面端另有 `fqapp-<tag>-macos.zip`（universal，macOS 13+）。Windows 便携包
+`fqapp-<tag>-windows-x64.zip` 是可选产物：只有发版时勾选了 Windows 才会出现在发布页上，
+否则那个版本就只有 APK 与 macOS 包。
 
 其他方式：
 
@@ -169,4 +172,4 @@ App 里也有入口：「设置 → 关于 → 支持作者」。
 
  **开发者** [编译与开发](DEVELOPMENT.md) ｜ [如何反馈](CONTRIBUTING.md) ｜ **许可** [GPL-3.0](LICENSE)，Copyright (C) 2026 ch6vip ｜ **致谢** [LINUX DO](https://linux.do/)
 
-<a href="https://www.star-history.com/?repos=ch6vip%2Ffqapp&type=date&legend=top-left"><picture><source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=ch6vip/fqapp&type=date&theme=dark&legend=top-left" /><source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=ch6vip/fqapp&type=date&legend=top-left" /><img alt="Star History" src="https://api.star-history.com/chart?repos=ch6vip/fqapp&type=date&legend=top-left" /></picture></a>
+<a href="https://www.star-history.com/?repos=baggioyfan%2Ffqapp&type=date&legend=top-left"><picture><source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=baggioyfan/fqapp&type=date&theme=dark&legend=top-left" /><source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=baggioyfan/fqapp&type=date&legend=top-left" /><img alt="Star History" src="https://api.star-history.com/chart?repos=baggioyfan/fqapp&type=date&legend=top-left" /></picture></a>

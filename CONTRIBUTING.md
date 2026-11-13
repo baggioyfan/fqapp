@@ -12,7 +12,7 @@
 
 动手开 issue 前请依次确认：
 
-1. **更新到最新版本**。部分"功能缺失"其实是旧版本没有——项目迭代较快，反馈前请先看 [Releases](https://github.com/ch6vip/fqapp/releases/latest) 的最新包。
+1. **更新到最新版本**。部分"功能缺失"其实是旧版本没有——项目迭代较快，反馈前请先看 [Releases](https://github.com/baggioyfan/fqapp/releases/latest) 的最新包。
 2. **在已有 issue 里搜一下**。同一个问题被拆成多条会让处理变慢。
 3. **确认是本项目的问题**。上游接口本身返回异常（比如某本书目录为空）不是客户端能修的，但值得记录。
 
