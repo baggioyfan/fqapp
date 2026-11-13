@@ -21,7 +21,7 @@ void main() {
 
   group('fromStorage 只认经典', () {
     test('任何历史值都落到 classic', () {
-      for (final value in <Object?>[
+      for (final value in const <Object?>[
         null,
         'archive',
         'classic',
@@ -37,9 +37,9 @@ void main() {
     });
 
     test('预置 archive 的旧存档加载后仍是 classic', () async {
-      SharedPreferences.setMockInitialValues({
-        AppThemeStyleStore.storageKey: 'archive',
-      });
+      SharedPreferences.setMockInitialValues(
+        const {AppThemeStyleStore.storageKey: 'archive'},
+      );
       final store = AppThemeStyleStore();
       addTearDown(store.dispose);
 
