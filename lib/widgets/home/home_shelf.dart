@@ -134,12 +134,7 @@ class HomeSectionHeader extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = HomePalette.of(context);
     return Padding(
-      padding: EdgeInsets.fromLTRB(
-        gutter,
-        homeSectionGap,
-        gutter,
-        homeHeaderGap,
-      ),
+      padding: EdgeInsets.fromLTRB(gutter, topPadding, gutter, homeHeaderGap),
       child: Row(
         crossAxisAlignment: alignActionToTop
             ? CrossAxisAlignment.start
