@@ -1,6 +1,6 @@
 import 'dart:convert';
 
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fqapp/models/text_replacement_rule.dart';
@@ -604,7 +604,9 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('local-only long press has no listening item either', (tester) async {
+  testWidgets('local-only long press has no listening item either', (
+    tester,
+  ) async {
     await tester.binding.setSurfaceSize(const Size(400, 800));
     addTearDown(() => tester.binding.setSurfaceSize(null));
     await tester.pumpWidget(_app(_MemoryUnderlines(), localOnly: true));

@@ -115,61 +115,63 @@ extension _ReaderPageContent on _ReaderPageState {
               onEnd: _onBrightnessDragEnd,
               onCancel: _onBrightnessDragCancel,
               child: Stack(
-              key: _selectionOverlayKey,
-              children: [
-                Positioned.fill(
-                  child: _paged
-                      ? ReaderPagedView(
-                          key: _pagedKey,
-                          layout: layout,
-                          pageIndex: _pageIndex,
-                          hasPreviousChapter: _index > 0,
-                          hasNextChapter: _index < widget.chapters.length - 1,
-                          onPageChanged: _onPageChanged,
-                          onBoundary: _pageBoundary,
-                          onDragStart: _hideControlsOnDrag,
-                          // 墨水屏强制零动画翻页：动画帧在墨水屏上全是残影。
-                          // turnStyle == none 时章节边界动画也随之跳过。
-                          instantSwipe: einkEffectiveInstantSwipe(
-                            eink: einkModeNotifier.value,
-                            instantSwipeTurn: _preferences.instantSwipeTurn,
-                          ),
-                          turnStyle: einkEffectiveTurnStyle(
-                            eink: einkModeNotifier.value,
-                            instantSwipeTurn: _preferences.instantSwipeTurn,
-                            pageTurnStyle: _preferences.pageTurnStyle,
-                          ),
-                          backgroundColor: _effectiveBackgroundColor,
-                          bookmarkedPages: AppUiScope.isClassic(context)
-                              ? _bookmarkedPagesFor(layout)
-                              : const {},
-                          bookmarkColor: preset.selectionAccentColor,
-                          endPage: _index == widget.chapters.length - 1
-                              ? _buildChapterEndPage(preset)
-                              : null,
-                          onBookEnd: _stopAutoTurn,
-                          chapterTurn: _chapterTurnRequest,
-                          onChapterTurnCompleted: _onChapterTurnCompleted,
-                          imageProviderFactory: widget.imageProviderFactory,
-                          onParagraphLongPress: (block, position) =>
-                              unawaited(_onParagraphLongPress(block, position)),
-                          onParagraphLongPressMoveUpdate:
-                              _onParagraphLongPressMoveUpdate,
-                          onParagraphLongPressEnd: _onParagraphLongPressEnd,
-                          selectionScope: scope,
-                          selection: _paintedSelection,
-                          rangeUnderlines: _displayRangeUnderlines,
-                          narrationRange: _narrationRange,
-                        )
-                      : _joined
-                      ? _buildJoinedContent(layout, scope)
-                      : _buildScrollContent(layout, scope),
-                ),
-                ..._selectionHandles(scope),
-                ?_selectionBar(preset, windowPadding),
-              ],
+                key: _selectionOverlayKey,
+                children: [
+                  Positioned.fill(
+                    child: _paged
+                        ? ReaderPagedView(
+                            key: _pagedKey,
+                            layout: layout,
+                            pageIndex: _pageIndex,
+                            hasPreviousChapter: _index > 0,
+                            hasNextChapter: _index < widget.chapters.length - 1,
+                            onPageChanged: _onPageChanged,
+                            onBoundary: _pageBoundary,
+                            onDragStart: _hideControlsOnDrag,
+                            // 墨水屏强制零动画翻页：动画帧在墨水屏上全是残影。
+                            // turnStyle == none 时章节边界动画也随之跳过。
+                            instantSwipe: einkEffectiveInstantSwipe(
+                              eink: einkModeNotifier.value,
+                              instantSwipeTurn: _preferences.instantSwipeTurn,
+                            ),
+                            turnStyle: einkEffectiveTurnStyle(
+                              eink: einkModeNotifier.value,
+                              instantSwipeTurn: _preferences.instantSwipeTurn,
+                              pageTurnStyle: _preferences.pageTurnStyle,
+                            ),
+                            backgroundColor: _effectiveBackgroundColor,
+                            bookmarkedPages: AppUiScope.isClassic(context)
+                                ? _bookmarkedPagesFor(layout)
+                                : const {},
+                            bookmarkColor: preset.selectionAccentColor,
+                            endPage: _index == widget.chapters.length - 1
+                                ? _buildChapterEndPage(preset)
+                                : null,
+                            onBookEnd: _stopAutoTurn,
+                            chapterTurn: _chapterTurnRequest,
+                            onChapterTurnCompleted: _onChapterTurnCompleted,
+                            imageProviderFactory: widget.imageProviderFactory,
+                            onParagraphLongPress: (block, position) =>
+                                unawaited(
+                                  _onParagraphLongPress(block, position),
+                                ),
+                            onParagraphLongPressMoveUpdate:
+                                _onParagraphLongPressMoveUpdate,
+                            onParagraphLongPressEnd: _onParagraphLongPressEnd,
+                            selectionScope: scope,
+                            selection: _paintedSelection,
+                            rangeUnderlines: _displayRangeUnderlines,
+                            narrationRange: _narrationRange,
+                          )
+                        : _joined
+                        ? _buildJoinedContent(layout, scope)
+                        : _buildScrollContent(layout, scope),
+                  ),
+                  ..._selectionHandles(scope),
+                  ?_selectionBar(preset, windowPadding),
+                ],
+              ),
             ),
-            )
           ),
         );
       },

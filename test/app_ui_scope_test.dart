@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -33,10 +33,7 @@ void main() {
       AppUiHost(
         store: store,
         navigatorKey: navigatorKey,
-        home: _RootPage(
-          nestedKey: nestedKey,
-          initializations: initializations,
-        ),
+        home: _RootPage(nestedKey: nestedKey, initializations: initializations),
       ),
     );
     await tester.pumpAndSettle();
@@ -180,10 +177,7 @@ void main() {
       await tester.pumpAndSettle();
       expect(available, isFalse);
       expect(presentation?.style, style);
-      expect(
-        presentation?.showDecorativeCodes,
-        style == AppThemeStyle.archive,
-      );
+      expect(presentation?.showDecorativeCodes, style == AppThemeStyle.archive);
       expect(AppUiScope.debugFallbackReads, greaterThan(0));
       expect(tester.takeException(), isNull);
     }
@@ -299,9 +293,8 @@ class _RootPageState extends State<_RootPage> {
           key: const ValueKey('root-dialog'),
           onPressed: () => showDialog<void>(
             context: context,
-            builder: (_) => const AlertDialog(
-              content: _StyleProbe(name: 'root-overlay'),
-            ),
+            builder: (_) =>
+                const AlertDialog(content: _StyleProbe(name: 'root-overlay')),
           ),
           child: const Text('root dialog'),
         ),
@@ -344,9 +337,8 @@ class _NestedPageState extends State<_NestedPage> {
         onPressed: () => showDialog<void>(
           context: context,
           useRootNavigator: false,
-          builder: (_) => const AlertDialog(
-            content: _StyleProbe(name: 'nested-overlay'),
-          ),
+          builder: (_) =>
+              const AlertDialog(content: _StyleProbe(name: 'nested-overlay')),
         ),
         child: const Text('nested dialog'),
       ),

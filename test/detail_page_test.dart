@@ -1,7 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -220,7 +220,9 @@ void main() {
     // 数据到达时跳一下。
     expect(find.textContaining('没取到这部短剧的目录'), findsOneWidget);
     expect(
-      tester.widget<DetailArchiveDock>(find.byType(DetailArchiveDock)).onPrimary,
+      tester
+          .widget<DetailArchiveDock>(find.byType(DetailArchiveDock))
+          .onPrimary,
       isNull,
     );
     // 短剧的空目录会被当成一次失败重试（同一次地址连打两次都空才下结论）。

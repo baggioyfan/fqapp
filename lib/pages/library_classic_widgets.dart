@@ -109,7 +109,7 @@ class _ClassicLayoutSegments extends StatelessWidget {
         for (final layout in BookshelfLayout.values)
           Tooltip(
             message: layout.menuLabel,
-            excludeFromSemantics: true,
+            excludeFromSemantics: false,
             child: Semantics(
               button: true,
               selected: layout == current,
@@ -185,7 +185,7 @@ class _ClassicGroupChip extends StatelessWidget {
       excludeSemantics: true,
       child: Tooltip(
         message: '书架分组：$label',
-        excludeFromSemantics: true,
+        excludeFromSemantics: false,
         child: InkWell(
           onTap: onTap,
           borderRadius: BorderRadius.circular(ShelfTokens.radiusChip),

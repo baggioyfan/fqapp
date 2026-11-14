@@ -2,7 +2,7 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:ui' as ui;
 
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
@@ -243,7 +243,10 @@ void main() {
     // （本地裁撤，见 2acdf7a）。上游把这一项加回来时靠上面的断言抓不到，
     // 这里显式锁住。
     expect(
-      find.descendant(of: sheet, matching: find.byIcon(LucideIcons.locate_fixed)),
+      find.descendant(
+        of: sheet,
+        matching: find.byIcon(LucideIcons.locate_fixed),
+      ),
       findsNothing,
     );
 

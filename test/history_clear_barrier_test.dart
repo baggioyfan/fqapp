@@ -165,23 +165,20 @@ void main() {
     },
   );
 
-  test(
-    'history clearing does not interrupt an in-flight time write',
-    () async {
-      final accumulating = store.accumulateReadTime(
-        'shared',
-        'book',
-        7,
-        at: DateTime(2026, 9, 16),
-      );
-      final cleared = store.clearHistory();
-      await Future.wait([accumulating, cleared]);
+  test('history clearing does not interrupt an in-flight time write', () async {
+    final accumulating = store.accumulateReadTime(
+      'shared',
+      'book',
+      7,
+      at: DateTime(2026, 9, 16),
+    );
+    final cleared = store.clearHistory();
+    await Future.wait([accumulating, cleared]);
 
-      expect(store.historySnapshot(), isEmpty);
-      // 清历史不动阅读时长：7 秒还在。
-      expect(_totalSeconds(store), 7);
-    },
-  );
+    expect(store.historySnapshot(), isEmpty);
+    // 清历史不动阅读时长：7 秒还在。
+    expect(_totalSeconds(store), 7);
+  });
 
   test(
     'a failed history write does not poison clearing or later saves',

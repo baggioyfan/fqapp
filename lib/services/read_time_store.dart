@@ -229,7 +229,9 @@ class ReadTimeStore {
   ///
   /// 折叠后丢掉逐日明细，不可逆；但既然没有任何功能需要「某书某天」，
   /// 损失为零。旧数据没有设备维度，整份都算本机的。
-  Future<void> migrateFromLegacy(Map<String, Map<String, double>> snapshot) async {
+  Future<void> migrateFromLegacy(
+    Map<String, Map<String, double>> snapshot,
+  ) async {
     if (!isReady || _deviceId.isEmpty || snapshot.isEmpty) return;
     final dailyBox = _dailyBox!;
     final booksBox = _booksBox!;

@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
 
 import '../../services/app_style_tokens.dart';
@@ -98,7 +98,7 @@ class _HeaderAction extends StatelessWidget {
   Widget build(BuildContext context) {
     return Tooltip(
       message: label,
-      excludeFromSemantics: true,
+      excludeFromSemantics: false,
       child: HomePressable(
         onTap: onTap,
         borderRadius: BorderRadius.circular(HomeMasthead.actionSize / 2),

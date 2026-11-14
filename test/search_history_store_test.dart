@@ -49,20 +49,23 @@ void main() {
     },
   );
 
-  test('a full local list still takes in a word from the other device', () async {
-    // 本机已经满 20 条时，旧写法（本机在前、云端在后拼起来再截断）会把云端
-    // 的词全部截掉：一台很少搜索的设备永远收不到另一台搜过的词。
-    final store = SearchHistoryStore.instance;
-    for (var i = 0; i < 20; i++) {
-      await store.add('本机$i');
-    }
-    final added = await store.merge(['云端新词']);
+  test(
+    'a full local list still takes in a word from the other device',
+    () async {
+      // 本机已经满 20 条时，旧写法（本机在前、云端在后拼起来再截断）会把云端
+      // 的词全部截掉：一台很少搜索的设备永远收不到另一台搜过的词。
+      final store = SearchHistoryStore.instance;
+      for (var i = 0; i < 20; i++) {
+        await store.add('本机$i');
+      }
+      final added = await store.merge(['云端新词']);
 
-    expect(added, 1);
-    final merged = await store.load();
-    expect(merged, hasLength(20));
-    expect(merged, contains('云端新词'));
-  });
+      expect(added, 1);
+      final merged = await store.load();
+      expect(merged, hasLength(20));
+      expect(merged, contains('云端新词'));
+    },
+  );
 
   test('merging the same snapshot twice changes nothing', () async {
     final store = SearchHistoryStore.instance;

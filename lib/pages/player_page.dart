@@ -4,7 +4,7 @@ import '../services/app_log.dart';
 import 'dart:async';
 import 'dart:io';
 
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 
 import '../models/audio_extra.dart' show RelatedWork;
 import '../models/media_item.dart';
@@ -1563,9 +1563,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
         // 次数上限挡不住「死网」：每次尝试要现取地址（高峰期 3–4 秒）再等
         // create 超时（15 秒），4 次叠起来能空转四十多秒，用户只看到加载封面。
         // 过了预算就把错误交回去，让界面显示「重试」按钮。
-        final deadline =
-            retryDeadline ??
-            DateTime.now().add(_autoRetryBudget);
+        final deadline = retryDeadline ?? DateTime.now().add(_autoRetryBudget);
         if (DateTime.now().isAfter(deadline)) rethrow;
         trace.fail();
         unawaited(

@@ -1,6 +1,6 @@
 import 'dart:async';
 
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 
 import '../services/app_log.dart';
 import '../services/secret_store.dart';
@@ -263,11 +263,7 @@ class _WebdavSyncPageState extends State<WebdavSyncPage> {
   Widget build(BuildContext context) {
     final palette = HomePalette.of(context);
     final busy = _busy != null;
-    final lastSyncedAt = _lastSyncedAt
-        ?.toLocal()
-        .toString()
-        .split('.')
-        .first;
+    final lastSyncedAt = _lastSyncedAt?.toLocal().toString().split('.').first;
     return PopScope(
       canPop: !busy,
       child: Scaffold(
@@ -369,9 +365,7 @@ class _WebdavSyncPageState extends State<WebdavSyncPage> {
                     ValueListenableBuilder<TextEditingValue>(
                       valueListenable: _url,
                       builder: (context, value, _) => Text(
-                        '${value.text.trim().startsWith('http://')
-                            ? '当前使用明文 http：家庭内网可以用，公共网络下建议换成 https。'
-                            : '用 https 地址时凭据是加密传输的；地址末尾的 / 会自动补上。'}'
+                        '${value.text.trim().startsWith('http://') ? '当前使用明文 http：家庭内网可以用，公共网络下建议换成 https。' : '用 https 地址时凭据是加密传输的；地址末尾的 / 会自动补上。'}'
                         '$_folderNote',
                         style: TextStyle(color: palette.muted, fontSize: 12.5),
                       ),

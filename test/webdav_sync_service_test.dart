@@ -251,35 +251,38 @@ void main() {
     );
   });
 
-  test('merges the remote into this device and writes the union back', () async {
-    await ShelfStore.instance.add(_item('local-1'));
-    transport.remote = snapshot(
-      shelf: [
-        ShelfRecord(
-          item: _item('remote-1'),
-          addedAt: DateTime.fromMillisecondsSinceEpoch(1000),
-        ),
-      ],
-    ).encode();
-    transport.modified = DateTime.utc(2026, 1, 2);
+  test(
+    'merges the remote into this device and writes the union back',
+    () async {
+      await ShelfStore.instance.add(_item('local-1'));
+      transport.remote = snapshot(
+        shelf: [
+          ShelfRecord(
+            item: _item('remote-1'),
+            addedAt: DateTime.fromMillisecondsSinceEpoch(1000),
+          ),
+        ],
+      ).encode();
+      transport.modified = DateTime.utc(2026, 1, 2);
 
-    final report = await service.sync(config, password: 'hunter2');
+      final report = await service.sync(config, password: 'hunter2');
 
-    expect(report.remoteExisted, isTrue);
-    expect(report.remoteModified, DateTime.utc(2026, 1, 2));
-    // One record was new here; the local one was already present.
-    expect(report.shelf, 1);
-    expect(
-      ShelfStore.instance.records().map((record) => record.item.id).toSet(),
-      {'local-1', 'remote-1'},
-    );
-    expect(
-      LibraryBackup.decode(transport.uploaded!).shelf
-          .map((record) => record.item.id)
-          .toSet(),
-      {'local-1', 'remote-1'},
-    );
-  });
+      expect(report.remoteExisted, isTrue);
+      expect(report.remoteModified, DateTime.utc(2026, 1, 2));
+      // One record was new here; the local one was already present.
+      expect(report.shelf, 1);
+      expect(
+        ShelfStore.instance.records().map((record) => record.item.id).toSet(),
+        {'local-1', 'remote-1'},
+      );
+      expect(
+        LibraryBackup.decode(
+          transport.uploaded!,
+        ).shelf.map((record) => record.item.id).toSet(),
+        {'local-1', 'remote-1'},
+      );
+    },
+  );
 
   test('a repeat sync leaves an unchanged remote alone', () async {
     await ShelfStore.instance.add(_item('local-1'));
@@ -295,19 +298,14 @@ void main() {
     expect(second.uploadedBytes, 0);
     expect(identical(transport.uploaded, written), isTrue);
     // 但「已经看到这一版」必须记下来，否则下一次 check() 仍判成有更新。
-    expect(
-      await WebdavConfigStore.instance.fullVersion(),
-      transport.etags[''],
-    );
+    expect(await WebdavConfigStore.instance.fullVersion(), transport.etags['']);
   });
 
   test('a shelf removal survives its own sync', () async {
     // 用户报的那个 bug：移出书架后点同步，云端那份又被合并回本机。
     await ShelfStore.instance.add(_item('keep-1'));
     await ShelfStore.instance.add(_item('local-1'));
-    await ShelfStore.instance.removeKeys([
-      ShelfStore.keyOf(_item('local-1')),
-    ]);
+    await ShelfStore.instance.removeKeys([ShelfStore.keyOf(_item('local-1'))]);
 
     await service.sync(config, password: 'hunter2');
     final uploaded = LibraryBackup.decode(transport.uploaded!);
@@ -318,10 +316,9 @@ void main() {
     transport.modified = DateTime.utc(2026, 1, 3);
     await service.sync(config, password: 'hunter2');
 
-    expect(
-      ShelfStore.instance.records().map((record) => record.item.id),
-      ['keep-1'],
-    );
+    expect(ShelfStore.instance.records().map((record) => record.item.id), [
+      'keep-1',
+    ]);
     expect(
       LibraryBackup.decode(transport.uploaded!).shelf.map((r) => r.item.id),
       ['keep-1'],
@@ -366,10 +363,9 @@ void main() {
 
     await service.sync(config, password: 'hunter2');
 
-    expect(
-      ShelfStore.instance.records().map((record) => record.item.id),
-      ['local-1'],
-    );
+    expect(ShelfStore.instance.records().map((record) => record.item.id), [
+      'local-1',
+    ]);
     // 删除已经被「重新加入」赢过，不该再跟着上传。
     expect(LibraryBackup.decode(transport.uploaded!).shelfRemoved, isEmpty);
   });
@@ -423,10 +419,7 @@ void main() {
 
     await service.sync(config, password: 'hunter2');
 
-    expect(
-      (await LibraryStore.instance.historyEntry('book-1'))?['episode'],
-      7,
-    );
+    expect((await LibraryStore.instance.historyEntry('book-1'))?['episode'], 7);
     final written = ProgressShard.decode(
       transport.shards[ProgressShard.fileName]!,
     );
@@ -462,33 +455,35 @@ void main() {
     expect(transport.uploaded, isNull);
   });
 
-  test('a 412 from a concurrent write re-reads and merges before retrying', () async {
-    // 这是条件写的意义所在：另一台设备在本机「读」与「写」之间提交了改动，
-    // 服务器拒绝本次写。正确反应不是覆盖，而是重新读回来合并再写。
-    await ShelfStore.instance.add(_item('local-1'));
-    transport.remote = snapshot(
-      shelf: [
-        ShelfRecord(
-          item: _item('remote-1'),
-          addedAt: DateTime.fromMillisecondsSinceEpoch(1000),
-        ),
-      ],
-    ).encode();
-    transport.conflictsToInject = 1;
+  test(
+    'a 412 from a concurrent write re-reads and merges before retrying',
+    () async {
+      // 这是条件写的意义所在：另一台设备在本机「读」与「写」之间提交了改动，
+      // 服务器拒绝本次写。正确反应不是覆盖，而是重新读回来合并再写。
+      await ShelfStore.instance.add(_item('local-1'));
+      transport.remote = snapshot(
+        shelf: [
+          ShelfRecord(
+            item: _item('remote-1'),
+            addedAt: DateTime.fromMillisecondsSinceEpoch(1000),
+          ),
+        ],
+      ).encode();
+      transport.conflictsToInject = 1;
 
-    final report = await service.sync(config, password: 'hunter2');
+      final report = await service.sync(config, password: 'hunter2');
 
-    // 重试后两边的条目都在云端，而不是「谁后写谁留」。
-    expect(report.shelf, 1);
-    expect(
-      LibraryBackup.decode(transport.uploaded!)
-          .shelf
-          .map((record) => record.item.id)
-          .toSet(),
-      {'local-1', 'remote-1'},
-    );
-    expect(transport.closed, isTrue);
-  });
+      // 重试后两边的条目都在云端，而不是「谁后写谁留」。
+      expect(report.shelf, 1);
+      expect(
+        LibraryBackup.decode(
+          transport.uploaded!,
+        ).shelf.map((record) => record.item.id).toSet(),
+        {'local-1', 'remote-1'},
+      );
+      expect(transport.closed, isTrue);
+    },
+  );
 
   test('gives up after repeated conflicts instead of looping', () async {
     transport.remote = snapshot().encode();
@@ -513,7 +508,10 @@ void main() {
 
       await service.sync(config, password: 'hunter2');
 
-      expect(LibraryBackup.decode(transport.remote!).shelf.single.item.id, 'local-1');
+      expect(
+        LibraryBackup.decode(transport.remote!).shelf.single.item.id,
+        'local-1',
+      );
       expect(transport.shards.containsKey('fqapp-sync.json.tmp'), isFalse);
       // 从来没有旧文件，就不该凭空造一个 .bak。
       expect(transport.shards.containsKey('fqapp-sync.json.bak'), isFalse);
@@ -541,30 +539,33 @@ void main() {
       expect(transport.shards.containsKey('fqapp-sync.json.tmp'), isFalse);
     });
 
-    test('a truncated upload is refused instead of replacing the file', () async {
-      // 服务端只收到一半：直接 PUT 主文件的话，现在的云端就是这半截，
-      // 两台设备从此都读不懂它。三步替换要求在这里就停下。
-      await ShelfStore.instance.add(_item('local-1'));
-      await service.sync(config, password: 'hunter2');
-      final good = transport.remote;
+    test(
+      'a truncated upload is refused instead of replacing the file',
+      () async {
+        // 服务端只收到一半：直接 PUT 主文件的话，现在的云端就是这半截，
+        // 两台设备从此都读不懂它。三步替换要求在这里就停下。
+        await ShelfStore.instance.add(_item('local-1'));
+        await service.sync(config, password: 'hunter2');
+        final good = transport.remote;
 
-      transport.truncateUploads = true;
-      await ShelfStore.instance.add(_item('local-2'));
+        transport.truncateUploads = true;
+        await ShelfStore.instance.add(_item('local-2'));
 
-      await expectLater(
-        service.sync(config, password: 'hunter2'),
-        throwsA(
-          isA<WebdavException>().having(
-            (error) => error.message,
-            'message',
-            contains('上传被截断'),
+        await expectLater(
+          service.sync(config, password: 'hunter2'),
+          throwsA(
+            isA<WebdavException>().having(
+              (error) => error.message,
+              'message',
+              contains('上传被截断'),
+            ),
           ),
-        ),
-      );
+        );
 
-      expect(transport.remote, good, reason: '主文件必须还是上一次那份完整数据');
-      expect(transport.shards.containsKey('fqapp-sync.json.tmp'), isFalse);
-    });
+        expect(transport.remote, good, reason: '主文件必须还是上一次那份完整数据');
+        expect(transport.shards.containsKey('fqapp-sync.json.tmp'), isFalse);
+      },
+    );
 
     test('a corrupt primary falls back to the last good version', () async {
       // 云端主文件坏掉（历史上某次直传被截断留下的）。没有 .bak 就只能停；
@@ -589,9 +590,9 @@ void main() {
       );
       // 坏文件已经被一次完整的替换覆盖掉。
       expect(
-        LibraryBackup.decode(transport.remote!).shelf
-            .map((record) => record.item.id)
-            .toSet(),
+        LibraryBackup.decode(
+          transport.remote!,
+        ).shelf.map((record) => record.item.id).toSet(),
         {'local-1', 'from-backup'},
       );
     });
@@ -606,10 +607,7 @@ void main() {
       );
       // 没有可退的版本时，宁可停下也不要用本机数据盖掉那份坏文件 ——
       // 它可能只是暂时读不懂，用户还能去网盘取回来。
-      expect(
-        transport.remote,
-        Uint8List.fromList(utf8.encode('{ not json')),
-      );
+      expect(transport.remote, Uint8List.fromList(utf8.encode('{ not json')));
     });
   });
 
@@ -652,46 +650,49 @@ void main() {
       expect(WebdavSyncService.isSyncing, isFalse);
     });
 
-    test('a manual sync drops a queued background job instead of waiting', () async {
-      await ShelfStore.instance.add(_item('local-1'));
-      final gate = Completer<void>();
-      transport.hold = gate;
+    test(
+      'a manual sync drops a queued background job instead of waiting',
+      () async {
+        await ShelfStore.instance.add(_item('local-1'));
+        final gate = Completer<void>();
+        transport.hold = gate;
 
-      // 第一个任务占住队列。
-      final running = service.syncProgress(
-        config,
-        password: 'hunter2',
-        localDirty: true,
-        priority: SyncPriority.background,
-      );
-      // 第二个后台任务只能在后面排着。
-      final queued = service.syncProgress(
-        config,
-        password: 'hunter2',
-        localDirty: true,
-        priority: SyncPriority.background,
-      );
-      expect(WebdavSyncService.state, SyncRunState.running);
+        // 第一个任务占住队列。
+        final running = service.syncProgress(
+          config,
+          password: 'hunter2',
+          localDirty: true,
+          priority: SyncPriority.background,
+        );
+        // 第二个后台任务只能在后面排着。
+        final queued = service.syncProgress(
+          config,
+          password: 'hunter2',
+          localDirty: true,
+          priority: SyncPriority.background,
+        );
+        expect(WebdavSyncService.state, SyncRunState.running);
 
-      // 用户这时点了「立即同步」：排队那个已经没有意义了。
-      final manual = service.sync(config, password: 'hunter2');
+        // 用户这时点了「立即同步」：排队那个已经没有意义了。
+        final manual = service.sync(config, password: 'hunter2');
 
-      await expectLater(
-        queued,
-        throwsA(
-          isA<WebdavException>().having(
-            (error) => error.message,
-            'message',
-            contains('已被手动同步取代'),
+        await expectLater(
+          queued,
+          throwsA(
+            isA<WebdavException>().having(
+              (error) => error.message,
+              'message',
+              contains('已被手动同步取代'),
+            ),
           ),
-        ),
-      );
+        );
 
-      gate.complete();
-      await running;
-      await manual;
-      expect(WebdavSyncService.isSyncing, isFalse);
-    });
+        gate.complete();
+        await running;
+        await manual;
+        expect(WebdavSyncService.isSyncing, isFalse);
+      },
+    );
   });
 }
 

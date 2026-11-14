@@ -95,9 +95,8 @@ abstract interface class WebdavTransport {
   ///
   /// `versionKey` 是下载到的这一版的标识（响应头带的 ETag，没有就是 null），
   /// 写回时拿它做 `If-Match`。
-  Future<({Uint8List bytes, DateTime? modified, String? versionKey})?> download({
-    String? name,
-  });
+  Future<({Uint8List bytes, DateTime? modified, String? versionKey})?>
+  download({String? name});
 
   /// 只问「云端那份文件是哪一版、多大、什么时候改的」，不取正文 —— 打开
   /// 应用时的检查和热路径闸门都靠它，不必为了看一眼时间戳就把整份备份
@@ -136,12 +135,7 @@ abstract interface class WebdavTransport {
 /// 任何一方时间不准时静默失效 —— 手机快 5 分钟就永远认为云端更旧，于是盲写
 /// 覆盖；服务器快 5 分钟就每次回前台都弹窗。字符串比较没有这个失效方式。
 class RemoteFile {
-  const RemoteFile({
-    this.etag,
-    this.lastModifiedRaw,
-    this.size,
-    this.modified,
-  });
+  const RemoteFile({this.etag, this.lastModifiedRaw, this.size, this.modified});
 
   /// 服务器给的 ETag，**原样保留**（可能带引号，可能带 `W/`）。
   final String? etag;
@@ -303,16 +297,12 @@ class WebdavClient implements WebdavTransport {
     );
     // 405 means the folder appeared between the two requests.
     if (response.statusCode == 201 || response.statusCode == 405) return;
-    throw _statusError(
-      response,
-      '云端目录不存在，且无法创建（WebDAV 地址需要指向一个已存在的目录）',
-    );
+    throw _statusError(response, '云端目录不存在，且无法创建（WebDAV 地址需要指向一个已存在的目录）');
   }
 
   @override
-  Future<({Uint8List bytes, DateTime? modified, String? versionKey})?> download({
-    String? name,
-  }) async {
+  Future<({Uint8List bytes, DateTime? modified, String? versionKey})?>
+  download({String? name}) async {
     final response = await _request(
       'GET',
       _uriFor(name),
@@ -399,11 +389,7 @@ class WebdavClient implements WebdavTransport {
       case 507:
         // Only 404 and 409 use the hint; the mapping below ignores it for the
         // other status in this group, so 507 needs no branch of its own.
-        throw _statusError(
-          response,
-          '上传云端备份失败',
-          hint: _createHereHint,
-        );
+        throw _statusError(response, '上传云端备份失败', hint: _createHereHint);
       default:
         _requireSuccess(response, '上传云端备份失败');
         return null;
@@ -427,11 +413,7 @@ class WebdavClient implements WebdavTransport {
       case 204:
         return;
       case 409:
-        throw _statusError(
-          response,
-          '无法重命名云端文件',
-          hint: '（目标文件已存在，需要先删掉它）',
-        );
+        throw _statusError(response, '无法重命名云端文件', hint: '（目标文件已存在，需要先删掉它）');
       default:
         _requireSuccess(response, '无法重命名云端文件');
     }
@@ -532,34 +514,36 @@ class WebdavClient implements WebdavTransport {
       );
     });
 
-    subscription = streamed.stream.timeout(readIdleTimeout).listen(
-      (chunk) {
-        if (body.length + chunk.length > limit) {
-          fail(
-            WebdavException(
-              '服务器返回的内容超过 ${(limit / (1024 * 1024)).toStringAsFixed(1)} MB，'
-              '已停止读取',
-              kind: WebdavErrorKind.tooLarge,
-            ),
-          );
-          return;
-        }
-        body.add(chunk);
-      },
-      onError: fail,
-      onDone: () {
-        if (done.isCompleted) return;
-        done.complete(
-          http.Response.bytes(
-            body.takeBytes(),
-            streamed.statusCode,
-            headers: streamed.headers,
-            request: streamed.request,
-          ),
+    subscription = streamed.stream
+        .timeout(readIdleTimeout)
+        .listen(
+          (chunk) {
+            if (body.length + chunk.length > limit) {
+              fail(
+                WebdavException(
+                  '服务器返回的内容超过 ${(limit / (1024 * 1024)).toStringAsFixed(1)} MB，'
+                  '已停止读取',
+                  kind: WebdavErrorKind.tooLarge,
+                ),
+              );
+              return;
+            }
+            body.add(chunk);
+          },
+          onError: fail,
+          onDone: () {
+            if (done.isCompleted) return;
+            done.complete(
+              http.Response.bytes(
+                body.takeBytes(),
+                streamed.statusCode,
+                headers: streamed.headers,
+                request: streamed.request,
+              ),
+            );
+          },
+          cancelOnError: true,
         );
-      },
-      cancelOnError: true,
-    );
 
     return done.future.whenComplete(() {
       deadline.cancel();
@@ -683,7 +667,8 @@ class WebdavClient implements WebdavTransport {
   Map<String, String> get _authHeaders => {
     // A server that allows anonymous writes needs no header at all.
     if (config.username.isNotEmpty || password.isNotEmpty)
-      'Authorization': 'Basic ${base64Encode(utf8.encode('${config.username}:$password'))}',
+      'Authorization':
+          'Basic ${base64Encode(utf8.encode('${config.username}:$password'))}',
     'User-Agent': 'fqapp-webdav-sync/1.0',
     'Accept': '*/*',
     // 正文是 JSON，不压缩只多一点流量；但压缩代理会把强 ETag 弱化成

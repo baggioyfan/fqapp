@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -54,11 +54,7 @@ void main() {
     await tester.pump();
 
     expect(device.brightness, isNotEmpty, reason: '下滑也要下发亮度');
-    expect(
-      device.brightness.last,
-      lessThan(.45),
-      reason: '下滑是变暗：起手系统亮度 .45',
-    );
+    expect(device.brightness.last, lessThan(.45), reason: '下滑是变暗：起手系统亮度 .45');
     expect(
       device.brightness.last,
       greaterThan(0),
@@ -135,7 +131,10 @@ void main() {
 final _surface = find.byKey(const ValueKey('reader-page-surface'));
 
 /// 单独挂浮层：不牵整页，只钉「显示 / 自动隐藏」这一层时序。
-Future<void> _mountHud(WidgetTester tester, ValueNotifier<double?> value) async {
+Future<void> _mountHud(
+  WidgetTester tester,
+  ValueNotifier<double?> value,
+) async {
   await tester.pumpWidget(
     MaterialApp(
       home: Stack(
@@ -160,9 +159,7 @@ const _body =
     '他想起许多年前也是这样的天气，父亲背着猎枪出门，回来时带着一身露水。'
     '那时候他还不懂什么叫告别，只觉得山里的春天太长，长到可以浪费。';
 
-final _chapters = [
-  Chapter(itemId: 'c1', title: '第一章 山间来信', volumeName: '正文'),
-];
+final _chapters = [Chapter(itemId: 'c1', title: '第一章 山间来信', volumeName: '正文')];
 
 String _text() =>
     '<header><div class="tt-title">第一章 山间来信</div></header><article>'

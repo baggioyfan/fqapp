@@ -84,10 +84,8 @@ class _SyncJob {
 
 /// Builds the transport for one sync, so tests can substitute an in-memory
 /// server for a real one.
-typedef WebdavTransportFactory = WebdavTransport Function(
-  WebdavConfig config,
-  String password,
-);
+typedef WebdavTransportFactory =
+    WebdavTransport Function(WebdavConfig config, String password);
 
 /// Two-way sync of one snapshot file: pull, merge, push.
 ///
@@ -267,11 +265,7 @@ class WebdavSyncService {
         return (history: carried, uploadedBytes: 0);
       }
       try {
-        await _progressWrite(
-          transport,
-          bytes,
-          ifMatch: prepared.ifMatch,
-        );
+        await _progressWrite(transport, bytes, ifMatch: prepared.ifMatch);
         await _config.markProgressSynced(DateTime.now());
         return (history: carried, uploadedBytes: bytes.length);
       } on WebdavException catch (error) {
@@ -279,10 +273,7 @@ class WebdavSyncService {
           rethrow;
         }
         attempt++;
-        AppLog.i(
-          'webdav-sync',
-          '进度写回时云端已被改动，重新合并后重试（第 $attempt 次）',
-        );
+        AppLog.i('webdav-sync', '进度写回时云端已被改动，重新合并后重试（第 $attempt 次）');
       }
     }
   }
@@ -310,7 +301,9 @@ class WebdavSyncService {
       // 一个空的条件去覆盖别人的写入。
       ifMatch =
           latest.versionKey ??
-          (await transport.remoteFile(name: ProgressShard.fileName))?.versionKey;
+          (await transport.remoteFile(
+            name: ProgressShard.fileName,
+          ))?.versionKey;
       final known = await _config.progressDigest();
       if (known == null || known != digestOf(latest.bytes)) {
         // 云端不是本机上次写上去的那一份：可能别的设备改过，也可能本机
@@ -351,10 +344,7 @@ class WebdavSyncService {
       return (bytes: shard.encode(), dropped: shard.dropped);
     });
     if (encoded.dropped > 0) {
-      AppLog.w(
-        'webdav-sync',
-        '写入进度分片时剔除 ${encoded.dropped} 条本机专属/无法共享的记录',
-      );
+      AppLog.w('webdav-sync', '写入进度分片时剔除 ${encoded.dropped} 条本机专属/无法共享的记录');
     }
     return encoded;
   }
@@ -496,10 +486,7 @@ class WebdavSyncService {
     WebdavConfig config, {
     required String password,
     SyncPriority priority = SyncPriority.manual,
-  }) => _schedule(
-    priority,
-    () => _syncOnce(config, password: password),
-  );
+  }) => _schedule(priority, () => _syncOnce(config, password: password));
 
   Future<WebdavSyncReport> _syncOnce(
     WebdavConfig config, {
@@ -580,10 +567,7 @@ class WebdavSyncService {
           rethrow;
         }
         attempt++;
-        AppLog.i(
-          'webdav-sync',
-          '整包写回时云端已被改动，重新合并后重试（第 $attempt 次）',
-        );
+        AppLog.i('webdav-sync', '整包写回时云端已被改动，重新合并后重试（第 $attempt 次）');
       }
     }
   }
@@ -633,10 +617,7 @@ class WebdavSyncService {
     final version = await _writeAtomically(transport, config, bytes);
     await _config.markFullVersion(version);
     final progress = await _encodeProgress(snapshot.history);
-    await transport.upload(
-      progress.bytes,
-      name: ProgressShard.fileName,
-    );
+    await transport.upload(progress.bytes, name: ProgressShard.fileName);
     await _config.markProgressDigest(digestOf(progress.bytes));
     final now = DateTime.now();
     await _config.markSynced(now);
@@ -663,19 +644,21 @@ class WebdavSyncService {
   /// 读回带两层兜底：撞上替换窗口时等一下再看（[_downloadPrimary]），主文件
   /// 读不懂时退到上一版（[_decodeWithBackup]）。这两条合起来，才让「一次失败
   /// 的上传」不再等于「两台设备永远锁死」。
-  Future<({
-    LibraryBackup snapshot,
-    Uint8List bytes,
-    ({int shelf, int history, int episodes, int readTime, int searchHistory})
-    merged,
-    String? versionKey,
-    String? progressVersionKey,
-    String? progressDigest,
-    bool mainUnchanged,
-    bool progressUnchanged,
-    bool remoteExisted,
-    DateTime? remoteModified,
-  })>
+  Future<
+    ({
+      LibraryBackup snapshot,
+      Uint8List bytes,
+      ({int shelf, int history, int episodes, int readTime, int searchHistory})
+      merged,
+      String? versionKey,
+      String? progressVersionKey,
+      String? progressDigest,
+      bool mainUnchanged,
+      bool progressUnchanged,
+      bool remoteExisted,
+      DateTime? remoteModified,
+    })
+  >
   _prepare(WebdavTransport transport, WebdavConfig config) async {
     final primary = await _downloadPrimary(transport, config);
     var merged = (
@@ -730,11 +713,7 @@ class WebdavSyncService {
         } on WebdavException catch (error) {
           // 分片坏了不该拖累整包 —— 书架、已看、时长还是照常同步。这一趟
           // 结束时 `_commit` 会用本机这份把它重写成一个有效文件。
-          AppLog.w(
-            'webdav-sync',
-            '云端的进度分片无法读取，本次只同步整包',
-            error: error,
-          );
+          AppLog.w('webdav-sync', '云端的进度分片无法读取，本次只同步整包', error: error);
         }
       }
     }
@@ -991,9 +970,7 @@ class WebdavSyncService {
   /// 但这件事跟网络、地址、账号都没有关系，能做的只有腾空间。
   Future<Uint8List> _encode(LibraryBackup snapshot) async {
     try {
-      return await Isolate.run(
-        () => snapshot.encode(includeHistory: false),
-      );
+      return await Isolate.run(() => snapshot.encode(includeHistory: false));
     } on FormatException catch (error) {
       if (error.message.contains('16 MB')) {
         throw const WebdavException(

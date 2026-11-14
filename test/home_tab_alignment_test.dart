@@ -42,7 +42,11 @@ void main() {
       expect(HomeNotifier.tabKinds[name], isNotNull, reason: '「$name」缺卡片种类');
     }
     for (final name in const ['小说', '短剧', '漫剧', '听书']) {
-      expect(HomeNotifier.tabTypes[name], isNotNull, reason: '「$name」缺 tab_type');
+      expect(
+        HomeNotifier.tabTypes[name],
+        isNotNull,
+        reason: '「$name」缺 tab_type',
+      );
     }
     expect(HomeNotifier.tabTypes['漫画'], isNull);
   });

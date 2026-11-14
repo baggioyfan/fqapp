@@ -98,35 +98,32 @@ void main() {
     },
   );
 
-  test(
-    'the sync snapshot drops history, the manual export keeps it',
-    () async {
-      for (var i = 0; i < 20; i++) {
-        await library.addHistory({
-          'id': 'book-$i',
-          'kind': 'book',
-          'chapterId': 'chapter-$i',
-          'position': 0.5,
-          'time': 1000 + i,
-        });
-      }
-      final snapshot = await LibraryBackupService().capture();
-      final full = snapshot.encode();
-      final lean = snapshot.encode(includeHistory: false);
-      final fullJson = jsonDecode(utf8.decode(full)) as Map<String, dynamic>;
-      final leanJson = jsonDecode(utf8.decode(lean)) as Map<String, dynamic>;
+  test('the sync snapshot drops history, the manual export keeps it', () async {
+    for (var i = 0; i < 20; i++) {
+      await library.addHistory({
+        'id': 'book-$i',
+        'kind': 'book',
+        'chapterId': 'chapter-$i',
+        'position': 0.5,
+        'time': 1000 + i,
+      });
+    }
+    final snapshot = await LibraryBackupService().capture();
+    final full = snapshot.encode();
+    final lean = snapshot.encode(includeHistory: false);
+    final fullJson = jsonDecode(utf8.decode(full)) as Map<String, dynamic>;
+    final leanJson = jsonDecode(utf8.decode(lean)) as Map<String, dynamic>;
 
-      expect(fullJson['version'], 5);
-      expect(fullJson['history'], hasLength(20));
-      // WebDAV 整包（includeHistory: false）不写这个键，云端因此不再把同一份
-      // 进度存两遍；解出来是空表，合并空表不会动本机进度。
-      expect(leanJson.containsKey('history'), isFalse);
-      expect(lean.length, lessThan(full.length));
-      expect(LibraryBackup.decode(lean).history, isEmpty);
-      // 手动导出（默认参数）仍然自包含：换机时一个文件就够。
-      expect(LibraryBackup.decode(full).history, hasLength(20));
-    },
-  );
+    expect(fullJson['version'], 5);
+    expect(fullJson['history'], hasLength(20));
+    // WebDAV 整包（includeHistory: false）不写这个键，云端因此不再把同一份
+    // 进度存两遍；解出来是空表，合并空表不会动本机进度。
+    expect(leanJson.containsKey('history'), isFalse);
+    expect(lean.length, lessThan(full.length));
+    expect(LibraryBackup.decode(lean).history, isEmpty);
+    // 手动导出（默认参数）仍然自包含：换机时一个文件就够。
+    expect(LibraryBackup.decode(full).history, hasLength(20));
+  });
 
   test(
     'merge keeps current records, unions legacy watched data, and can retry',
@@ -240,7 +237,7 @@ void main() {
                   ],
                   watched: {},
                   daily: const {},
-        books: const [],
+                  books: const [],
                   searchHistory: const [],
                 ).encodeAsText(),
               )
@@ -281,9 +278,7 @@ void main() {
     // 键序也会随「本机 capture」与「云端 decode」不同，两者都不该影响结论 ——
     // 否则每趟同步都判成「内容变了」，两边就会一直互相触发「云端有更新」。
     final base = LibraryBackup.capture(
-      shelf: [
-        ShelfRecord(item: _item('1'), addedAt: DateTime(2026, 10, 27)),
-      ],
+      shelf: [ShelfRecord(item: _item('1'), addedAt: DateTime(2026, 10, 27))],
       shelfRemoved: const {},
       history: const [],
       watched: const {},

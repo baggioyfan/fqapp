@@ -176,15 +176,9 @@ class SecretStore {
       if (result == null) throw const SecretStoreException('系统密钥库没有返回结果');
       return result;
     } on PlatformException catch (error) {
-      AppLog.w(
-        _tag,
-        '密钥库 $method 失败: ${error.code}',
-        error: error,
-      );
+      AppLog.w(_tag, '密钥库 $method 失败: ${error.code}', error: error);
       throw SecretStoreException(
-        method == 'encrypt'
-            ? '无法用系统密钥库保护密码，请重试'
-            : '保存的密码已失效（系统密钥库拒绝解密），请重新输入',
+        method == 'encrypt' ? '无法用系统密钥库保护密码，请重试' : '保存的密码已失效（系统密钥库拒绝解密），请重新输入',
       );
     } on MissingPluginException catch (error) {
       AppLog.w(_tag, '密钥库通道不可用: $name', error: error);

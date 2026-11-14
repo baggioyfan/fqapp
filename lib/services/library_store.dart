@@ -413,11 +413,7 @@ class LibraryStore implements ReaderStore {
           if (incomingTime <= existingTime) continue;
           if (!_advancesProgress(entry, existing)) continue;
         }
-        final stored = {
-          ...entry,
-          'id': key,
-          if (scoped) 'contentId': id,
-        };
+        final stored = {...entry, 'id': key, if (scoped) 'contentId': id};
         await _histBox.put(key, stored);
         writtenHistory++;
         // 云端合入的进度同样把另一条线前带：设备 A 听到 50 章、设备 B 还在
@@ -651,13 +647,11 @@ class LibraryStore implements ReaderStore {
       'kind': siblingKind,
       'bookId': contentId,
       'episode': episode.toInt(),
-      if (chapterId is String && chapterId.isNotEmpty)
-        'chapterId': chapterId,
+      if (chapterId is String && chapterId.isNotEmpty) 'chapterId': chapterId,
       if (chapterCount is num && chapterCount > 0) 'chapterCount': chapterCount,
       if (siblingKind == 'audio') ...{
         'contentId': contentId,
-        if (chapterId is String && chapterId.isNotEmpty)
-          'episodeId': chapterId,
+        if (chapterId is String && chapterId.isNotEmpty) 'episodeId': chapterId,
         'position': 0.0,
         'progress': 0.0,
       } else ...{

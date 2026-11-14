@@ -38,25 +38,20 @@ void main() {
     final tombstone = shelf.tombstones();
     expect(tombstone.keys, [ShelfStore.keyOf(_item('gone'))]);
 
-    await shelf.mergeBackup(
-      [
-        ShelfRecord(
-          item: _item('gone'),
-          addedAt: DateTime.fromMillisecondsSinceEpoch(1000),
-        ),
-        ShelfRecord(
-          item: _item('keep'),
-          addedAt: DateTime.fromMillisecondsSinceEpoch(1000),
-        ),
-      ],
-      removed: tombstone,
-    );
+    await shelf.mergeBackup([
+      ShelfRecord(
+        item: _item('gone'),
+        addedAt: DateTime.fromMillisecondsSinceEpoch(1000),
+      ),
+      ShelfRecord(
+        item: _item('keep'),
+        addedAt: DateTime.fromMillisecondsSinceEpoch(1000),
+      ),
+    ], removed: tombstone);
 
-    expect(
-      shelf.records().map((record) => record.item.id),
-      ['keep'],
-      reason: '删除比云端那条收藏更晚，并集不该把它搬回来',
-    );
+    expect(shelf.records().map((record) => record.item.id), [
+      'keep',
+    ], reason: '删除比云端那条收藏更晚，并集不该把它搬回来');
   });
 
   test('an entry added again after the removal is kept', () async {
@@ -70,16 +65,10 @@ void main() {
       },
     );
 
-    expect(
-      shelf.records().map((record) => record.item.id),
-      ['again'],
-      reason: '删掉之后又加回来，收藏时间更新，应当保留',
-    );
-    expect(
-      shelf.tombstones(),
-      isEmpty,
-      reason: '已经不成立的墓碑不该继续上传，否则对方的记录会被误删',
-    );
+    expect(shelf.records().map((record) => record.item.id), [
+      'again',
+    ], reason: '删掉之后又加回来，收藏时间更新，应当保留');
+    expect(shelf.tombstones(), isEmpty, reason: '已经不成立的墓碑不该继续上传，否则对方的记录会被误删');
   });
 
   test('a remote tombstone removes the local entry', () async {
@@ -135,23 +124,17 @@ void main() {
 
     final decoded = LibraryBackup.decode(backup.encode());
 
-    expect(
-      decoded.shelfRemoved,
-      {'book:gone': DateTime.fromMillisecondsSinceEpoch(1700000000000)},
-    );
-    expect(
-      decoded.shelfTombstones.keys,
-      [ShelfStore.keyOf(_item('gone'))],
-    );
+    expect(decoded.shelfRemoved, {
+      'book:gone': DateTime.fromMillisecondsSinceEpoch(1700000000000),
+    });
+    expect(decoded.shelfTombstones.keys, [ShelfStore.keyOf(_item('gone'))]);
   });
 
   test('a v2 snapshot without removals still reads', () {
     // 旧版本导出的文件不能因为缺字段就变成「无法识别」。
     final backup = LibraryBackup.capture(
       shelf: [ShelfRecord(item: _item('old'), addedAt: DateTime(2020))],
-      shelfRemoved: {
-        ShelfStore.keyOf(_item('other')): DateTime(2020),
-      },
+      shelfRemoved: {ShelfStore.keyOf(_item('other')): DateTime(2020)},
       history: const [],
       watched: const {},
       daily: const {},

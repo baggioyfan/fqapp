@@ -1,7 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
 
 /// 阅读页「上下滑调亮度」的浮层。
@@ -107,11 +107,7 @@ class _ReaderBrightnessHudState extends State<ReaderBrightnessHud> {
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  const Icon(
-                    LucideIcons.sun,
-                    size: 20,
-                    color: Colors.white,
-                  ),
+                  const Icon(LucideIcons.sun, size: 20, color: Colors.white),
                   const SizedBox(width: 12),
                   SizedBox(
                     width: 128,

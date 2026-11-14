@@ -301,7 +301,9 @@ void main() {
     final library = LibraryStore.instance;
 
     setUpAll(() async {
-      final directory = await Directory.systemTemp.createTemp('fqapp-progress-');
+      final directory = await Directory.systemTemp.createTemp(
+        'fqapp-progress-',
+      );
       Hive.init(directory.path);
     });
 
@@ -340,39 +342,39 @@ void main() {
         transport.files[ProgressShard.fileName]!,
       );
       expect(decoded.history.map((e) => e['id']), contains('first'));
-      expect(
-        await WebdavConfigStore.instance.progressSyncedAt(),
-        isNotNull,
-      );
+      expect(await WebdavConfigStore.instance.progressSyncedAt(), isNotNull);
     });
 
-    test('a cloud shard from another device is merged before writing', () async {
-      transport.files[ProgressShard.fileName] = ProgressShard.capture([
-        {
-          'id': 'elsewhere',
-          'kind': 'book',
-          'title': '别的设备',
-          'time': 2000,
-          'episode': 4,
-          'progress': 0.1,
-        },
-      ]).encode();
-      // 本机从没同步过分片 —— 闸门认为云端更新，必须读回来。
-      transport.stamps[ProgressShard.fileName] = DateTime.now().toUtc();
+    test(
+      'a cloud shard from another device is merged before writing',
+      () async {
+        transport.files[ProgressShard.fileName] = ProgressShard.capture([
+          {
+            'id': 'elsewhere',
+            'kind': 'book',
+            'title': '别的设备',
+            'time': 2000,
+            'episode': 4,
+            'progress': 0.1,
+          },
+        ]).encode();
+        // 本机从没同步过分片 —— 闸门认为云端更新，必须读回来。
+        transport.stamps[ProgressShard.fileName] = DateTime.now().toUtc();
 
-      final report = await service.syncProgress(
-        config,
-        password: '',
-        localDirty: false,
-      );
+        final report = await service.syncProgress(
+          config,
+          password: '',
+          localDirty: false,
+        );
 
-      expect(report.history, 1);
-      expect(transport.gets, contains(ProgressShard.fileName));
-      expect(
-        (await library.history()).map((e) => e['id']),
-        contains('elsewhere'),
-      );
-    });
+        expect(report.history, 1);
+        expect(transport.gets, contains(ProgressShard.fileName));
+        expect(
+          (await library.history()).map((e) => e['id']),
+          contains('elsewhere'),
+        );
+      },
+    );
 
     test('a cloud shard with local records is rewritten', () async {
       // 老版本把本机导入书的进度也写进了分片：这份文件 `sanitizeHistory` 一律
@@ -527,41 +529,44 @@ void main() {
       expect(decoded.history.map((e) => e['id']), contains('via-full'));
     });
 
-    test('leaving a page uploads even when the cloud shard is unchanged', () async {
-      // 第二次及以后离开阅读页时，云端已经有分片，`progressSyncedAt` 正好是
-      // 上次推送的时刻。这时若 `_dirty` 仍是 false，三级闸门会落到「云端没动
-      // + 本机没改」那条短路，这一页的进度永远推不上去，而且日志里一片安静。
-      transport.files[ProgressShard.fileName] = ProgressShard.capture(
-        const [],
-      ).encode();
-      transport.stamps[ProgressShard.fileName] = DateTime.now().toUtc();
-      // 闸门比的是内容指纹：记下云端那份，好让「云端没动」这条判定成立。
-      await WebdavConfigStore.instance.markProgressDigest(
-        digestOf(transport.files[ProgressShard.fileName]!),
-      );
-      await WebdavConfigStore.instance.save(config);
-      await library.addHistory({
-        'id': 'left-page',
-        'kind': 'book',
-        'title': '读完退出',
-        'time': 6000,
-        'episode': 5,
-        'progress': 0.6,
-      });
-      final auto = WebdavAutoSync(
-        service: service,
-        transport: (config, password) => transport,
-      );
-      addTearDown(auto.dispose);
+    test(
+      'leaving a page uploads even when the cloud shard is unchanged',
+      () async {
+        // 第二次及以后离开阅读页时，云端已经有分片，`progressSyncedAt` 正好是
+        // 上次推送的时刻。这时若 `_dirty` 仍是 false，三级闸门会落到「云端没动
+        // + 本机没改」那条短路，这一页的进度永远推不上去，而且日志里一片安静。
+        transport.files[ProgressShard.fileName] = ProgressShard.capture(
+          const [],
+        ).encode();
+        transport.stamps[ProgressShard.fileName] = DateTime.now().toUtc();
+        // 闸门比的是内容指纹：记下云端那份，好让「云端没动」这条判定成立。
+        await WebdavConfigStore.instance.markProgressDigest(
+          digestOf(transport.files[ProgressShard.fileName]!),
+        );
+        await WebdavConfigStore.instance.save(config);
+        await library.addHistory({
+          'id': 'left-page',
+          'kind': 'book',
+          'title': '读完退出',
+          'time': 6000,
+          'episode': 5,
+          'progress': 0.6,
+        });
+        final auto = WebdavAutoSync(
+          service: service,
+          transport: (config, password) => transport,
+        );
+        addTearDown(auto.dispose);
 
-      expect(await auto.syncOnLeave(), isTrue);
+        expect(await auto.syncOnLeave(), isTrue);
 
-      expect(transport.puts, [ProgressShard.fileName]);
-      final decoded = ProgressShard.decode(
-        transport.files[ProgressShard.fileName]!,
-      );
-      expect(decoded.history.map((e) => e['id']), contains('left-page'));
-    });
+        expect(transport.puts, [ProgressShard.fileName]);
+        final decoded = ProgressShard.decode(
+          transport.files[ProgressShard.fileName]!,
+        );
+        expect(decoded.history.map((e) => e['id']), contains('left-page'));
+      },
+    );
 
     test('a background exit within a day only pushes the shard', () async {
       // 整包已经同步过、冷数据没动 → 退出时只推进度。否则「读两页就退出」

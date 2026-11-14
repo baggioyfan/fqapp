@@ -295,7 +295,10 @@ void main() {
       // 客户端只会安静地退化成无保护写入。这条断言把它钉住。
       expect(server.propfindBody, contains('getetag'));
       expect(server.propfindBody, contains('resourcetype'));
-      expect(server.headers['PROPFIND']!['authorization'], _FakeServer.credentials);
+      expect(
+        server.headers['PROPFIND']!['authorization'],
+        _FakeServer.credentials,
+      );
     });
 
     test('creates a collection that is not there yet', () async {
@@ -367,13 +370,12 @@ void main() {
     });
 
     test('download returns the bytes and the server timestamp', () async {
-      server.files[server.path] = utf8.encode('{"format":"fqapp.library-backup"}');
-      final remote = await clientFor().download();
-      expect(remote, isNotNull);
-      expect(
-        utf8.decode(remote!.bytes),
+      server.files[server.path] = utf8.encode(
         '{"format":"fqapp.library-backup"}',
       );
+      final remote = await clientFor().download();
+      expect(remote, isNotNull);
+      expect(utf8.decode(remote!.bytes), '{"format":"fqapp.library-backup"}');
       expect(remote.modified, DateTime.utc(2026, 1, 2, 3, 4, 5));
     });
 
@@ -443,25 +445,28 @@ void main() {
       );
     });
 
-    test('a body that stalls is abandoned instead of hanging forever', () async {
-      // 服务器把响应头发完就沉默。没有自己的读超时，这条请求会永远挂着，
-      // 而同步队列是串行的 —— 之后每一次同步都排在它后面，页面上只剩转圈。
-      final silent = _SilentClient();
-      addTearDown(silent.dispose);
-      await expectLater(
-        clientFor(
-          client: silent,
-          readIdleTimeout: const Duration(milliseconds: 150),
-        ).remoteFile(),
-        throwsA(
-          isA<WebdavException>().having(
-            (error) => error.message,
-            'message',
-            contains('没有返回数据'),
+    test(
+      'a body that stalls is abandoned instead of hanging forever',
+      () async {
+        // 服务器把响应头发完就沉默。没有自己的读超时，这条请求会永远挂着，
+        // 而同步队列是串行的 —— 之后每一次同步都排在它后面，页面上只剩转圈。
+        final silent = _SilentClient();
+        addTearDown(silent.dispose);
+        await expectLater(
+          clientFor(
+            client: silent,
+            readIdleTimeout: const Duration(milliseconds: 150),
+          ).remoteFile(),
+          throwsA(
+            isA<WebdavException>().having(
+              (error) => error.message,
+              'message',
+              contains('没有返回数据'),
+            ),
           ),
-        ),
-      );
-    });
+        );
+      },
+    );
 
     test('a body that drips too slowly hits the read deadline', () async {
       // 每块都不超时，但整段拖得太久：分块计时发现不了，只有总时长能。
@@ -650,26 +655,33 @@ void main() {
       expect(server.files[server.path], body('{"v":2}'));
     });
 
-    test('an outdated version is refused with 412 and changes nothing', () async {
-      server.files[server.path] = body('{"v":1}');
-      final stale = (await clientFor().remoteFile())!.versionKey!;
+    test(
+      'an outdated version is refused with 412 and changes nothing',
+      () async {
+        server.files[server.path] = body('{"v":1}');
+        final stale = (await clientFor().remoteFile())!.versionKey!;
 
-      // 另一台设备先写了一版：云端内容与版本都前进了。
-      await clientFor().upload(body('{"v":2}'));
-      final before = server.files[server.path]!;
+        // 另一台设备先写了一版：云端内容与版本都前进了。
+        await clientFor().upload(body('{"v":2}'));
+        final before = server.files[server.path]!;
 
-      await expectLater(
-        clientFor().upload(body('{"v":3}'), ifMatch: stale),
-        throwsA(
-          isA<WebdavException>()
-              .having((error) => error.statusCode, 'statusCode', 412)
-              .having((error) => error.message, 'message', contains('已被其它设备更新')),
-        ),
-      );
+        await expectLater(
+          clientFor().upload(body('{"v":3}'), ifMatch: stale),
+          throwsA(
+            isA<WebdavException>()
+                .having((error) => error.statusCode, 'statusCode', 412)
+                .having(
+                  (error) => error.message,
+                  'message',
+                  contains('已被其它设备更新'),
+                ),
+          ),
+        );
 
-      expect(server.rejectedByIfMatch, 1);
-      expect(server.files[server.path], before, reason: '被拒的写不能落盘');
-    });
+        expect(server.rejectedByIfMatch, 1);
+        expect(server.files[server.path], before, reason: '被拒的写不能落盘');
+      },
+    );
 
     test('the current version is accepted', () async {
       server.files[server.path] = body('{"v":1}');
@@ -717,24 +729,27 @@ void main() {
       );
     });
 
-    test('move onto an existing file is refused, not silently merged', () async {
-      // 坚果云回 409，Overwrite 头不认。三步替换必须先删掉上一轮的 .bak，
-      // 否则每次同步都会在这里失败。
-      server.files[server.path] = body('current');
-      server.files['/dav/fqapp-sync.json.bak'] = body('stale');
+    test(
+      'move onto an existing file is refused, not silently merged',
+      () async {
+        // 坚果云回 409，Overwrite 头不认。三步替换必须先删掉上一轮的 .bak，
+        // 否则每次同步都会在这里失败。
+        server.files[server.path] = body('current');
+        server.files['/dav/fqapp-sync.json.bak'] = body('stale');
 
-      await expectLater(
-        clientFor().move(from: null, to: 'fqapp-sync.json.bak'),
-        throwsA(
-          isA<WebdavException>().having(
-            (error) => error.message,
-            'message',
-            contains('目标文件已存在'),
+        await expectLater(
+          clientFor().move(from: null, to: 'fqapp-sync.json.bak'),
+          throwsA(
+            isA<WebdavException>().having(
+              (error) => error.message,
+              'message',
+              contains('目标文件已存在'),
+            ),
           ),
-        ),
-      );
-      expect(server.files[server.path], body('current'), reason: '源文件不该动');
-    });
+        );
+        expect(server.files[server.path], body('current'), reason: '源文件不该动');
+      },
+    );
 
     test('delete removes the file and tolerates a missing one', () async {
       server.files['/dav/fqapp-sync.json.tmp'] = body('junk');

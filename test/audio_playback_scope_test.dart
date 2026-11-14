@@ -1,6 +1,6 @@
 import 'dart:async';
 
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fqapp/models/audio_extra.dart';
 import 'package:fqapp/models/chapter_media.dart';
@@ -228,10 +228,7 @@ class _Harness {
 
   /// 打开同一本书的阅读页：迷你栏留在原地，阅读页在 initState 里注册
   /// 「跳到播放位置」。
-  void openReader({
-    String bookId = 'book',
-    String text = '第一段。\n第二段。',
-  }) {
+  void openReader({String bookId = 'book', String text = '第一段。\n第二段。'}) {
     unawaited(
       navigator.currentState!.push<void>(
         MaterialPageRoute(

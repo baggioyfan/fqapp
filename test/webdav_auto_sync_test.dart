@@ -101,11 +101,14 @@ void main() {
     expect(probe.probes, 1);
   });
 
-  test('stays quiet when the cloud is the version this device synced', () async {
-    await prefs(knownVersion: 'v1');
+  test(
+    'stays quiet when the cloud is the version this device synced',
+    () async {
+      await prefs(knownVersion: 'v1');
 
-    expect(await auto.check(), isNull);
-  });
+      expect(await auto.check(), isNull);
+    },
+  );
 
   test('asks when this device never synced', () async {
     await prefs();
@@ -147,10 +150,7 @@ void main() {
   test('a local clock far behind does not fake a remote update', () async {
     // 本机时钟停在 2010 年：按时间比较，云端永远是「更新的」，
     // 于是每次回前台都弹窗。判据换成版本之后，云端没换版就不该开口。
-    await prefs(
-      lastSyncedAt: DateTime.utc(2010, 1, 1),
-      knownVersion: 'v1',
-    );
+    await prefs(lastSyncedAt: DateTime.utc(2010, 1, 1), knownVersion: 'v1');
 
     expect(await auto.check(), isNull);
   });
@@ -158,10 +158,7 @@ void main() {
   test('a local clock far ahead does not hide a real remote change', () async {
     // 反过来更危险：本机时钟跑到 2035 年，按时间比较会认为云端是旧的，
     // 于是另一台设备的更新永远不提示 —— 这正是「静默丢更新」的入口。
-    await prefs(
-      lastSyncedAt: DateTime.utc(2035, 1, 1),
-      knownVersion: 'v0',
-    );
+    await prefs(lastSyncedAt: DateTime.utc(2035, 1, 1), knownVersion: 'v0');
     probe.etag = 'v1';
 
     expect(await auto.check(), isNotNull);

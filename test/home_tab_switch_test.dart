@@ -1,6 +1,6 @@
 import 'dart:async';
 
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -206,10 +206,7 @@ void main() {
 
     // 换内容，但视口原地不动，顶栏仍然在。
     expect(positionOf(controller).pixels, 0);
-    expect(
-      tester.getRect(find.byType(HomeHero)).top,
-      greaterThanOrEqualTo(0),
-    );
+    expect(tester.getRect(find.byType(HomeHero)).top, greaterThanOrEqualTo(0));
     expect(tester.takeException(), isNull);
   });
 
@@ -243,7 +240,11 @@ void main() {
     await swipeTab(tester, -260);
     await swipeTab(tester, -260);
 
-    expect(find.byType(ClassicHomeSkeleton), findsNothing, reason: '切分类不该铺整页骨架');
+    expect(
+      find.byType(ClassicHomeSkeleton),
+      findsNothing,
+      reason: '切分类不该铺整页骨架',
+    );
     expect(find.byType(ClassicHomeFeedLoading), findsOneWidget);
     expect(find.text('正在刷新内容'), findsOneWidget);
 

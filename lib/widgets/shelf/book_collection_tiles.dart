@@ -23,8 +23,8 @@
 //   existing row facts without a service dependency.
 // - `coverHeroTag` is accepted for parity; fqapp does not fly a Hero.
 
-import 'package:flutter/cupertino.dart';
-import 'package:flutter/material.dart';
+import 'package:cupertino_ui/cupertino_ui.dart';
+import 'package:material_ui/material_ui.dart';
 
 import '../../models/media_item.dart';
 import '../../models/shuqi_book.dart';
@@ -142,9 +142,7 @@ class ShelfNovelRow extends StatelessWidget {
         child: JellyTapSurface(
           onTap: onTap,
           child: Container(
-            padding: EdgeInsets.symmetric(
-              vertical: style.entryGap,
-            ),
+            padding: EdgeInsets.symmetric(vertical: style.entryGap),
             decoration: BoxDecoration(
               border: Border(
                 bottom: BorderSide(color: Theme.of(context).dividerColor),

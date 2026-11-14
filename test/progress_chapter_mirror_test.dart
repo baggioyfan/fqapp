@@ -196,9 +196,7 @@ void main() {
     // A 设备看到 80 章（episode 79）上云，B 重新登录后拉到它。真实云端
     // 记录经 LibraryBackup._common 一定带 id/kind，这里保持同形。
     final merged = await store.mergeBackup(
-      history: [
-        book(id: 'b6', episode: 79, chapterId: 'c80', time: 5000),
-      ],
+      history: [book(id: 'b6', episode: 79, chapterId: 'c80', time: 5000)],
       watched: const {},
       daily: const {},
       books: const <({String id, String kind, Map<String, double> devices})>[],

@@ -31,9 +31,11 @@ dependencies:
   flutter:
     sdk: flutter
   # 中文 Material 文案（复制/粘贴/全选等系统文本菜单）：没有 delegates 时
-  # Flutter 一律回退英文，即使系统语言是中文（issue #79）。
-  flutter_localizations:
-    sdk: flutter
+  # Flutter 一律回退英文，即使系统语言是中文（issue #79）。3.50 起 Material /
+  # Cupertino 拆成独立包，GlobalMaterialLocalizations 与整套 delegates 搬进
+  # material_ui，原来的 flutter_localizations 依赖因此删除。
+  material_ui: ^1.11.0
+  cupertino_ui: ^1.1.6
 
   http: ^1.6.0
   crypto: 3.0.8

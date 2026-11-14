@@ -217,12 +217,7 @@ class WebdavAutoSync {
       }
       return true;
     } catch (error, stack) {
-      AppLog.w(
-        'webdav-auto',
-        '进度同步失败（$reason）',
-        error: error,
-        stack: stack,
-      );
+      AppLog.w('webdav-auto', '进度同步失败（$reason）', error: error, stack: stack);
       return false;
     } finally {
       _progressBusy = false;
@@ -350,12 +345,7 @@ class WebdavAutoSync {
       );
       return true;
     } catch (error, stack) {
-      AppLog.w(
-        'webdav-auto',
-        '自动同步失败（$reason）',
-        error: error,
-        stack: stack,
-      );
+      AppLog.w('webdav-auto', '自动同步失败（$reason）', error: error, stack: stack);
       return false;
     }
   }

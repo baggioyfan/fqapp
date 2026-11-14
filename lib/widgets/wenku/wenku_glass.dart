@@ -1,6 +1,6 @@
 import 'dart:math' as math;
 
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:liquid_glass_easy/liquid_glass_easy.dart' as easy;
 
 import '../../services/app_style_tokens.dart';
@@ -618,7 +618,7 @@ class GlassIconButton extends StatelessWidget {
       child: Tooltip(
         message: semanticLabel,
         triggerMode: TooltipTriggerMode.manual,
-        excludeFromSemantics: true,
+        excludeFromSemantics: false,
         child: _scaleCompactFace(
           compact: compact,
           scaleX: 40 / 48,
@@ -1144,10 +1144,7 @@ class _ContentPanelState extends State<ContentPanel> {
           borderRadius: BorderRadius.circular(
             widget._radius ?? style.panelRadius,
           ),
-          side: BorderSide(
-            color: Theme.of(context).dividerColor,
-            width: .6,
-          ),
+          side: BorderSide(color: Theme.of(context).dividerColor, width: .6),
         ),
         clipBehavior: Clip.antiAlias,
         child: InkWell(

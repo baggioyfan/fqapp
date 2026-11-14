@@ -1,6 +1,6 @@
 import 'dart:async';
 
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -145,8 +145,8 @@ void main() {
     tester,
   ) async {
     // fork 的 AppThemeStyleStore 默认 classic（界面锁定经典主题），
-      // 这些用例验的是 scope/overlay 的版式切换机制，故显式从 archive 起始。
-      final store = AppThemeStyleStore()..value = AppThemeStyle.archive;
+    // 这些用例验的是 scope/overlay 的版式切换机制，故显式从 archive 起始。
+    final store = AppThemeStyleStore()..value = AppThemeStyle.archive;
     addTearDown(store.dispose);
     late BuildContext context;
 
@@ -339,8 +339,8 @@ void main() {
     tester,
   ) async {
     // fork 的 AppThemeStyleStore 默认 classic（界面锁定经典主题），
-      // 这些用例验的是 scope/overlay 的版式切换机制，故显式从 archive 起始。
-      final store = AppThemeStyleStore()..value = AppThemeStyle.archive;
+    // 这些用例验的是 scope/overlay 的版式切换机制，故显式从 archive 起始。
+    final store = AppThemeStyleStore()..value = AppThemeStyle.archive;
     addTearDown(store.dispose);
     late BuildContext context;
 
@@ -396,8 +396,8 @@ void main() {
 
   testWidgets('AppFeaturePage swaps shell for the live style', (tester) async {
     // fork 的 AppThemeStyleStore 默认 classic（界面锁定经典主题），
-      // 这些用例验的是 scope/overlay 的版式切换机制，故显式从 archive 起始。
-      final store = AppThemeStyleStore()..value = AppThemeStyle.archive;
+    // 这些用例验的是 scope/overlay 的版式切换机制，故显式从 archive 起始。
+    final store = AppThemeStyleStore()..value = AppThemeStyle.archive;
     addTearDown(store.dispose);
     late BuildContext context;
 
@@ -454,8 +454,8 @@ void main() {
     tester,
   ) async {
     // fork 的 AppThemeStyleStore 默认 classic（界面锁定经典主题），
-      // 这些用例验的是 scope/overlay 的版式切换机制，故显式从 archive 起始。
-      final store = AppThemeStyleStore()..value = AppThemeStyle.archive;
+    // 这些用例验的是 scope/overlay 的版式切换机制，故显式从 archive 起始。
+    final store = AppThemeStyleStore()..value = AppThemeStyle.archive;
     addTearDown(store.dispose);
     final nestedKey = GlobalKey<NavigatorState>();
 
@@ -501,8 +501,8 @@ void main() {
     tester,
   ) async {
     // fork 的 AppThemeStyleStore 默认 classic（界面锁定经典主题），
-      // 这些用例验的是 scope/overlay 的版式切换机制，故显式从 archive 起始。
-      final store = AppThemeStyleStore()..value = AppThemeStyle.archive;
+    // 这些用例验的是 scope/overlay 的版式切换机制，故显式从 archive 起始。
+    final store = AppThemeStyleStore()..value = AppThemeStyle.archive;
     addTearDown(store.dispose);
     final categories = [
       SettingsCategory(
@@ -570,8 +570,8 @@ void main() {
   testWidgets('SearchRoute uses the archive plane and the classic platform '
       'transition, keeping settings and results', (tester) async {
     // fork 的 AppThemeStyleStore 默认 classic（界面锁定经典主题），
-      // 这些用例验的是 scope/overlay 的版式切换机制，故显式从 archive 起始。
-      final store = AppThemeStyleStore()..value = AppThemeStyle.archive;
+    // 这些用例验的是 scope/overlay 的版式切换机制，故显式从 archive 起始。
+    final store = AppThemeStyleStore()..value = AppThemeStyle.archive;
     addTearDown(store.dispose);
     final navigatorKey = GlobalKey<NavigatorState>();
     late BuildContext context;
@@ -640,8 +640,8 @@ void main() {
     tester,
   ) async {
     // fork 的 AppThemeStyleStore 默认 classic（界面锁定经典主题），
-      // 这些用例验的是 scope/overlay 的版式切换机制，故显式从 archive 起始。
-      final store = AppThemeStyleStore()..value = AppThemeStyle.archive;
+    // 这些用例验的是 scope/overlay 的版式切换机制，故显式从 archive 起始。
+    final store = AppThemeStyleStore()..value = AppThemeStyle.archive;
     addTearDown(store.dispose);
     var inits = 0;
     var disposals = 0;
@@ -1129,8 +1129,8 @@ void main() {
     tester,
   ) async {
     // fork 的 AppThemeStyleStore 默认 classic（界面锁定经典主题），
-      // 这些用例验的是 scope/overlay 的版式切换机制，故显式从 archive 起始。
-      final store = AppThemeStyleStore()..value = AppThemeStyle.archive;
+    // 这些用例验的是 scope/overlay 的版式切换机制，故显式从 archive 起始。
+    final store = AppThemeStyleStore()..value = AppThemeStyle.archive;
     addTearDown(store.dispose);
     final previewing = ValueNotifier<bool>(false);
     addTearDown(previewing.dispose);
@@ -1199,8 +1199,8 @@ void main() {
 
   testWidgets('the confirmation scrim follows the live style', (tester) async {
     // fork 的 AppThemeStyleStore 默认 classic（界面锁定经典主题），
-      // 这些用例验的是 scope/overlay 的版式切换机制，故显式从 archive 起始。
-      final store = AppThemeStyleStore()..value = AppThemeStyle.archive;
+    // 这些用例验的是 scope/overlay 的版式切换机制，故显式从 archive 起始。
+    final store = AppThemeStyleStore()..value = AppThemeStyle.archive;
     addTearDown(store.dispose);
     late BuildContext context;
 

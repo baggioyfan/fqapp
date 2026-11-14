@@ -9,7 +9,7 @@ import 'package:archive/archive.dart';
 import 'package:ffi/ffi.dart';
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/foundation.dart';
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 import 'package:media_kit/media_kit.dart';
@@ -212,13 +212,13 @@ class DesktopPlatform with WindowListener {
   }
 
   void _bindLinuxSession() {
-    _sessionEvents = const EventChannel(
-      'fqapp/desktop_session_events',
-    ).receiveBroadcastStream().listen(
-      DesktopSystemSession.instance.accept,
-      onError: (Object error) =>
-          AppLog.w('session', 'Linux session unavailable: $error'),
-    );
+    _sessionEvents = const EventChannel('fqapp/desktop_session_events')
+        .receiveBroadcastStream()
+        .listen(
+          DesktopSystemSession.instance.accept,
+          onError: (Object error) =>
+              AppLog.w('session', 'Linux session unavailable: $error'),
+        );
   }
 
   Widget videoSurface(int id, {Key? key}) {
@@ -461,7 +461,9 @@ class DesktopPlatform with WindowListener {
         if (result == 0) {
           throw PlatformException(
             code: 'tts_failed',
-            message: isMacHost ? 'macOS 语音不可用，请在系统设置中启用语音' : 'Windows 语音不可用，请安装中文语音',
+            message: isMacHost
+                ? 'macOS 语音不可用，请在系统设置中启用语音'
+                : 'Windows 语音不可用，请安装中文语音',
           );
         }
         return null;
@@ -747,32 +749,35 @@ String decodeDesktopText(Uint8List bytes) {
 /// dependency) and hand back the UTF-8 string.
 String decodeGb18030(Uint8List bytes) {
   final libiconv = DynamicLibrary.open('/usr/lib/libiconv.2.dylib');
-  final openIconv = libiconv.lookupFunction<
-    Pointer<Void> Function(Pointer<Utf8>, Pointer<Utf8>),
-    Pointer<Void> Function(Pointer<Utf8>, Pointer<Utf8>)
-  >('iconv_open');
+  final openIconv = libiconv
+      .lookupFunction<
+        Pointer<Void> Function(Pointer<Utf8>, Pointer<Utf8>),
+        Pointer<Void> Function(Pointer<Utf8>, Pointer<Utf8>)
+      >('iconv_open');
   // size_t 在这里按有符号 64 位声明：iconv 用 (size_t)-1 表示出错，用 Int64
   // 声明可以直接拿到 -1，不受无符号回绕影响（ABI 上两者一致）。
-  final convertIconv = libiconv.lookupFunction<
-    Int64 Function(
-      Pointer<Void>,
-      Pointer<Pointer<Uint8>>,
-      Pointer<Uint64>,
-      Pointer<Pointer<Uint8>>,
-      Pointer<Uint64>,
-    ),
-    int Function(
-      Pointer<Void>,
-      Pointer<Pointer<Uint8>>,
-      Pointer<Uint64>,
-      Pointer<Pointer<Uint8>>,
-      Pointer<Uint64>,
-    )
-  >('iconv');
-  final closeIconv = libiconv.lookupFunction<
-    Int32 Function(Pointer<Void>),
-    int Function(Pointer<Void>)
-  >('iconv_close');
+  final convertIconv = libiconv
+      .lookupFunction<
+        Int64 Function(
+          Pointer<Void>,
+          Pointer<Pointer<Uint8>>,
+          Pointer<Uint64>,
+          Pointer<Pointer<Uint8>>,
+          Pointer<Uint64>,
+        ),
+        int Function(
+          Pointer<Void>,
+          Pointer<Pointer<Uint8>>,
+          Pointer<Uint64>,
+          Pointer<Pointer<Uint8>>,
+          Pointer<Uint64>,
+        )
+      >('iconv');
+  final closeIconv = libiconv
+      .lookupFunction<
+        Int32 Function(Pointer<Void>),
+        int Function(Pointer<Void>)
+      >('iconv_close');
 
   final target = 'UTF-8'.toNativeUtf8();
   final source = 'GB18030'.toNativeUtf8();
@@ -881,7 +886,10 @@ class _DesktopPlayer {
       // 只记 CDN 主机名与阶段，不落带签名的完整地址。状态码与分类由
       // `desktopOpenFailure` 从 Rust 回传的 kind / status 里取。
       final host = Uri.tryParse(url)?.host ?? '';
-      AppLog.d('desktop-open', 'step=$stage host=$host kind=${error.runtimeType}');
+      AppLog.d(
+        'desktop-open',
+        'step=$stage host=$host kind=${error.runtimeType}',
+      );
       if (!ready.isCompleted) ready.completeError(StateError('无法打开媒体'));
       final value = desktopOpenFailure(id, error);
       if (!disposed) {

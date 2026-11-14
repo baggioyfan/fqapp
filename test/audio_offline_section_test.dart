@@ -1,6 +1,6 @@
 import 'dart:io';
 
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:fqapp/models/media_item.dart';
@@ -88,8 +88,7 @@ void main() {
     store = _StubStore(temp);
     downloader = AudioDownloader(
       store: store,
-      resolve: (bookId, itemId, toneId) async =>
-          throw StateError('本用例不触发真实下载'),
+      resolve: (bookId, itemId, toneId) async => throw StateError('本用例不触发真实下载'),
     );
   });
 

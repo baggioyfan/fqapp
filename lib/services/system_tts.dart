@@ -309,7 +309,8 @@ class SystemTtsPlayback extends ChangeNotifier with WidgetsBindingObserver {
     }
     book.replacementStore.changes.addListener(_replacementChanged);
     final lifecycle = WidgetsBinding.instance.lifecycleState;
-    _appActive = lifecycle == null ||
+    _appActive =
+        lifecycle == null ||
         // 桌面上窗口失焦只是 inactive，仍然看得见、朗读不该停；移动端保持
         // 原来的「只有 resumed 才算活跃」。Linux 用与 Windows/macOS 相同的
         // 判定（desktopInactiveStillVisible），但这里只对 Linux 生效，避免

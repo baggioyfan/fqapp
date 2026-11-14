@@ -11,7 +11,10 @@ void main() {
   group('collection url', () {
     test('accepts the shapes a WebDAV server hands out', () {
       expect(validateWebdavUrl('https://dav.jianguoyun.com/dav/'), isNull);
-      expect(validateWebdavUrl('https://cloud.example.com/remote.php/dav'), isNull);
+      expect(
+        validateWebdavUrl('https://cloud.example.com/remote.php/dav'),
+        isNull,
+      );
       // A home NAS usually serves plain HTTP on a LAN address.
       expect(validateWebdavUrl('http://192.168.31.10:5005/fqapp'), isNull);
     });
@@ -25,7 +28,10 @@ void main() {
       expect(validateWebdavUrl('https://user:pw@example.com/dav/'), isNotNull);
       expect(validateWebdavUrl('https://example.com/dav/?share=1'), isNotNull);
       expect(validateWebdavUrl('https://example.com/dav/#top'), isNotNull);
-      expect(validateWebdavUrl('https://example.com/dav/fqapp-sync.json'), isNotNull);
+      expect(
+        validateWebdavUrl('https://example.com/dav/fqapp-sync.json'),
+        isNotNull,
+      );
     });
 
     test('normalizes to a directory path', () {
@@ -79,8 +85,13 @@ void main() {
       expect(loaded.collectionUri.toString(), 'https://example.com/dav/');
       expect(loaded.fileUri.toString(), 'https://example.com/dav/a.json');
 
-      await store.markSynced(DateTime.fromMillisecondsSinceEpoch(1700000000000));
-      expect((await store.lastSyncedAt())!.millisecondsSinceEpoch, 1700000000000);
+      await store.markSynced(
+        DateTime.fromMillisecondsSinceEpoch(1700000000000),
+      );
+      expect(
+        (await store.lastSyncedAt())!.millisecondsSinceEpoch,
+        1700000000000,
+      );
 
       await store.clear();
       expect(await store.load(), isNull);
@@ -94,16 +105,19 @@ void main() {
       expect(await WebdavConfigStore.instance.load(), isNull);
     });
 
-    test('falls back to the default file name when the stored one is unusable', () async {
-      SharedPreferences.setMockInitialValues({
-        WebdavConfigStore.urlKey: 'https://example.com/dav/',
-        WebdavConfigStore.fileKey: 'weird name.txt',
-      });
-      expect(
-        (await WebdavConfigStore.instance.load())!.fileName,
-        WebdavConfig.defaultFileName,
-      );
-    });
+    test(
+      'falls back to the default file name when the stored one is unusable',
+      () async {
+        SharedPreferences.setMockInitialValues({
+          WebdavConfigStore.urlKey: 'https://example.com/dav/',
+          WebdavConfigStore.fileKey: 'weird name.txt',
+        });
+        expect(
+          (await WebdavConfigStore.instance.load())!.fileName,
+          WebdavConfig.defaultFileName,
+        );
+      },
+    );
 
     test('defaults the file name when none was stored', () async {
       SharedPreferences.setMockInitialValues({

@@ -78,12 +78,7 @@ void main() {
       ('middle', DateTime(2026, 1, 2)),
       ('newest', DateTime(2026, 1, 3)),
     ]) {
-      await store.accumulateReadTime(
-        entry.$1,
-        'book',
-        60,
-        at: entry.$2,
-      );
+      await store.accumulateReadTime(entry.$1, 'book', 60, at: entry.$2);
     }
 
     ReadTimeStore.instance.maxBooks = 2;
@@ -104,54 +99,57 @@ void main() {
     expect(total, 181.0);
   });
 
-  test('merge takes the per-device maximum, so a second device adds up', () async {
-    final store = LibraryStore.instance;
-    final device = ReadTimeStore.instance.deviceId;
-    await store.accumulateReadTime(
-      'book-a',
-      'book',
-      1800,
-      at: DateTime(2026, 1, 5),
-    );
+  test(
+    'merge takes the per-device maximum, so a second device adds up',
+    () async {
+      final store = LibraryStore.instance;
+      final device = ReadTimeStore.instance.deviceId;
+      await store.accumulateReadTime(
+        'book-a',
+        'book',
+        1800,
+        at: DateTime(2026, 1, 5),
+      );
 
-    // 另一台设备同一天读了 1200 秒：取大会丢掉它，求和才是 3000。
-    final merged = await ReadTimeStore.instance.merge(
-      {
-        '2026-1-5': {'other-device': 1200.0},
-      },
-      [
-        (id: 'book-a', kind: 'book', devices: {'other-device': 1200.0}),
-      ],
-    );
-    expect(merged, greaterThan(0));
-    expect(store.readTimeDailyTotals()['2026-1-5'], 3000.0);
-    expect(store.readTimeBookTotals()['book-a'], 3000.0);
-
-    // 同一份快照再来一次：同设备取大，所以一分不多。
-    expect(
-      await ReadTimeStore.instance.merge(
+      // 另一台设备同一天读了 1200 秒：取大会丢掉它，求和才是 3000。
+      final merged = await ReadTimeStore.instance.merge(
         {
           '2026-1-5': {'other-device': 1200.0},
         },
         [
           (id: 'book-a', kind: 'book', devices: {'other-device': 1200.0}),
         ],
-      ),
-      0,
-    );
-    expect(store.readTimeBookTotals()['book-a'], 3000.0);
+      );
+      expect(merged, greaterThan(0));
+      expect(store.readTimeDailyTotals()['2026-1-5'], 3000.0);
+      expect(store.readTimeBookTotals()['book-a'], 3000.0);
 
-    // 本机这一行只会被更大的值覆盖。
-    await ReadTimeStore.instance.merge(
-      {
-        '2026-1-5': {device: 600.0},
-      },
-      [
-        (id: 'book-a', kind: 'book', devices: {device: 600.0}),
-      ],
-    );
-    expect(store.readTimeDailyTotals()['2026-1-5'], 3000.0);
-  });
+      // 同一份快照再来一次：同设备取大，所以一分不多。
+      expect(
+        await ReadTimeStore.instance.merge(
+          {
+            '2026-1-5': {'other-device': 1200.0},
+          },
+          [
+            (id: 'book-a', kind: 'book', devices: {'other-device': 1200.0}),
+          ],
+        ),
+        0,
+      );
+      expect(store.readTimeBookTotals()['book-a'], 3000.0);
+
+      // 本机这一行只会被更大的值覆盖。
+      await ReadTimeStore.instance.merge(
+        {
+          '2026-1-5': {device: 600.0},
+        },
+        [
+          (id: 'book-a', kind: 'book', devices: {device: 600.0}),
+        ],
+      );
+      expect(store.readTimeDailyTotals()['2026-1-5'], 3000.0);
+    },
+  );
 
   test('clearing reading data empties both tables', () async {
     final store = LibraryStore.instance;

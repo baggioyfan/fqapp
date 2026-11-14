@@ -98,7 +98,10 @@ class ShelfStore {
     _box = box;
     // 墓碑是可选数据：开不出来就退回「删除不传播」，不能拖住书架本身。
     try {
-      _tombstones = await EncryptedHive.openBox<dynamic>(Hive, tombstoneBoxName);
+      _tombstones = await EncryptedHive.openBox<dynamic>(
+        Hive,
+        tombstoneBoxName,
+      );
     } catch (_) {
       _tombstones = null;
     }
@@ -298,9 +301,7 @@ class ShelfStore {
   }
 
   Future<void> _pruneTombstones(Box<dynamic> box) async {
-    final cutoff = DateTime.now()
-        .subtract(tombstoneTtl)
-        .millisecondsSinceEpoch;
+    final cutoff = DateTime.now().subtract(tombstoneTtl).millisecondsSinceEpoch;
     final stale = [
       for (final key in box.keys)
         if ((box.get(key) as num? ?? 0) < cutoff) key,

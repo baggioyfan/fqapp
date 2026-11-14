@@ -5,8 +5,7 @@ import 'services/desktop_platform.dart';
 import 'services/platform_capabilities.dart';
 import 'services/platform_channel.dart';
 
-import 'package:flutter/material.dart';
-import 'package:flutter_localizations/flutter_localizations.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter/services.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
@@ -130,9 +129,10 @@ Future<void> _prepareRuntime() async {
       // 桌面没有「退到后台」，关窗口是最后一次可靠的上云机会，且必须在
       // Hive.close() 之前（同步要读书架与进度）。给 5 秒上限：网络卡住时
       // 宁可丢这一页进度，也不能让窗口关不掉。
-      await WebdavAutoSync.instance
-          .flush()
-          .timeout(const Duration(seconds: 5), onTimeout: () => false);
+      await WebdavAutoSync.instance.flush().timeout(
+        const Duration(seconds: 5),
+        onTimeout: () => false,
+      );
       await Hive.close();
     };
   }
@@ -365,8 +365,10 @@ class _FqAppState extends State<FqApp> {
                                 .copyWith(
                                   statusBarColor: palette.canvas,
                                   systemNavigationBarColor: palette.canvas,
-                                  systemNavigationBarDividerColor: palette.canvas,
-                                  systemNavigationBarIconBrightness: palette.dark
+                                  systemNavigationBarDividerColor:
+                                      palette.canvas,
+                                  systemNavigationBarIconBrightness:
+                                      palette.dark
                                       ? Brightness.light
                                       : Brightness.dark,
                                 ),
@@ -792,9 +794,7 @@ class _RootShellState extends State<RootShell>
 
   Future<void> _syncFromPrompt(WebdavRemoteUpdate update) async {
     final messenger = ScaffoldMessenger.maybeOf(context);
-    messenger?.showSnackBar(
-      const SnackBar(content: Text('正在同步，请不要退出…')),
-    );
+    messenger?.showSnackBar(const SnackBar(content: Text('正在同步，请不要退出…')));
     try {
       final report = await WebdavAutoSync.instance.syncNow(update);
       messenger
@@ -813,8 +813,7 @@ class _RootShellState extends State<RootShell>
     }
   }
 
-  static String _stamp(DateTime at) =>
-      at.toLocal().toString().split('.').first;
+  static String _stamp(DateTime at) => at.toLocal().toString().split('.').first;
 
   void _onDramaChromeChanged() {
     if (mounted) setState(() {});

@@ -90,21 +90,24 @@ void main() {
       expect((await library.historyEntry('book-1'))?['episode'], 100);
     });
 
-    test('never moves backwards even when the incoming record is newer', () async {
-      await library.addHistory({
-        'id': 'book-1',
-        'kind': 'book',
-        'episode': 100,
-        'time': 200,
-      });
-      final backup = backupWith(
-        history: [
-          {'id': 'book-1', 'kind': 'book', 'episode': 50, 'time': 300},
-        ],
-      );
-      expect((await service.restore(backup)).history, 0);
-      expect((await library.historyEntry('book-1'))?['episode'], 100);
-    });
+    test(
+      'never moves backwards even when the incoming record is newer',
+      () async {
+        await library.addHistory({
+          'id': 'book-1',
+          'kind': 'book',
+          'episode': 100,
+          'time': 200,
+        });
+        final backup = backupWith(
+          history: [
+            {'id': 'book-1', 'kind': 'book', 'episode': 50, 'time': 300},
+          ],
+        );
+        expect((await service.restore(backup)).history, 0);
+        expect((await library.historyEntry('book-1'))?['episode'], 100);
+      },
+    );
 
     test('a same-instant record keeps the local copy', () async {
       await library.addHistory({
@@ -179,66 +182,75 @@ void main() {
   });
 
   group('read time merge', () {
-    test('capture carries the user-visible totals out of the app store', () async {
-      await library.accumulateReadTime(
-        'book-1',
-        'book',
-        1800,
-        at: DateTime(2026, 1, 5),
-      );
-      await SearchHistoryStore.instance.add('本机词');
-      final backup = await service.capture();
-      expect(backup.books, hasLength(1));
-      expect(backup.books.single.id, 'book-1');
-      expect(backup.books.single.kind, 'book');
-      expect(backup.books.single.devices.values.single, 1800.0);
-      expect(backup.daily['2026-1-5']!.values.single, 1800.0);
-      expect(backup.searchHistory, ['本机词']);
-    });
+    test(
+      'capture carries the user-visible totals out of the app store',
+      () async {
+        await library.accumulateReadTime(
+          'book-1',
+          'book',
+          1800,
+          at: DateTime(2026, 1, 5),
+        );
+        await SearchHistoryStore.instance.add('本机词');
+        final backup = await service.capture();
+        expect(backup.books, hasLength(1));
+        expect(backup.books.single.id, 'book-1');
+        expect(backup.books.single.kind, 'book');
+        expect(backup.books.single.devices.values.single, 1800.0);
+        expect(backup.daily['2026-1-5']!.values.single, 1800.0);
+        expect(backup.searchHistory, ['本机词']);
+      },
+    );
 
-    test('sums two devices instead of picking one, and stays idempotent', () async {
-      await library.accumulateReadTime(
-        'book-1',
-        'book',
-        1800,
-        at: DateTime(2026, 1, 5),
-      );
-      final backup = backupWith(
-        daily: {
-          '2026-1-5': {'other-device': 1200.0},
-          '2026-1-6': {'other-device': 600.0},
-        },
-        books: [
-          (id: 'book-1', kind: 'book', devices: {'other-device': 1200.0}),
-        ],
-      );
-      // 取大会丢掉一台设备的时长；分设备求和才两头都算。
-      final first = await service.restore(backup);
-      expect(first.readTime, greaterThan(0));
-      expect(library.readTimeBookTotals()['book-1'], 3000.0);
-      expect(library.readTimeDailyTotals(), {
-        '2026-1-5': 3000.0,
-        '2026-1-6': 600.0,
-      });
-      final second = await service.restore(backup);
-      expect(second.readTime, 0);
-      expect(library.readTimeBookTotals()['book-1'], 3000.0);
-      expect(library.readTimeDailyTotals()['2026-1-5'], 3000.0);
-    });
+    test(
+      'sums two devices instead of picking one, and stays idempotent',
+      () async {
+        await library.accumulateReadTime(
+          'book-1',
+          'book',
+          1800,
+          at: DateTime(2026, 1, 5),
+        );
+        final backup = backupWith(
+          daily: {
+            '2026-1-5': {'other-device': 1200.0},
+            '2026-1-6': {'other-device': 600.0},
+          },
+          books: [
+            (id: 'book-1', kind: 'book', devices: {'other-device': 1200.0}),
+          ],
+        );
+        // 取大会丢掉一台设备的时长；分设备求和才两头都算。
+        final first = await service.restore(backup);
+        expect(first.readTime, greaterThan(0));
+        expect(library.readTimeBookTotals()['book-1'], 3000.0);
+        expect(library.readTimeDailyTotals(), {
+          '2026-1-5': 3000.0,
+          '2026-1-6': 600.0,
+        });
+        final second = await service.restore(backup);
+        expect(second.readTime, 0);
+        expect(library.readTimeBookTotals()['book-1'], 3000.0);
+        expect(library.readTimeDailyTotals()['2026-1-5'], 3000.0);
+      },
+    );
 
-    test('a scoped restore lands on the scoped key, not the bare one', () async {
-      final backup = backupWith(
-        daily: {
-          '2026-1-5': {'other-device': 5000.0},
-        },
-        books: [
-          (id: 'shared', kind: 'audio', devices: {'other-device': 5000.0}),
-        ],
-      );
-      expect((await service.restore(backup)).readTime, greaterThan(0));
-      expect(library.readTimeBookTotals()['audio:shared'], 5000.0);
-      expect(library.readTimeBookTotals().containsKey('shared'), isFalse);
-    });
+    test(
+      'a scoped restore lands on the scoped key, not the bare one',
+      () async {
+        final backup = backupWith(
+          daily: {
+            '2026-1-5': {'other-device': 5000.0},
+          },
+          books: [
+            (id: 'shared', kind: 'audio', devices: {'other-device': 5000.0}),
+          ],
+        );
+        expect((await service.restore(backup)).readTime, greaterThan(0));
+        expect(library.readTimeBookTotals()['audio:shared'], 5000.0);
+        expect(library.readTimeBookTotals().containsKey('shared'), isFalse);
+      },
+    );
 
     test('creates an identity the device has never tracked', () async {
       final backup = backupWith(
@@ -274,24 +286,23 @@ void main() {
   });
 
   group('search history merge', () {
-    test('unions, keeps local order, caps at twenty and is idempotent', () async {
-      await SearchHistoryStore.instance.add('本机词');
-      final backup = backupWith(
-        searchHistory: [
-          '云端词',
-          '本机词',
-          for (var i = 0; i < 25; i++) '词$i',
-        ],
-      );
-      final first = await service.restore(backup);
-      expect(first.searchHistory, greaterThan(0));
-      final merged = await SearchHistoryStore.instance.load();
-      expect(merged, hasLength(20));
-      expect(merged.first, '本机词');
-      final second = await service.restore(backup);
-      expect(second.searchHistory, 0);
-      expect(await SearchHistoryStore.instance.load(), merged);
-    });
+    test(
+      'unions, keeps local order, caps at twenty and is idempotent',
+      () async {
+        await SearchHistoryStore.instance.add('本机词');
+        final backup = backupWith(
+          searchHistory: ['云端词', '本机词', for (var i = 0; i < 25; i++) '词$i'],
+        );
+        final first = await service.restore(backup);
+        expect(first.searchHistory, greaterThan(0));
+        final merged = await SearchHistoryStore.instance.load();
+        expect(merged, hasLength(20));
+        expect(merged.first, '本机词');
+        final second = await service.restore(backup);
+        expect(second.searchHistory, 0);
+        expect(await SearchHistoryStore.instance.load(), merged);
+      },
+    );
   });
 
   group('version compatibility', () {

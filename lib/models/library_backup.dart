@@ -58,6 +58,7 @@ class LibraryBackup {
         ? _version
         : _legacyVersion;
   }
+
   static const _kinds = {'book', 'audio', 'manga', 'video', 'manju'};
   static final _idPattern = RegExp(r'^[a-zA-Z0-9_-]{1,128}$');
   static final _devicePattern = RegExp(r'^[a-zA-Z0-9_~-]{1,32}$');
@@ -124,11 +125,8 @@ class LibraryBackup {
     for (final entry in shelfRemoved.entries) {
       final parts = _splitBare(entry.key);
       if (parts == null) continue;
-      result[ShelfStore.keyFor(
-        parts.kind,
-        parts.id,
-        source: parts.source,
-      )] = entry.value;
+      result[ShelfStore.keyFor(parts.kind, parts.id, source: parts.source)] =
+          entry.value;
     }
     return result;
   }
@@ -413,7 +411,8 @@ class LibraryBackup {
     }
     // 阅读时长：v4 起是「按天表 + 按书表」，两张都按设备分桶。
     final daily = <String, Map<String, double>>{};
-    final books = <String, ({String id, String kind, Map<String, double> devices})>{};
+    final books =
+        <String, ({String id, String kind, Map<String, double> devices})>{};
     final dailyJson = raw['daily'];
     final booksJson = raw['books'];
     if (dailyJson != null) {
@@ -516,9 +515,7 @@ class LibraryBackup {
 
   /// 只校验进度列表：整包备份与 `progress.json` 分片共用同一套规则，
   /// 免得两处对同一条记录给出不同的判断。
-  static List<Map<String, dynamic>> sanitizeHistory(
-    List<dynamic> records,
-  ) {
+  static List<Map<String, dynamic>> sanitizeHistory(List<dynamic> records) {
     final history = <Map<String, dynamic>>[];
     final historyKeys = <String>{};
     for (final value in records) {
@@ -618,9 +615,7 @@ class LibraryBackup {
       for (final entry in watched.entries)
         {'id': entry.key, 'episodes': entry.value},
     ],
-    'daily': {
-      for (final entry in daily.entries) entry.key: entry.value,
-    },
+    'daily': {for (final entry in daily.entries) entry.key: entry.value},
     'books': [
       for (final book in books)
         {'id': book.id, 'kind': book.kind, 'devs': book.devices},
@@ -650,7 +645,9 @@ class LibraryBackup {
       final keys = value.keys.map((key) => key.toString()).toList()..sort();
       return {for (final key in keys) key: _canonicalJson(value[key])};
     }
-    if (value is List) return [for (final entry in value) _canonicalJson(entry)];
+    if (value is List) {
+      return [for (final entry in value) _canonicalJson(entry)];
+    }
     return value;
   }
 

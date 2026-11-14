@@ -127,7 +127,8 @@ class WebdavConfigStore {
     final preferences = await SharedPreferences.getInstance();
     final url = preferences.getString(urlKey);
     if (url == null || validateWebdavUrl(url) != null) return null;
-    final fileName = preferences.getString(fileKey) ?? WebdavConfig.defaultFileName;
+    final fileName =
+        preferences.getString(fileKey) ?? WebdavConfig.defaultFileName;
     return WebdavConfig(
       collectionUrl: url,
       username: preferences.getString(userKey) ?? '',
@@ -177,10 +178,7 @@ class WebdavConfigStore {
 
   Future<void> markProgressSynced(DateTime at) async {
     final preferences = await SharedPreferences.getInstance();
-    await preferences.setInt(
-      lastProgressSyncKey,
-      at.millisecondsSinceEpoch,
-    );
+    await preferences.setInt(lastProgressSyncKey, at.millisecondsSinceEpoch);
   }
 
   /// 上次见到（或写下）的整包版本标识。null 表示「不知道」，闸门会走保守
@@ -207,6 +205,7 @@ class WebdavConfigStore {
     final value = preferences.getString(progressDigestKey);
     return value == null || value.isEmpty ? null : value;
   }
+
   Future<void> markProgressDigest(String? digest) async {
     final preferences = await SharedPreferences.getInstance();
     if (digest == null || digest.isEmpty) {

@@ -1,7 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fqapp/main.dart' as app;
@@ -171,11 +171,7 @@ void main() {
           expect(store.historySnapshot(), isEmpty);
           expect(
             store.readTimeBookTotals(),
-            clearAll
-                ? isEmpty
-                : equals({
-                    'kept-book': 30.0,
-                  }),
+            clearAll ? isEmpty : equals({'kept-book': 30.0}),
           );
 
           await Hive.close();
@@ -184,11 +180,7 @@ void main() {
           expect(store.historySnapshot(), isEmpty);
           expect(
             store.readTimeBookTotals(),
-            clearAll
-                ? isEmpty
-                : equals({
-                    'kept-book': 30.0,
-                  }),
+            clearAll ? isEmpty : equals({'kept-book': 30.0}),
           );
           final preferences = await SharedPreferences.getInstance();
           expect(preferences.containsKey('hist'), isFalse);
@@ -254,11 +246,7 @@ void main() {
             expect(store.historySnapshot(), isEmpty);
             expect(
               store.readTimeBookTotals(),
-              scenario.clearAll
-                  ? isEmpty
-                  : equals({
-                      'kept-book': 30.0,
-                    }),
+              scenario.clearAll ? isEmpty : equals({'kept-book': 30.0}),
             );
             expect(
               (await SharedPreferences.getInstance()).getString(themeModeKey),

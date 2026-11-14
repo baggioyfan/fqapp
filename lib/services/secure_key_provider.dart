@@ -101,9 +101,7 @@ class SecureKeyProvider {
         }
       }
       final fresh = Uint8List.fromList(Hive.generateSecureKey());
-      await _storage
-          .write(name, base64Encode(fresh))
-          .timeout(storageTimeout);
+      await _storage.write(name, base64Encode(fresh)).timeout(storageTimeout);
       _cache[name] = fresh;
       return fresh;
     } catch (error) {
@@ -124,8 +122,7 @@ class SecureKeyProvider {
 
   /// Device-pool file key for the P1-2 FRB handoff. Same infrastructure as
   /// the Hive key, separate key material.
-  Future<Uint8List?> devicePoolKey() =>
-      getOrCreateKey(name: devicePoolKeyName);
+  Future<Uint8List?> devicePoolKey() => getOrCreateKey(name: devicePoolKeyName);
 
   @visibleForTesting
   void resetForTest() {

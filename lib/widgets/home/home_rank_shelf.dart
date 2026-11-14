@@ -4,7 +4,7 @@ import 'dart:ui' as ui;
 
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/foundation.dart';
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
 
@@ -1169,7 +1169,6 @@ class _ShelfPainter extends CustomPainter {
       Offset(centreX - volume.title.width / 2, y + 24),
     );
     volume.rank.paint(canvas, Offset(centreX - volume.rank.width / 2, y + 7));
-
   }
 
   /// 抽出后露出的侧封：有图就画图（斜切进侧面的平行四边形），没有就退到

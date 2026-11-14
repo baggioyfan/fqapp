@@ -2,7 +2,7 @@ import 'dart:async';
 import 'dart:ui' show SemanticsAction, Tristate;
 import 'dart:convert';
 
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
@@ -386,75 +386,75 @@ void main() {
     testWidgets(
       'embedded long title retains readable allocation at $width, 2x, 100% and cached',
       (tester) async {
-          final fixture = _PanelFixture();
-          final chapters = [
-            for (var i = 0; i < 8; i++)
-              Chapter(
-                itemId: 'chapter-$i',
-                title: '第 $i 章 山风穿过树林之后我们终于在漫长旅途尽头重逢的故事',
-                volumeName: '',
-              ),
-          ];
-          await fixture.open(
-            tester,
-            size: Size(width, 844),
-            scale: 2,
-            chapters: chapters,
-            currentProgress: 1,
-          );
-          final row = _key('reader-directory-row-2');
-          final title = tester.getRect(find.text(chapters[2].title));
-          final progress = tester.getRect(
-            _key('reader-directory-title-progress'),
-          );
-          final cached = tester.getRect(find.text('已缓存'));
-          final bounds = tester.getRect(row);
-          expect(row.hitTestable(), findsOneWidget);
-          expect(find.text('读到100%'), findsOneWidget);
-          expect(
-            title.width,
-            greaterThanOrEqualTo(30 * 3),
-            reason: 'At least three scaled CJK characters remain per line.',
-          );
-          expect(
-            title.height,
-            greaterThan(30),
-            reason: 'The actual long title occupies two lines.',
-          );
-          expect(progress.top, greaterThanOrEqualTo(title.bottom - .5));
-          expect(progress.left, closeTo(title.left, .5));
-          expect(progress.right, lessThanOrEqualTo(title.right + .5));
-          expect(title.right, lessThan(cached.left));
-          expect(progress.right, lessThan(cached.left));
-          for (final rect in [title, progress, cached]) {
-            expect(rect.top, greaterThanOrEqualTo(bounds.top));
-            expect(rect.bottom, lessThanOrEqualTo(bounds.bottom));
-          }
-          final list = tester.widget<ListView>(_key('reader-directory-scroll'));
-          expect(bounds.height, closeTo(list.itemExtent!, .5));
-          expect(
-            bounds.height,
-            greaterThanOrEqualTo(title.height + progress.height),
-          );
-          // 固定步长取这一批行里最高的那行。320 + 2x 字号下，最长标题要占
-          // 三行（154），而 row-2 自己的标题只占两行（86 + 26 进度），
-          // 于是留了一行 ≈42 的余量；390 宽时所有行同高，差值只有 padding
-          // 的 16。这里按「最多一行余量」卡住回归。
-          expect(
-            bounds.height,
-            lessThanOrEqualTo(title.height + progress.height + 42),
-            reason: 'Fixed fast-scroll extent follows actual text metrics.',
-          );
-          // Non-current rows use the same fixed stride without a progress child.
-          final other = _key('reader-directory-row-3');
-          expect(tester.getSize(other).height, closeTo(bounds.height, .5));
-          expect(
-            find.descendant(of: other, matching: find.text('读到100%')),
-            findsNothing,
-          );
-          expect(tester.takeException(), isNull);
-          await tester.pumpWidget(const SizedBox());
-        },
+        final fixture = _PanelFixture();
+        final chapters = [
+          for (var i = 0; i < 8; i++)
+            Chapter(
+              itemId: 'chapter-$i',
+              title: '第 $i 章 山风穿过树林之后我们终于在漫长旅途尽头重逢的故事',
+              volumeName: '',
+            ),
+        ];
+        await fixture.open(
+          tester,
+          size: Size(width, 844),
+          scale: 2,
+          chapters: chapters,
+          currentProgress: 1,
+        );
+        final row = _key('reader-directory-row-2');
+        final title = tester.getRect(find.text(chapters[2].title));
+        final progress = tester.getRect(
+          _key('reader-directory-title-progress'),
+        );
+        final cached = tester.getRect(find.text('已缓存'));
+        final bounds = tester.getRect(row);
+        expect(row.hitTestable(), findsOneWidget);
+        expect(find.text('读到100%'), findsOneWidget);
+        expect(
+          title.width,
+          greaterThanOrEqualTo(30 * 3),
+          reason: 'At least three scaled CJK characters remain per line.',
+        );
+        expect(
+          title.height,
+          greaterThan(30),
+          reason: 'The actual long title occupies two lines.',
+        );
+        expect(progress.top, greaterThanOrEqualTo(title.bottom - .5));
+        expect(progress.left, closeTo(title.left, .5));
+        expect(progress.right, lessThanOrEqualTo(title.right + .5));
+        expect(title.right, lessThan(cached.left));
+        expect(progress.right, lessThan(cached.left));
+        for (final rect in [title, progress, cached]) {
+          expect(rect.top, greaterThanOrEqualTo(bounds.top));
+          expect(rect.bottom, lessThanOrEqualTo(bounds.bottom));
+        }
+        final list = tester.widget<ListView>(_key('reader-directory-scroll'));
+        expect(bounds.height, closeTo(list.itemExtent!, .5));
+        expect(
+          bounds.height,
+          greaterThanOrEqualTo(title.height + progress.height),
+        );
+        // 固定步长取这一批行里最高的那行。320 + 2x 字号下，最长标题要占
+        // 三行（154），而 row-2 自己的标题只占两行（86 + 26 进度），
+        // 于是留了一行 ≈42 的余量；390 宽时所有行同高，差值只有 padding
+        // 的 16。这里按「最多一行余量」卡住回归。
+        expect(
+          bounds.height,
+          lessThanOrEqualTo(title.height + progress.height + 42),
+          reason: 'Fixed fast-scroll extent follows actual text metrics.',
+        );
+        // Non-current rows use the same fixed stride without a progress child.
+        final other = _key('reader-directory-row-3');
+        expect(tester.getSize(other).height, closeTo(bounds.height, .5));
+        expect(
+          find.descendant(of: other, matching: find.text('读到100%')),
+          findsNothing,
+        );
+        expect(tester.takeException(), isNull);
+        await tester.pumpWidget(const SizedBox());
+      },
     );
   }
 

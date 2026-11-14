@@ -2,8 +2,8 @@ import '../widgets/desktop_chapter_sidebar.dart';
 import '../services/desktop_platform.dart';
 import 'dart:async';
 
-import 'package:flutter/cupertino.dart';
-import 'package:flutter/material.dart';
+import 'package:cupertino_ui/cupertino_ui.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
 
@@ -234,11 +234,13 @@ class _DetailPageState extends State<DetailPage> {
   bool get _isAudio => widget.item.kind == 'audio';
   bool get _isManga => widget.item.kind == 'manga';
   bool get _isBook => widget.item.kind == 'book';
+
   /// 详情与目录都按项目 id 走；seriesId 为空串时不能当成有效剧集 id。
   String get _contentId {
     final seriesId = widget.item.seriesId;
     return seriesId != null && seriesId.isNotEmpty ? seriesId : widget.item.id;
   }
+
   String get _chapterUnit => _isVideo
       ? '集'
       : _isManga
@@ -410,9 +412,7 @@ class _DetailPageState extends State<DetailPage> {
                 tab: _tab,
                 episodeId: widget.item.episodeId,
                 title: widget.item.title,
-                loader: injected == null
-                    ? null
-                    : () => injected(id, tab: _tab),
+                loader: injected == null ? null : () => injected(id, tab: _tab),
               ).then((episodes) {
                 // loadVideoCatalogue 在目录为空时会用 episodeId 兜底造一集
                 // （hasKnownIndex=false），那是给「单集搜索结果」留的 playable

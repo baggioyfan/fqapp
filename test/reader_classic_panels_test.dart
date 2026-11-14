@@ -1,6 +1,6 @@
 import 'dart:convert';
 
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
@@ -54,71 +54,70 @@ void main() {
   });
 
   group('目录', () {
-    testWidgets(
-      'classic restores search/order/status/volume rows and cache',
-      (tester) async {
-        final store = await _style(AppThemeStyle.classic);
-        final launched = await _launch<int>(
-          tester,
-          store,
-          _directory(chapters: _volumes, cachedIds: const {'c1'}),
-        );
+    testWidgets('classic restores search/order/status/volume rows and cache', (
+      tester,
+    ) async {
+      final store = await _style(AppThemeStyle.classic);
+      final launched = await _launch<int>(
+        tester,
+        store,
+        _directory(chapters: _volumes, cachedIds: const {'c1'}),
+      );
 
-        expect(find.text('目录 · 3 章'), findsOneWidget);
-        expect(
-          find.byKey(const ValueKey('reader-catalogue-search-toggle')),
-          findsNothing,
-        );
-        // Classic keeps the search field mounted instead of a toggle.
-        expect(
-          find.byKey(const ValueKey('reader-chapter-search')),
-          findsOneWidget,
-        );
-        expect(find.text('当前第 1 章'), findsOneWidget);
+      expect(find.text('目录 · 3 章'), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('reader-catalogue-search-toggle')),
+        findsNothing,
+      );
+      // Classic keeps the search field mounted instead of a toggle.
+      expect(
+        find.byKey(const ValueKey('reader-chapter-search')),
+        findsOneWidget,
+      );
+      expect(find.text('当前第 1 章'), findsOneWidget);
 
-        // Collapsed volume keeps its chapters out until expanded.
-        expect(find.text('晨光'), findsOneWidget);
-        expect(find.text('暮色'), findsNothing);
-        await tester.tap(find.byKey(const ValueKey('reader-volume-卷二')));
-        await tester.pumpAndSettle();
-        expect(find.text('暮色'), findsOneWidget);
-        // fork 不收 AI 校对，经典目录右端只有离线缓存标记。
-        expect(find.text('已缓存'), findsOneWidget);
+      // Collapsed volume keeps its chapters out until expanded.
+      expect(find.text('晨光'), findsOneWidget);
+      expect(find.text('暮色'), findsNothing);
+      await tester.tap(find.byKey(const ValueKey('reader-volume-卷二')));
+      await tester.pumpAndSettle();
+      expect(find.text('暮色'), findsOneWidget);
+      // fork 不收 AI 校对，经典目录右端只有离线缓存标记。
+      expect(find.text('已缓存'), findsOneWidget);
 
-        // Search penetrates the collapsed volume, including its name.
-        await tester.enterText(
-          find.byKey(const ValueKey('reader-chapter-search')),
-          '卷二',
-        );
-        await tester.pump(const Duration(milliseconds: 250));
-        await tester.pump();
-        expect(find.text('找到 2 章'), findsOneWidget);
-        expect(find.text('晨光'), findsNothing);
-        expect(find.text('暮色'), findsOneWidget);
+      // Search penetrates the collapsed volume, including its name.
+      await tester.enterText(
+        find.byKey(const ValueKey('reader-chapter-search')),
+        '卷二',
+      );
+      await tester.pump(const Duration(milliseconds: 250));
+      await tester.pump();
+      expect(find.text('找到 2 章'), findsOneWidget);
+      expect(find.text('晨光'), findsNothing);
+      expect(find.text('暮色'), findsOneWidget);
 
-        await tester.enterText(
-          find.byKey(const ValueKey('reader-chapter-search')),
-          '',
-        );
-        await tester.pump(const Duration(milliseconds: 250));
-        await tester.pump();
+      await tester.enterText(
+        find.byKey(const ValueKey('reader-chapter-search')),
+        '',
+      );
+      await tester.pump(const Duration(milliseconds: 250));
+      await tester.pump();
 
-        // Reverse order flips the row projection without changing the indices.
-        await tester.tap(find.byKey(const ValueKey('reader-catalogue-order')));
-        await tester.pumpAndSettle();
-        expect(find.text('倒序'), findsOneWidget);
-        final titles = tester
-            .widgetList<ListTile>(find.byType(ListTile))
-            .map((tile) => (tile.title as Text).data)
-            .toList(growable: false);
-        expect(titles, ['夜雨', '暮色', '晨光']);
+      // Reverse order flips the row projection without changing the indices.
+      await tester.tap(find.byKey(const ValueKey('reader-catalogue-order')));
+      await tester.pumpAndSettle();
+      expect(find.text('倒序'), findsOneWidget);
+      final titles = tester
+          .widgetList<ListTile>(find.byType(ListTile))
+          .map((tile) => (tile.title as Text).data)
+          .toList(growable: false);
+      expect(titles, ['夜雨', '暮色', '晨光']);
 
-        // A tapped row still returns the real chapter index.
-        await tester.tap(find.byKey(const ValueKey('reader-directory-row-2')));
-        await tester.pumpAndSettle();
-        expect(launched.value, 2);
-      },
-    );
+      // A tapped row still returns the real chapter index.
+      await tester.tap(find.byKey(const ValueKey('reader-directory-row-2')));
+      await tester.pumpAndSettle();
+      expect(launched.value, 2);
+    });
 
     testWidgets('archive keeps the count-less header and search toggle', (
       tester,
@@ -1340,10 +1339,7 @@ void main() {
     // fork 的段落条只保留能真正执行的动作：复制 / 划线。听书入口只有
     // 工具栏那一个（起点固定为当前页第一段），长按段落不再给「从本段听」，
     // 也没有段落级书签。
-    for (final key in const [
-      'reader-action-copy',
-      'reader-action-underline',
-    ]) {
+    for (final key in const ['reader-action-copy', 'reader-action-underline']) {
       expect(
         find.byKey(ValueKey(key)).hitTestable(),
         findsOneWidget,

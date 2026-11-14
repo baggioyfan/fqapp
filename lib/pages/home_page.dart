@@ -1,6 +1,6 @@
 import 'dart:async';
 
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../models/home_cell.dart';
@@ -551,11 +551,7 @@ class _HomePageState extends ConsumerState<HomePage> {
       // `alx.xml` points its `SkeletonLayout` at `cmc`, so a cold first load
       // paints the skeleton rather than a spinner.
       if (_hadContent) {
-        return [
-          SliverToBoxAdapter(
-            child: const ClassicHomeFeedLoading(),
-          ),
-        ];
+        return [SliverToBoxAdapter(child: const ClassicHomeFeedLoading())];
       }
       return [SliverToBoxAdapter(child: _skeleton())];
     }
@@ -782,9 +778,7 @@ class _HomePageState extends ConsumerState<HomePage> {
   /// 流尾三态：加载中 / 追加失败可重试 / 已到底。
   Widget _footer(HomeState state) {
     if (state.isLoadMore) {
-      return const SliverToBoxAdapter(
-        child: ClassicHomeStreamFooter.loading(),
-      );
+      return const SliverToBoxAdapter(child: ClassicHomeStreamFooter.loading());
     }
     if (state.error != null) {
       return SliverToBoxAdapter(

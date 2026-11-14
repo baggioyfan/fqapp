@@ -9,10 +9,7 @@ import 'package:fqapp/services/linux_libsecret_key_store.dart';
 void main() {
   test('SecretSchema matches the libsecret 64-bit ABI', () {
     expect(LinuxLibsecretKeyStore.debugSecretSchemaSize, 592);
-    expect(
-      LinuxLibsecretKeyStore.debugSecretSchemaAttributeSize,
-      16,
-    );
+    expect(LinuxLibsecretKeyStore.debugSecretSchemaAttributeSize, 16);
   });
 
   test(

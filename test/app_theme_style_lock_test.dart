@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -37,9 +37,9 @@ void main() {
     });
 
     test('预置 archive 的旧存档加载后仍是 classic', () async {
-      SharedPreferences.setMockInitialValues(
-        const {AppThemeStyleStore.storageKey: 'archive'},
-      );
+      SharedPreferences.setMockInitialValues(const {
+        AppThemeStyleStore.storageKey: 'archive',
+      });
       final store = AppThemeStyleStore();
       addTearDown(store.dispose);
 
