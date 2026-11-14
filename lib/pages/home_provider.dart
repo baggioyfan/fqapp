@@ -1377,6 +1377,21 @@ class HomeNotifier extends Notifier<HomeState> {
     // copyWith rather than a hand-written rebuild: rebuilding by hand dropped
     // the cover badge (and would drop any future field) on every home tab.
     //
+    // Short-drama feeds are recommendation streams, not a promise that every
+    // card is playable by the video endpoint. Only retain cards that were
+    // classified as video/manju; a book or audio card must never inherit the
+    // video kind here or the player will request a stream for a non-video id.
+    //
+    // Only the local-tab product path is known to be a mixed recommendation
+    // stream. Server-driven tabs keep their historical identity contract:
+    // their tab_type already describes the response, and an empty filtered
+    // page would also drop the server tab strip for subsequent selections.
+    if (kind == 'video' && usesLocalTabs) {
+      return items
+          .where((item) => item.kind == 'video' || item.kind == 'manju')
+          .map((item) => item.copyWith(kind: 'video'))
+          .toList(growable: false);
+    }
     // 书类分类（推荐/小说/经典…）只看书：上游的小说流里混着短剧、漫画和
     // 听书卡，过去这里把它们统统改标成「小说」再画出来，首页因此以混排为主。
     // 现在以书为主，别的媒介留在自己的分类，这里直接滤掉；过滤必须发生在

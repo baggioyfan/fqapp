@@ -291,6 +291,10 @@ class InlineVideoPlayback {
     Duration? startPosition,
   }) async {
     if (_disposed) return;
+    if (!isVideoKind(series.kind)) {
+      AppLog.w('drama-inline', '拒绝为非视频内容启动播放器: ${series.kind}:${series.id}');
+      return;
+    }
     final generation = ++_generation;
     final contentId = series.seriesId ?? series.id;
     final tab = series.kind == 'manju' ? '漫剧' : '短剧';
