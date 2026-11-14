@@ -226,8 +226,9 @@ void main() {
       // TextOffsetMap.fromSegments（那是 AI 扩写专用的工厂），fork 没有
       // 这个工厂；而用户自定义替换规则同样能产生这种 1:N 偏移映射，
       // 走引擎还能顺带验证 map 本身是对的。
+      final source = ChapterContent(blocks: const [ChapterParagraph(marker)]);
       final replacement = await TextReplacementEngine.instance.transform(
-        source: ChapterContent(blocks: const [ChapterParagraph(marker)]),
+        source: source,
         chapterTitle: title,
         snapshot: TextReplacementSnapshot(
           enabled: true,
