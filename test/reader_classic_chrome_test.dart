@@ -133,6 +133,10 @@ void main() {
         'reader-find-entry',
         'reader-bookmarks-entry',
         'reader-operations-entry',
+        // AI 入口在本仓整体摘除（analyze 里 AI 链一并删掉）。上游再合并
+        // 回来时这两条会先红，提醒按 fork 的口径重新裁一遍。
+        'reader-ai',
+        'reader-book-ai',
       ]) {
         expect(find.byKey(ValueKey(key)), findsNothing, reason: key);
       }

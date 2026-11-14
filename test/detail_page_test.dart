@@ -21,10 +21,14 @@ import 'package:fqapp/widgets/detail/detail_archive.dart';
 import 'support/fakes.dart';
 
 void main() {
+  // macOS 必须在矩阵里：v1.0.204-fq1 就是漏了这一端，视频类详情页在 macOS
+  // 上点章节只弹「当前平台暂不支持视频播放」，而当时的矩阵只有
+  // linux / android / windows（上游视角：它没有 macOS 端）。
   for (final platform in [
     TargetPlatform.linux,
     TargetPlatform.android,
     TargetPlatform.windows,
+    TargetPlatform.macOS,
   ]) {
     final blocked = platform == TargetPlatform.linux;
     for (final style

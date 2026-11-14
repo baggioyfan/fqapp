@@ -370,6 +370,47 @@ void main() {
     expect(find.text('网络连接异常'), findsOneWidget);
   });
 
+  testWidgets('解码失败不静默换地址，换一份地址也解不出来', (tester) async {
+    final session = _Session(
+      factory: () => ControlledNativePlayer(hasFirstFrame: false),
+    );
+    await _mount(tester, session);
+    // 3002 = media3 的 DECODING_FORMAT_UNSUPPORTED。这类失败与「这份地址被
+    // CDN 拒了」无关，重试只会多拉一次流，还把失败页往后拖几秒。
+    session.players.single.errors.add(
+      const NativePlaybackException('Decode failed', errorCode: 3002),
+    );
+    for (var i = 0; i < 8; i++) {
+      await _flush(tester);
+    }
+    expect(session.players, hasLength(1));
+    expect(session.requests.where((id) => id == '1'), hasLength(1));
+    expect(find.text('视频解析失败'), findsOneWidget);
+  });
+
+  testWidgets('首帧前连续失败用尽自动重试后仍落到失败页', (tester) async {
+    final session = _Session(
+      factory: () => ControlledNativePlayer(hasFirstFrame: false),
+    );
+    await _mount(tester, session);
+    // 闸门是 3 次自动重试 = 初始这次 + 3 个新播放器。每轮喂同一个 503，
+    // 能不能新建出播放器就是闸门有没有放行。
+    for (var round = 0; round < 3; round++) {
+      final before = session.players.length;
+      session.players.last.errors.add(_serviceUnavailable);
+      for (var i = 0; i < 8 && session.players.length == before; i++) {
+        await _flush(tester);
+      }
+      expect(session.players, hasLength(before + 1));
+    }
+    session.players.last.errors.add(_serviceUnavailable);
+    await _flush(tester);
+    // 第 4 次失败不再换地址：不能无限重试，用户得拿到「重试」按钮。
+    expect(session.players, hasLength(4));
+    expect(session.requests.where((id) => id == '1'), hasLength(4));
+    expect(find.text('播放服务暂时不可用'), findsOneWidget);
+  });
+
   testWidgets(
     'a retry superseded by a new selection cannot replace its player',
     (tester) async {
@@ -570,6 +611,13 @@ void main() {
 Map<String, dynamic> _source(String id) => {
   'video_url': 'https://example.invalid/$id.mp4',
 };
+
+/// CDN 拒了这次取流（403/5xx 同一类：问题在「这份地址」，不在「这次请求」）。
+const _serviceUnavailable = NativePlaybackException(
+  'Playback failed',
+  errorCode: 2004,
+  httpStatusCode: 503,
+);
 
 VideoPlayerChrome _chrome(WidgetTester tester) =>
     tester.widget<VideoPlayerChrome>(find.byType(VideoPlayerChrome));
