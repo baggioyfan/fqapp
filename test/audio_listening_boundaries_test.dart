@@ -11,7 +11,6 @@ import 'package:fqapp/services/audio_preferences.dart';
 import 'package:fqapp/services/listening_session.dart';
 import 'package:fqapp/services/native_player.dart';
 import 'package:fqapp/services/platform_channel.dart';
-import 'package:fqapp/widgets/audio/audio_control_rows.dart';
 
 import 'support/controlled_player.dart';
 
