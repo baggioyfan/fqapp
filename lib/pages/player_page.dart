@@ -151,6 +151,19 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   late String _historyKind = widget.kind;
   int? _activeIndex;
   bool _hasDisplayed = false;
+
+  /// 当前这次加载的重试上下文，见 [_retryBeforeFirstFrame]。
+  ///
+  /// 只能放在实例上：桌面端的 `create` 是阻塞的（Rust 媒体会话要探到首块才算
+  /// open 成功），取流失败直接抛在 `_loadVideo` 的 catch 里，那里的局部变量
+  /// （`retryDepth` / `retryDeadline` / `offline`）随手可用；Android 的 create
+  /// 只建播放器 + `prepare()` 就返回，同一类失败经 `errorStream` 异步冒出来，
+  /// 落在 [_fail] 里，读不到那些局部变量。
+  int _attemptRetryDepth = 0;
+  DateTime? _attemptRetryDeadline;
+  bool _attemptOffline = false;
+  bool _attemptManualRetry = false;
+  bool _attemptAutoplay = true;
   NativePlayer? _player;
   Timer? _progressTimer;
   // 小米公平运行内存 KILL 广播的刷盘注销函数，见 reader_page.dart。
@@ -1393,6 +1406,12 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     if (!mounted || _switchingSeries || widget.eps.isEmpty) return;
     _loadTrace?.finish('superseded');
     final generation = ++_loadGeneration;
+    // 记下这次尝试的重试上下文，供异步失败路径（[_fail]）复用。
+    _attemptRetryDepth = retryDepth;
+    _attemptRetryDeadline = retryDeadline;
+    _attemptOffline = false;
+    _attemptManualRetry = refresh && !autoRetry;
+    _attemptAutoplay = autoplay;
     final index = _index;
     final episode = widget.eps[index];
     final trace = _loadTrace = _diagnostics.begin(
@@ -1430,6 +1449,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       // 离线优先（官方 isOfflineVideo 语义）：已缓存的集直接读本地加密
       // 文件，不请求取流接口；文件被用户清掉时静默回退在线链路。
       final offline = await _offlineSource(episode);
+      if (_current(generation)) _attemptOffline = offline != null;
       final EpisodeSource source;
       int? renditionHeight;
       if (offline != null) {
@@ -1639,6 +1659,58 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     }
   }
 
+  /// 首帧之前就失败：先静默换一份新地址重来，只有重来也失败才把失败页交给
+  /// 用户。
+  ///
+  /// 桌面端（`5f95d8ef`，Air 上 247 次 player-load 的实测）早就补过这一层，
+  /// 但补在 `_loadVideo` 的 create catch 里：桌面端的 create 是阻塞的，取流
+  /// 被拒直接抛在那里。Android 的 create 只建播放器 + `prepare()` 就返回，
+  /// 同一类失败经 `errorStream` 异步冒出来，落在 [_fail] 里 —— 那里原来只会
+  /// 弹一张「播放服务暂时不可用」。于是同样一次偶发 5xx/403，桌面端静默换
+  /// 地址就过去了，Android 却要用户手点「重试」。
+  ///
+  /// 判定条件与 create 那条保持一致：离线文件没得换、用户刚点过重试不再叠、
+  /// 次数与 20 秒预算共用同一套闸门。
+  bool _retryBeforeFirstFrame(Object error) {
+    if (_hasDisplayed || _switchingSeries || !mounted) return false;
+    if (_attemptManualRetry || _attemptOffline) return false;
+    if (!_retryableFailure(error)) return false;
+    if (_attemptRetryDepth >= _maxAutoRetries) return false;
+    final deadline =
+        _attemptRetryDeadline ?? DateTime.now().add(_autoRetryBudget);
+    if (DateTime.now().isAfter(deadline)) return false;
+    unawaited(
+      _loadVideo(
+        refresh: true,
+        autoplay: _attemptAutoplay,
+        autoRetry: true,
+        retryDepth: _attemptRetryDepth + 1,
+        retryDeadline: deadline,
+      ),
+    );
+    return true;
+  }
+
+  /// 这次失败是不是「换一份地址就可能好」的那一类。
+  ///
+  /// 签名地址是一次性凭证：403/404 是这份地址被拒，5xx/408/429 是边缘抖动，
+  /// 换一份新地址都有机会过（同一地址原地重来则几乎必然复现）。解码/解析类
+  /// 失败（media3 的 3001–3004、4001–4005）与地址无关，换地址只是白等，
+  /// 直接把原因交给用户。
+  bool _retryableFailure(Object error) {
+    if (error is NativePlaybackException) {
+      final status = error.httpStatusCode;
+      if (status != null && status >= 400 && status <= 599) return true;
+      return switch (error.errorCode ?? 0) {
+        2000 || 2001 || 2002 || 2004 || 2005 => true, // media3 的 IO 系
+        _ => false,
+      };
+    }
+    return error is ApiException ||
+        error is TimeoutException ||
+        error is SocketException;
+  }
+
   void _fail(Object error, int generation) {
     if (!_current(generation)) return;
     final errorCode = error is NativePlaybackException ? error.errorCode : null;
@@ -1648,6 +1720,9 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       _ => null,
     };
     _loadTrace?.fail(errorCode: errorCode, httpStatusCode: httpStatusCode);
+    // 首帧之前失败先静默重来（见 [_retryBeforeFirstFrame]）。放在 trace.fail
+    // 之后：这一次尝试仍然如实记成失败，重试自己会开一条新的 trace。
+    if (_retryBeforeFirstFrame(error)) return;
     _sources.invalidate(widget.eps[_index].itemId);
     _prefetchTimer?.cancel();
     _prefetchTimer = null;

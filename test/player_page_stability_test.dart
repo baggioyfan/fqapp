@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/pages/player_page.dart';
+import 'package:fqapp/services/native_player.dart';
 import 'package:fqapp/widgets/video_player_chrome.dart';
 
 import 'support/controlled_player.dart';
@@ -327,6 +328,46 @@ void main() {
     expect(session.players, hasLength(4));
     expect(session.requests.where((id) => id == '1'), hasLength(4));
     expect(find.text('播放失败'), findsOneWidget);
+  });
+
+  testWidgets('首帧前取流失败静默换地址重来，不弹失败页', (tester) async {
+    // hasFirstFrame: false —— Android 的 create 只建播放器 + prepare() 就返回，
+    // CDN 拒了这次取流是之后经 errorStream 冒出来的，那时还没出画面。
+    final session = _Session(
+      factory: () => ControlledNativePlayer(hasFirstFrame: false),
+    );
+    await _mount(tester, session);
+    expect(session.players, hasLength(1));
+    session.players.single.errors.add(
+      const NativePlaybackException(
+        'Playback failed',
+        errorCode: 2004,
+        httpStatusCode: 503,
+      ),
+    );
+    for (var i = 0; i < 8 && session.players.length < 2; i++) {
+      await _flush(tester);
+    }
+    expect(session.players, hasLength(2));
+    // 5xx 是这份地址被拒（与 403 同理），必须换一份新地址，不能原地重来。
+    expect(session.requests.where((id) => id == '1'), hasLength(2));
+    expect(session.players.first.disposed, isTrue);
+    expect(find.text('播放服务暂时不可用'), findsNothing);
+    expect(find.text('播放失败'), findsNothing);
+  });
+
+  testWidgets('出过画面之后再失败不静默换地址，直接给失败页', (tester) async {
+    final session = _Session();
+    await _mount(tester, session);
+    expect(session.players.single.firstFrameRendered, isTrue);
+    session.players.single.errors.add(
+      const NativePlaybackException('Playback failed', errorCode: 2001),
+    );
+    await _flush(tester);
+    // 已经看过的集不该被悄悄从头重来：保住位置，把原因交给用户。
+    expect(session.players, hasLength(1));
+    expect(session.requests.where((id) => id == '1'), hasLength(1));
+    expect(find.text('网络连接异常'), findsOneWidget);
   });
 
   testWidgets(
