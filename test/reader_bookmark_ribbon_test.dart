@@ -15,6 +15,7 @@ import 'package:fqapp/services/reader_bookmark_store.dart';
 import 'package:fqapp/services/reader_device.dart';
 import 'package:fqapp/services/secure_key_provider.dart';
 import 'package:fqapp/widgets/reader/reader_chapter_layout.dart';
+import 'package:fqapp/widgets/reader/reader_bookmark_pull.dart';
 import 'package:fqapp/widgets/reader/reader_joined_scroll.dart';
 import 'package:fqapp/widgets/reader/reader_paged_view.dart';
 
@@ -408,6 +409,13 @@ void main() {
 }
 
 Future<void> _pull(WidgetTester tester, String operation) async {
+  final pull = tester.widget<ReaderBookmarkPull>(
+    find.byType(ReaderBookmarkPull),
+  );
+  debugPrint(
+    '[bookmark-pull] enabled=${pull.enabled} paged=${pull.paged} '
+    'bookmarked=${pull.isBookmarked}',
+  );
   final surface = find.byKey(const ValueKey('reader-page-surface'));
   final gesture = await tester.startGesture(tester.getRect(surface).center);
   // The first move resolves Flutter's drag arena; subsequent deltas pull.
