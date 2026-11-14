@@ -70,18 +70,15 @@ void main() {
                 expect(MediaQuery.sizeOf(context).width, 390);
                 var target = find.byKey(const Key('detail_read_button'));
                 if (action == 'episode') {
-                  if (style == AppThemeStyle.classic) {
-                    target = find.byKey(
-                      const ValueKey('detail_preview_chapter_second'),
-                    );
-                    await tester.ensureVisible(target);
-                    await tester.pumpAndSettle();
-                  } else {
-                    await _revealSecondChapter(tester);
-                    target = find.byKey(
-                      const ValueKey('detail-directory-entry-1'),
-                    );
-                  }
+                  // fork 只有一套详情版式（目录行统一是
+                  // `detail-directory-entry-$index`）。上游这里按 classic /
+                  // archive 分了两条取法，其中 classic 的
+                  // `detail_preview_chapter_second` 在本仓不存在，照搬会让
+                  // classic 那半矩阵必然找不到控件。
+                  await _revealSecondChapter(tester);
+                  target = find.byKey(
+                    const ValueKey('detail-directory-entry-1'),
+                  );
                 }
                 expect(target.hitTestable(), findsOneWidget);
                 await tester.tap(target);
