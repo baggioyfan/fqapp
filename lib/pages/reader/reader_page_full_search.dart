@@ -39,26 +39,20 @@ extension _ReaderPageFullSearch on _ReaderPageState {
             cancellation.throwIfCancelled();
             if (!mounted || !active) throw StateError('Search closed');
             final content = ChapterContent.fromCacheText(loaded.text);
-            // Compose with the reader's actual source->display pipeline. This
-            // does not request AI generation or invoke _replaceContent, which
-            // owns cancellation state for the currently displayed chapter.
-            final view = await AiReadingController.instance.viewFor(
-              bookId: widget.bookId,
-              chapterId: chapter.itemId,
-              chapterTitle: chapter.title,
-              content: content,
-              customSnapshot: snapshot,
-              temporaryOriginal: _aiTemporaryOriginal,
-              previewSourceStart: chapter.itemId == _chapter.itemId
-                  ? _aiPreviewSourceStart
-                  : null,
-              previewSourceEnd: chapter.itemId == _chapter.itemId
-                  ? _aiPreviewSourceEnd
-                  : null,
-              replacementEngine: widget.replacementEngine,
-            );
+            // 与正文同一条替换管线（`TextReplacementEngine.transform`）：
+            // 全文搜索要搜的是用户实际看到的文字，但这里不能碰当前章的
+            // 排版/替换状态，所以只算一份结果，不走 `_replaceContent`
+            // （那个方法持有正在显示章节的取消状态）。
+            final replacement =
+                await (widget.replacementEngine ??
+                        TextReplacementEngine.instance)
+                    .transform(
+                      source: content,
+                      chapterTitle: chapter.title,
+                      snapshot: snapshot,
+                    );
             cancellation.throwIfCancelled();
-            return view.composition.replacement;
+            return replacement;
           },
         ),
       );

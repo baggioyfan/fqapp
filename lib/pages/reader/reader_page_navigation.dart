@@ -363,7 +363,6 @@ extension _ReaderPageNavigation on _ReaderPageState {
       // _textOffset with its start. Keep the exact hit as the restore anchor:
       // late paragraph bubbles can push this hit onto a different page.
       _textOffset = start;
-      _keepChapterEndAnchor = false;
       if (_paged) _pageIndex = layout.pageForOffset(start);
       final stop = (end ?? start + 1).clamp(start, layout.textLength);
       _locationHighlight = stop > start

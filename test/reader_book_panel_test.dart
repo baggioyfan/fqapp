@@ -167,7 +167,6 @@ class _PanelFixture {
                             currentIndex: 2,
                             currentProgress: currentProgress,
                             cachedIds: const {'chapter-2'},
-                            bookId: _book.id,
                             embedded: true,
                             preset: preset,
                           ),

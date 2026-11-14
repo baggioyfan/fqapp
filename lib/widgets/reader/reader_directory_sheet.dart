@@ -892,29 +892,15 @@ class _ReaderDirectorySheetState extends State<ReaderDirectorySheet> {
   }
 
   Widget _embeddedMarkers(Chapter chapter, ReaderThemePreset preset) {
-    final status = _statusFor(chapter);
-    final cached = widget.cachedIds.contains(chapter.itemId);
-    final label = switch (status?.state) {
-      AiChapterCheckState.checked => 'AI 已校对',
-      AiChapterCheckState.failed => 'AI 校对失败',
-      AiChapterCheckState.running => 'AI 校对中',
-      AiChapterCheckState.unchecked => 'AI 未校对',
-      null => null,
-    };
+    // 上游这里还会叠一行「AI 已校对 / 校对中 / 校对失败」，fork 没有 AI
+    // 模块（`AiChapterCheckState` 一并摘除），目录行尾部只留缓存标记。
+    if (!widget.cachedIds.contains(chapter.itemId)) {
+      return const SizedBox.shrink();
+    }
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.end,
-      children: [
-        if (label != null)
-          _embeddedLabel(label, switch (status!.state) {
-            AiChapterCheckState.checked => Icons.check_circle_outline,
-            AiChapterCheckState.failed => Icons.error_outline,
-            AiChapterCheckState.running => Icons.hourglass_top,
-            AiChapterCheckState.unchecked => Icons.circle_outlined,
-          }, preset),
-        if (label != null && cached) const SizedBox(height: 2),
-        if (cached) _embeddedLabel('已缓存', Icons.download_outlined, preset),
-      ],
+      children: [_embeddedLabel('已缓存', Icons.download_outlined, preset)],
     );
   }
 

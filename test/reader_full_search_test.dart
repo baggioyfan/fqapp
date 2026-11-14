@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fqapp/models/media_item.dart';
+import 'package:fqapp/models/text_replacement_rule.dart';
 import 'package:fqapp/services/chapter_text_formatter.dart';
 import 'package:fqapp/services/reader_full_search.dart';
 import 'package:fqapp/services/reader_preferences.dart';
@@ -221,21 +222,24 @@ void main() {
       const marker = '短标';
       const target = '唯一命中';
       final expanded = '${List.filled(200, '风吹过书页。').join()}$target，结束。';
-      final source = ChapterContent(blocks: const [ChapterParagraph(marker)]);
-      final replacement = TextReplacementResult(
-        source: source,
-        content: ChapterContent(blocks: [ChapterParagraph(expanded)]),
-        snapshotRevision: 7,
-        paragraphMaps: {
-          0: TextOffsetMap.fromSegments(marker.length, expanded.length, [
-            (
-              start: 0,
-              end: marker.length,
-              outputStart: 0,
-              outputEnd: expanded.length,
+      // 用真实替换管线造「一段短原文被替换成长文」。上游这里手搓
+      // TextOffsetMap.fromSegments（那是 AI 扩写专用的工厂），fork 没有
+      // 这个工厂；而用户自定义替换规则同样能产生这种 1:N 偏移映射，
+      // 走引擎还能顺带验证 map 本身是对的。
+      final replacement = await TextReplacementEngine.instance.transform(
+        source: ChapterContent(blocks: const [ChapterParagraph(marker)]),
+        chapterTitle: title,
+        snapshot: TextReplacementSnapshot(
+          enabled: true,
+          rules: [
+            TextReplacementRule(
+              id: 'seed',
+              pattern: marker,
+              replacement: expanded,
             ),
-          ]),
-        },
+          ],
+          revision: 7,
+        ),
       );
       final controller = ReaderFullSearchController(
         chapters: [_chapter('a', title)],
@@ -245,7 +249,9 @@ void main() {
       await controller.search(target);
       final hit = controller.state.groups.single.hits.single;
       expect(
-        hit.matchesSource(ChapterContent.fromCacheText(source.toCacheText())),
+        hit.matchesSource(
+          ChapterContent.fromCacheText(replacement.source.toCacheText()),
+        ),
         isTrue,
       );
       expect(

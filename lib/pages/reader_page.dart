@@ -6,6 +6,7 @@ import '../widgets/desktop_chapter_sidebar.dart';
 
 import 'dart:async';
 import 'dart:collection';
+import 'dart:math' as math;
 
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
