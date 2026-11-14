@@ -35,8 +35,8 @@
 
 ## 升级必读
 
-签名与上一版 `v1.0.201-fq4` **相同**（正式证书 `7d5397aa…3cde7a`），versionName `1.0.204` /
-versionCode `209` 高于上一版的 `206`，可直接覆盖安装，书架与进度都保留。
+签名与 `v1.0.201-fq4` 及之后的各版本**相同**（正式证书 `7d5397aa…3cde7a`），versionName `1.0.204` /
+versionCode `209` 高于 `v1.0.201-fq4` 的 `206`、与 `v1.0.204-fq1` 持平，可直接覆盖安装，书架与进度都保留。
 
 仍在更早 debug 签名（`13f6a184…d9ac`）上的机器必须卸载重装 —— 清单 `android:allowBackup="false"`，
 卸载会连书架、进度、时长一起清掉，先用旧版「设置 → 数据 → WebDAV 同步」推一次或导出备份。
@@ -51,9 +51,10 @@ versionCode `209` 高于上一版的 `206`，可直接覆盖安装，书架与�
 - Android 只出 `arm64-v8a` 包（`com.fqapp.fqapp`）；桌面只覆盖 macOS 13+，
   universal 包内同时带 arm64 与 x86_64 两条切片，一个文件通吃。
 - Windows 便携包是**可选的**发布资产：只有发版时勾选了 windows 并构建成功，才会出现在这一版
-  的发布页上；没勾就只有 APK 与 macOS 包。
+  的发布页上（`*-windows-x64.zip`，解压即用，未做真机验收）；没勾就只有 APK 与 macOS 包。
 - Linux 包属于实验性构建：Arch 容器里能编出来，但没有做过安装、朗读、播放的真机验证，
-  也不随 Release 发布。
+  也不由发布流程自动上传；只有手工补传时才会出现在发布页（`*-linux-arch-x86_64.pkg.tar.zst`），
+  请自行评估风险。
 - 亮度手势只在**翻页**阅读模式下生效；滚动阅读模式里上下滑是滚正文，不接管。
 - 桌面端没有这条原生亮度桥，手势自动失效（不报错）。
 - WebDAV 地址必须指向一个**已存在的子目录**（坚果云等不允许在根目录建文件）。
@@ -61,7 +62,9 @@ versionCode `209` 高于上一版的 `206`，可直接覆盖安装，书架与�
 
 ## 校验
 
-- `fqapp-v1.0.204-fq1-arm64-v8a.apk`，versionName `1.0.204` / versionCode `209`，显示名「什锦铺」
-- `fqapp-v1.0.204-fq1-macos.zip`，universal，要求 macOS 13+
+资产文件名一览见本页下方的 Assets，与 `build-info.txt` 逐项对应。
+
+- `fqapp-*-arm64-v8a.apk`，versionName `1.0.204` / versionCode `209`，显示名「什锦铺」
+- `fqapp-*-macos.zip`，universal，要求 macOS 13+
 - 本版为全量重新编译：analyze 无告警 + 全量测试通过 + APK 签名与 16 KiB 对齐校验
   + 包内 Mach-O 架构校验；sha256 与体积见 `build-info.txt`

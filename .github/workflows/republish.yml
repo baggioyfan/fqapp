@@ -68,6 +68,7 @@ jobs:
           set -euo pipefail
           sha=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID" --jq .head_sha)
           echo "target commit = $sha"
+          # 同 build.yml：正文按原样取用，发版前先确保那份稿子写的是当次版本。
           gh release create "$TAG" \
             -R "$GITHUB_REPOSITORY" \
             --target "$sha" \

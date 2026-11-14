@@ -1000,6 +1000,10 @@ jobs:
           fi
           ls -l dist
 
+          # 正文用的是仓库里的 `.github/release-notes.md`，按原样取用，这里不做任何替换。
+          # 所以每次发版前必须先把那份稿子重写成「当次」的内容：本版要点、升级必读里的
+          # versionName/versionCode、已知限制里这次实际带了哪些可选资产（windows / linux）。
+          # 资产文件名一律写成 `fqapp-*-xxx` 的形式，不要写死 tag —— 写了必然在下次发版时过期。
           gh release create "$RELEASE_TAG" \
             --title "$RELEASE_TAG" \
             --notes-file .github/release-notes.md \
