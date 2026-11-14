@@ -64,6 +64,7 @@ jobs:
           flutter test --no-pub
           test/desktop_detail_layout_test.dart test/desktop_platform_test.dart
           test/desktop_video_layout_test.dart test/player_page_test.dart
+          test/drama_download_store_test.dart
           test/book_open_entry_test.dart
           test/backend_service_test.dart test/network_proxy_preferences_test.dart
           test/local_proxy_discovery_test.dart test/core_proxy_settings_panel_test.dart
@@ -135,6 +136,12 @@ jobs:
           }
           python scripts/verify_windows_media.py
           if ($LASTEXITCODE -ne 0) { throw 'Native media verification failed' }
+          # 用同一批 CENC 样本验证「自动缓存多集」的 file URI 在真机上能打开、
+          # 能按段 seek（盘符 + 反斜杠 + 空格 + `#` + 中文都在路径里）。
+          $env:FQAPP_TEST_ENCRYPTED_MEDIA = (Resolve-Path 'build/validation/windows-media/encrypted.mp4').Path
+          $env:FQAPP_TEST_DECRYPTED_MEDIA = (Resolve-Path 'build/validation/windows-media/decoded.mp4').Path
+          flutter test --no-pub test/desktop_cached_media_test.dart
+          if ($LASTEXITCODE -ne 0) { throw 'Cached media playback regression failed' }
       - name: Diagnose headless libmpv playback and teardown (manual)
         if: github.event_name == 'workflow_dispatch' && inputs.verify_player
         shell: pwsh
