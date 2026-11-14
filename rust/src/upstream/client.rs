@@ -207,9 +207,7 @@ impl UpstreamClient {
         if !req.no_sign {
             let opt = crate::sign::HeaderOpts {
                 install_id_field16: if req.playback_sign {
-                    crate::sign::query_param(query, "iid")
-                        .or_else(|| crate::sign::query_param(query, "install_id"))
-                        .unwrap_or_default()
+                    crate::sign::query_param(query, "iid").unwrap_or_default()
                 } else {
                     String::new()
                 },

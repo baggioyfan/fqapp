@@ -44,6 +44,7 @@ const VIDEO_RESPONSE_RESERVE: Duration = Duration::from_secs(1);
 const VIDEO_SOURCE_RETRY_DELAYS: [Duration; 2] = [Duration::from_secs(1), Duration::from_secs(2)];
 const VIDEO_RETRY_MIN_BUDGET: Duration = Duration::from_millis(250);
 const VIDEO_DEVICE_ROTATION_BUDGET: Duration = Duration::from_secs(6);
+const VIDEO_DEVICE_RETRY_RESERVE: Duration = Duration::from_secs(2);
 
 fn retry_has_budget(at: Instant, deadline: Instant) -> bool {
     at + VIDEO_RETRY_MIN_BUDGET < deadline
@@ -131,11 +132,16 @@ impl StreamVideoSource {
         }
     }
 
-    async fn fetch(self, ctx: &Ctx, video_id: &str) -> ApiResult<(Vec<u8>, String)> {
+    async fn fetch(
+        self,
+        ctx: &Ctx,
+        video_id: &str,
+        pin_device: &str,
+    ) -> ApiResult<(Vec<u8>, String)> {
         match self {
-            Self::Shortplay => fetch_shortplay_video_model(ctx, video_id).await,
-            Self::DragonBatch => fetch_dragon_batch_video_model(ctx, video_id).await,
-            Self::Phoenix => fetch_phoenix_video_model_with_device(ctx, video_id).await,
+            Self::Shortplay => fetch_shortplay_video_model(ctx, video_id, pin_device).await,
+            Self::DragonBatch => fetch_dragon_batch_video_model(ctx, video_id, pin_device).await,
+            Self::Phoenix => fetch_phoenix_video_model_with_device(ctx, video_id, pin_device).await,
         }
     }
 }
@@ -225,7 +231,8 @@ fn handle_video<'a>(ctx: &'a Ctx, params: &'a Params) -> BoxFuture<'a, ApiResult
             let mut stream_resolution =
                 resolve_stream_video_sources(ctx, &video_id, &mut sources, resolution_deadline)
                     .await;
-            let mut playback_device_rotated = false;
+            let mut playback_rotation_attempted = false;
+            let mut replacement_device_id = String::new();
             for (retry_index, retry_delay) in VIDEO_SOURCE_RETRY_DELAYS.into_iter().enumerate() {
                 let has_legacy_raw = parsed_stream_bodies(&sources)
                     .iter()
@@ -256,7 +263,7 @@ fn handle_video<'a>(ctx: &'a Ctx, params: &'a Params) -> BoxFuture<'a, ApiResult
                 if retryable.is_empty() {
                     break;
                 }
-                if !playback_device_rotated {
+                if !playback_rotation_attempted {
                     if let Some((source, device_id, deadline)) =
                         retryable.iter().find_map(|(index, _, deadline)| {
                             let fetched = &sources[*index];
@@ -270,35 +277,41 @@ fn handle_video<'a>(ctx: &'a Ctx, params: &'a Params) -> BoxFuture<'a, ApiResult
                             }
                         })
                     {
-                        playback_device_rotated = true;
-                        let rotation_deadline =
-                            (Instant::now() + VIDEO_DEVICE_ROTATION_BUDGET).min(deadline);
-                        log::warn!(
-                            "video {video_id}: empty playback model from {}; rotating device before retry attempt={}",
-                            source.name(),
-                            retry_index + 1
-                        );
-                        match tokio::time::timeout_at(
-                            rotation_deadline,
-                            ctx.pool.replace_failed(device_id),
-                        )
-                        .await
-                        {
-                            Ok(Ok(_)) => {
-                                log::info!(
-                                    "video {video_id}: replacement device ready for retry attempt={}",
-                                    retry_index + 1
-                                );
-                            }
-                            Ok(Err(_)) => {
-                                log::warn!(
-                                    "video {video_id}: replacement device registration failed"
-                                );
-                            }
-                            Err(_) => {
-                                log::warn!(
-                                    "video {video_id}: replacement device registration deadline exceeded"
-                                );
+                        let now = Instant::now();
+                        let rotation_budget = deadline
+                            .saturating_duration_since(now)
+                            .saturating_sub(VIDEO_DEVICE_RETRY_RESERVE)
+                            .min(VIDEO_DEVICE_ROTATION_BUDGET);
+                        if rotation_budget >= VIDEO_RETRY_MIN_BUDGET {
+                            playback_rotation_attempted = true;
+                            log::warn!(
+                                "video {video_id}: empty playback model from {}; rotating device before retry attempt={}",
+                                source.name(),
+                                retry_index + 1
+                            );
+                            match tokio::time::timeout_at(
+                                now + rotation_budget,
+                                ctx.pool.replace_failed(device_id),
+                            )
+                            .await
+                            {
+                                Ok(Ok(device)) => {
+                                    replacement_device_id = device.device_id;
+                                    log::info!(
+                                        "video {video_id}: replacement device ready for retry attempt={}",
+                                        retry_index + 1
+                                    );
+                                }
+                                Ok(Err(_)) => {
+                                    log::warn!(
+                                        "video {video_id}: replacement device registration failed"
+                                    );
+                                }
+                                Err(_) => {
+                                    log::warn!(
+                                        "video {video_id}: replacement device registration deadline exceeded"
+                                    );
+                                }
                             }
                         }
                     }
@@ -325,12 +338,20 @@ fn handle_video<'a>(ctx: &'a Ctx, params: &'a Params) -> BoxFuture<'a, ApiResult
                     retry_index + 1
                 );
                 let video_id_ref = video_id.as_str();
+                let pin_device = replacement_device_id.as_str();
                 let retries = retryable
                     .into_iter()
                     .map(|(index, source, deadline)| async move {
                         (
                             index,
-                            fetch_stream_video_source(source, ctx, video_id_ref, deadline).await,
+                            fetch_stream_video_source(
+                                source,
+                                ctx,
+                                video_id_ref,
+                                deadline,
+                                pin_device,
+                            )
+                            .await,
                         )
                     });
                 for (index, fetched) in futures::future::join_all(retries).await {
@@ -472,7 +493,7 @@ fn multi_video_model_body(video_id: &str) -> ApiResult<Vec<u8>> {
 
 /// Queries the phoenix multi_video_model endpoint.
 async fn fetch_phoenix_video_model(ctx: &Ctx, video_id: &str) -> ApiResult<Vec<u8>> {
-    fetch_phoenix_video_model_with_device(ctx, video_id)
+    fetch_phoenix_video_model_with_device(ctx, video_id, "")
         .await
         .map(|(raw, _)| raw)
 }
@@ -480,6 +501,7 @@ async fn fetch_phoenix_video_model(ctx: &Ctx, video_id: &str) -> ApiResult<Vec<u
 async fn fetch_phoenix_video_model_with_device(
     ctx: &Ctx,
     video_id: &str,
+    pin_device: &str,
 ) -> ApiResult<(Vec<u8>, String)> {
     let post_body = multi_video_model_body(video_id)?;
     Upstream::new(ctx.up.clone())
@@ -489,6 +511,7 @@ async fn fetch_phoenix_video_model_with_device(
             body: Some(post_body),
             headers: phoenix_player_headers(),
             playback_sign: true,
+            pin_device: pin_device.to_string(),
             ..Default::default()
         })
         .await
@@ -547,16 +570,27 @@ async fn fetch_stream_video_sources(
     fetch_deadline: Instant,
     auxiliary_deadline: Instant,
 ) -> Vec<FetchedVideoSource> {
-    let shortplay =
-        fetch_stream_video_source(StreamVideoSource::Shortplay, ctx, video_id, fetch_deadline);
+    let shortplay = fetch_stream_video_source(
+        StreamVideoSource::Shortplay,
+        ctx,
+        video_id,
+        fetch_deadline,
+        "",
+    );
     let batch = fetch_stream_video_source(
         StreamVideoSource::DragonBatch,
         ctx,
         video_id,
         auxiliary_deadline,
+        "",
     );
-    let phoenix =
-        fetch_stream_video_source(StreamVideoSource::Phoenix, ctx, video_id, fetch_deadline);
+    let phoenix = fetch_stream_video_source(
+        StreamVideoSource::Phoenix,
+        ctx,
+        video_id,
+        fetch_deadline,
+        "",
+    );
     let (shortplay, batch, phoenix) = tokio::join!(shortplay, batch, phoenix);
     vec![shortplay, batch, phoenix]
 }
@@ -566,10 +600,11 @@ async fn fetch_stream_video_source(
     ctx: &Ctx,
     video_id: &str,
     deadline: Instant,
+    pin_device: &str,
 ) -> FetchedVideoSource {
     let source_name = source.name();
     let (raw, device_id) =
-        match tokio::time::timeout_at(deadline, source.fetch(ctx, video_id)).await {
+        match tokio::time::timeout_at(deadline, source.fetch(ctx, video_id, pin_device)).await {
             Ok(Ok(response)) => response,
             Ok(Err(error)) => {
                 log::warn!(
@@ -595,6 +630,12 @@ async fn fetch_stream_video_source(
                 };
             }
         };
+    if !pin_device.is_empty() {
+        log::info!(
+            "video {video_id}: {source_name} recovery device matched={}",
+            device_id == pin_device
+        );
+    }
     if raw.is_empty() {
         log::warn!("video {video_id}: {source_name} empty response body; body_len=0");
         return FetchedVideoSource {
@@ -881,7 +922,11 @@ fn playable_url_text(url: &str) -> bool {
 }
 
 /// Queries the `aid=1967/novelapp` batch endpoint from the 2026-11-14 HAR.
-async fn fetch_dragon_batch_video_model(ctx: &Ctx, video_id: &str) -> ApiResult<(Vec<u8>, String)> {
+async fn fetch_dragon_batch_video_model(
+    ctx: &Ctx,
+    video_id: &str,
+    pin_device: &str,
+) -> ApiResult<(Vec<u8>, String)> {
     let post_body = multi_video_model_body(video_id)?;
     let mut url = dragon_batch_player_url();
     url.push_str("&_rticket=");
@@ -893,6 +938,7 @@ async fn fetch_dragon_batch_video_model(ctx: &Ctx, video_id: &str) -> ApiResult<
             body: Some(post_body),
             headers: dragon_batch_player_headers(),
             playback_sign: true,
+            pin_device: pin_device.to_string(),
             ..Default::default()
         })
         .await
@@ -900,7 +946,11 @@ async fn fetch_dragon_batch_video_model(ctx: &Ctx, video_id: &str) -> ApiResult<
 }
 
 /// Queries the shortplay-style video_model endpoint used for short drama ids.
-async fn fetch_shortplay_video_model(ctx: &Ctx, video_id: &str) -> ApiResult<(Vec<u8>, String)> {
+async fn fetch_shortplay_video_model(
+    ctx: &Ctx,
+    video_id: &str,
+    pin_device: &str,
+) -> ApiResult<(Vec<u8>, String)> {
     let post_body = serde_json::to_vec(&json!({
         "video_id": video_id,
         "content_type": 1004,
@@ -927,6 +977,7 @@ async fn fetch_shortplay_video_model(ctx: &Ctx, video_id: &str) -> ApiResult<(Ve
             body: Some(post_body),
             headers: dragon_read_json_headers(),
             playback_sign: true,
+            pin_device: pin_device.to_string(),
             ..Default::default()
         })
         .await
@@ -1182,56 +1233,41 @@ fn decrypt_variant_entry(
     info: &Map<String, Value>,
     key_seed: Option<&[u8]>,
 ) -> Option<(String, Vec<u8>)> {
-    let mut raw_url = info
-        .get("main_url")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string();
-    if raw_url.is_empty() {
-        raw_url = info
-            .get("backup_url")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
-    }
-    if raw_url.is_empty() {
-        raw_url = info
-            .get("backup_url_1")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
-    }
-    if raw_url.is_empty() {
-        raw_url = info
-            .get("play_url")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
-    }
-    // `main_url` 有两种形态，不能一律先解一层 base64：
-    //   1) base64 包着的明文地址（解码后以 `http` 开头）；
-    //   2) spade 密文（base64 解出来以 a8 00 01 00 开头），要用 key_seed 解。
-    // 旧实现无条件先解一层，把第 2 种毁成了不可再解的字节串——实测
-    // 2026-10-12：fallback 列表（含 1080p 那一档）全部解不出来，面板因此
-    // 拿到一个不是 URL 的垃圾串。这里只认第 1 种，第 2 种把**原始 base64**
-    // 交给 decrypt_spade_url 自己再解一层。
-    if !raw_url.is_empty() && !raw_url.starts_with("http") {
-        if let Ok(dec) = audio_b64_decode(&raw_url) {
-            if dec.starts_with(b"http") {
-                raw_url = String::from_utf8_lossy(&dec).into_owned();
+    let mut unresolved = None;
+    for field in ["main_url", "backup_url", "backup_url_1", "play_url"] {
+        let Some(raw_url) = info.get(field).and_then(Value::as_str) else {
+            continue;
+        };
+        let mut raw_url = raw_url.trim().to_string();
+        // `main_url` 有两种形态，不能一律先解一层 base64：
+        //   1) base64 包着的明文地址（解码后以 `http` 开头）；
+        //   2) spade 密文（base64 解出来以 a8 00 01 00 开头），要用 key_seed 解。
+        // 旧实现无条件先解一层，把第 2 种毁成了不可再解的字节串——实测
+        // 2026-10-12：fallback 列表（含 1080p 那一档）全部解不出来，面板因此
+        // 拿到一个不是 URL 的垃圾串。这里只认第 1 种，第 2 种把**原始 base64**
+        // 交给 decrypt_spade_url 自己再解一层。
+        if !raw_url.is_empty() && !playable_url_text(&raw_url) {
+            if let Ok(dec) = audio_b64_decode(&raw_url) {
+                if dec.starts_with(b"http") {
+                    raw_url = String::from_utf8_lossy(&dec).into_owned();
+                }
             }
         }
+        let url = if playable_url_text(&raw_url) {
+            raw_url
+        } else if let Some(key_seed) = key_seed {
+            decrypt_spade_url(&raw_url, key_seed)
+        } else {
+            continue;
+        };
+        if playable_url_text(&url) {
+            return Some((url, derive_variant_content_key(info)));
+        }
+        if !url.is_empty() && unresolved.is_none() {
+            unresolved = Some(url);
+        }
     }
-    let u = if raw_url.starts_with("http") {
-        raw_url
-    } else {
-        let key_seed = key_seed?;
-        decrypt_spade_url(&raw_url, key_seed)
-    };
-    if u.is_empty() {
-        return None;
-    }
-    Some((u, derive_variant_content_key(info)))
+    unresolved.map(|url| (url, derive_variant_content_key(info)))
 }
 
 /// The CENC key fixture may sit at the entry root or inside `encrypt_info`
