@@ -304,10 +304,9 @@ void main() {
     await tester.pumpAndSettle();
 
     // 区块的卡片并进当前分类的书架，标题用分类名，不用区块名。
-    expect(
-      tester.widget<HomeSectionHeader>(find.byType(HomeSectionHeader)).title,
-      '经典',
-    );
+    // 真分页之后标签条自己就显示着「经典」，兜底网格不再重复一个分区头
+    // （上游 _fallbackGrid 的 withHeader 只给推荐页和带继续阅读的行留）。
+    expect(find.byType(HomeSectionHeader), findsNothing);
     expect(find.text('经典必读'), findsNothing);
     expect(find.text('经典书一'), findsWidgets);
     // 旧管线的东西不该出现。
