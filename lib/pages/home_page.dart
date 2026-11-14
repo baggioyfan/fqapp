@@ -13,7 +13,6 @@ import '../services/app_style_tokens.dart';
 import '../services/app_theme_style.dart';
 import '../services/book_open_preferences.dart';
 import '../services/chapter_cache_store.dart';
-import '../services/desktop_platform.dart';
 import '../services/frame_stats.dart';
 import '../services/shell_visibility.dart';
 import '../services/home_continue_preferences.dart';

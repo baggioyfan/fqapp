@@ -76,6 +76,20 @@ mixin _LibraryClassicViews on _LibraryClassicChrome {
     );
   }
 
+  /// The classic root shell has a 64dp dock plus an 8dp gap and safe-area inset.
+  /// Only Windows uses the standalone desktop tabs without [ShellDock]; other
+  /// platforms retain the root dock. Edit mode also has its own bottom bar.
+  double get _classicEmptyBottomClearance {
+    if (_editing) return 0;
+    final hasRootDock =
+        kIsWeb || defaultTargetPlatform != TargetPlatform.windows;
+    if (!hasRootDock) return 0;
+    return _classicRootDockHeight +
+        _classicRootDockBottomGap +
+        MediaQuery.viewPaddingOf(context).bottom +
+        _classicRootDockBreathingRoom;
+  }
+
   Widget _classicContent(BuildContext context, int tab) {
     final entries = _visibleEntriesForTab(tab);
     if (entries.isEmpty) {
