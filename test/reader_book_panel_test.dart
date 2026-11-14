@@ -409,11 +409,6 @@ void main() {
           );
           final cached = tester.getRect(find.text('已缓存'));
           final bounds = tester.getRect(row);
-          debugPrint(
-            '[dir-row] width=$width title=${title.height} '
-            'progress=${progress.height} bounds=${bounds.height} '
-            'extent=${tester.widget<ListView>(_key('reader-directory-scroll')).itemExtent}',
-          );
           expect(row.hitTestable(), findsOneWidget);
           expect(find.text('读到100%'), findsOneWidget);
           expect(

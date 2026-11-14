@@ -15,7 +15,6 @@ import 'package:fqapp/services/reader_bookmark_store.dart';
 import 'package:fqapp/services/reader_device.dart';
 import 'package:fqapp/services/secure_key_provider.dart';
 import 'package:fqapp/widgets/reader/reader_chapter_layout.dart';
-import 'package:fqapp/widgets/reader/reader_bookmark_pull.dart';
 import 'package:fqapp/widgets/reader/reader_joined_scroll.dart';
 import 'package:fqapp/widgets/reader/reader_paged_view.dart';
 
@@ -409,15 +408,12 @@ void main() {
 }
 
 Future<void> _pull(WidgetTester tester, String operation) async {
-  final pull = tester.widget<ReaderBookmarkPull>(
-    find.byType(ReaderBookmarkPull),
-  );
-  debugPrint(
-    '[bookmark-pull] enabled=${pull.enabled} paged=${pull.paged} '
-    'bookmarked=${pull.isBookmarked}',
-  );
   final surface = find.byKey(const ValueKey('reader-page-surface'));
-  final gesture = await tester.startGesture(tester.getRect(surface).center);
+  // 顶部起手：正文区的竖向拖动归「上下滑调亮度」，只有顶部这一段是
+  // 书签下拉的（见 `_BrightnessDragRecognizer.topReserved`）。
+  final gesture = await tester.startGesture(
+    tester.getRect(surface).topCenter + const Offset(0, 40),
+  );
   // The first move resolves Flutter's drag arena; subsequent deltas pull.
   await gesture.moveBy(const Offset(0, 20));
   await gesture.moveBy(const Offset(0, 50));

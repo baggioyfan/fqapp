@@ -618,10 +618,17 @@ void main() {
     await _closeControls(tester);
     expect(find.byKey(const ValueKey('reader-toast')), findsNothing);
     expect(find.text('长驻操作提示'), findsOneWidget);
-    await tester.drag(
+    // 顶部起手 + 两次 move：第一次只让竖向识别器赢得竞技，距离从第二次
+    // 开始累积；`tester.drag` 只发一次 move，`_distance` 会一直是 0。
+    final surface = tester.getRect(
       find.byKey(const ValueKey('reader-page-surface')),
-      const Offset(0, 200),
     );
+    final pull = await tester.startGesture(
+      surface.topCenter + const Offset(0, 40),
+    );
+    await pull.moveBy(const Offset(0, 40));
+    await pull.moveBy(const Offset(0, 160));
+    await pull.up();
     await tester.pumpAndSettle();
     expect(find.text('已添加书签'), findsOneWidget);
     _expectClassicToast(tester, '已添加书签');

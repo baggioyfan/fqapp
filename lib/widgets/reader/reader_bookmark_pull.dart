@@ -87,10 +87,6 @@ class _ReaderBookmarkPullState extends State<ReaderBookmarkPull>
       : _returnFrom * ((math.exp(6 * _return.value) - 1) / (math.exp(6) - 1));
 
   void _begin(PointerDownEvent event) {
-    assert(() {
-      debugPrint('[pull] begin enabled=${widget.enabled} paged=${widget.paged}');
-      return true;
-    }());
     if (_pointer != null) return;
     _pointer = event.pointer;
     _gestureActive = widget.enabled && !_saving;
@@ -118,13 +114,6 @@ class _ReaderBookmarkPullState extends State<ReaderBookmarkPull>
   }
 
   void _update(double delta) {
-    assert(() {
-      debugPrint(
-        '[pull] update delta=$delta active=$_gestureActive '
-        'enabled=${widget.enabled} saving=$_saving',
-      );
-      return true;
-    }());
     if (!widget.enabled || _saving || !_gestureActive) return;
     final distance = _distance > 0 ? _distance : _offset / 0.7;
     _return.stop();
@@ -145,10 +134,6 @@ class _ReaderBookmarkPullState extends State<ReaderBookmarkPull>
   }
 
   Future<void> _end() async {
-    assert(() {
-      debugPrint('[pull] end dist=$_distance active=$_gestureActive');
-      return true;
-    }());
     final action = _gestureAction;
     final commit =
         _gestureActive &&
@@ -191,16 +176,6 @@ class _ReaderBookmarkPullState extends State<ReaderBookmarkPull>
   }
 
   bool _scrollNotification(ScrollNotification notification) {
-    assert(() {
-      debugPrint(
-        '[pull] scroll ${notification.runtimeType} '
-        'depth=${notification.depth} '
-        'axis=${notification.metrics.axisDirection} '
-        'pixels=${notification.metrics.pixels} '
-        'min=${notification.metrics.minScrollExtent}',
-      );
-      return true;
-    }());
     if (notification.depth != 0 ||
         !widget.enabled ||
         _saving ||
@@ -241,15 +216,8 @@ class _ReaderBookmarkPullState extends State<ReaderBookmarkPull>
                           _BookmarkDragRecognizer
                         >(_BookmarkDragRecognizer.new, (recognizer) {
                           recognizer.onPointerCancel = _cancel;
-                          recognizer.onStart = (_) {
-                            assert(() {
-                              debugPrint('[pull] start');
-                              return true;
-                            }());
-                          };
-                          recognizer.onUpdate = (event) => _update(
-                            event.delta.dy,
-                          );
+                          recognizer.onUpdate = (event) =>
+                              _update(event.delta.dy);
                           recognizer.onEnd = (_) => _end();
                           recognizer.onCancel = _cancel;
                         }),

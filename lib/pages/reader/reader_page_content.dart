@@ -106,11 +106,15 @@ extension _ReaderPageContent on _ReaderPageState {
                 : null,
             // 上下滑调亮度：只挂翻页模式 —— 滚动模式下上下滑是滚正文，
             // 抢过来就读不了书了。没有原生桥（桌面）时手势自己会空转。
-            onVerticalDragStart: _paged ? _onBrightnessDragStart : null,
-            onVerticalDragUpdate: _paged ? _onBrightnessDragUpdate : null,
-            onVerticalDragEnd: _paged ? _onBrightnessDragEnd : null,
-            onVerticalDragCancel: _paged ? _onBrightnessDragCancel : null,
-            child: Stack(
+            // 顶部一段必须让给下拉书签（见 [_BrightnessDragArea]）：两者都是
+            // 竖向拖动，内层先赢得竞技的话，书签下拉永远收不到手势。
+            child: _BrightnessDragArea(
+              enabled: _paged,
+              onStart: _onBrightnessDragStart,
+              onUpdate: _onBrightnessDragUpdate,
+              onEnd: _onBrightnessDragEnd,
+              onCancel: _onBrightnessDragCancel,
+              child: Stack(
               key: _selectionOverlayKey,
               children: [
                 Positioned.fill(
@@ -165,6 +169,7 @@ extension _ReaderPageContent on _ReaderPageState {
                 ?_selectionBar(preset, windowPadding),
               ],
             ),
+            )
           ),
         );
       },
@@ -326,4 +331,61 @@ extension _ReaderPageContent on _ReaderPageState {
       ),
     );
   }
+}
+
+/// 竖滑调亮度的识别层。
+///
+/// 用 [RawGestureDetector] 而不是 `GestureDetector` 的唯一理由：需要让
+/// 顶部一小段**不注册**竖滑识别器。阅读页的下拉书签（`ReaderBookmarkPull`）
+/// 在它外层，两个竖向拖动会抢同一个手势竞技场，而内层更早拿到 move 事件、
+/// 更早越过 slop，于是书签下拉整条链路（提示语、加/删书签）在翻页模式下
+/// 完全失效。顶部本来就是下拉书签的起手区，让出来不影响调亮度。
+class _BrightnessDragArea extends StatelessWidget {
+  const _BrightnessDragArea({
+    required this.enabled,
+    required this.onStart,
+    required this.onUpdate,
+    required this.onEnd,
+    required this.onCancel,
+    required this.child,
+  });
+
+  final bool enabled;
+  final GestureDragStartCallback onStart;
+  final GestureDragUpdateCallback onUpdate;
+  final GestureDragEndCallback onEnd;
+  final GestureDragCancelCallback onCancel;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    if (!enabled) return child;
+    return RawGestureDetector(
+      behavior: HitTestBehavior.translucent,
+      gestures: {
+        _BrightnessDragRecognizer:
+            GestureRecognizerFactoryWithHandlers<_BrightnessDragRecognizer>(
+              _BrightnessDragRecognizer.new,
+              (recognizer) {
+                recognizer
+                  ..onStart = onStart
+                  ..onUpdate = onUpdate
+                  ..onEnd = onEnd
+                  ..onCancel = onCancel;
+              },
+            ),
+      },
+      child: child,
+    );
+  }
+}
+
+class _BrightnessDragRecognizer extends VerticalDragGestureRecognizer {
+  /// 顶部保留给下拉书签的高度（含状态栏与首行书页）。从这一段起手时
+  /// 亮度识别器根本不进竞技场，外层书签手势独赢。
+  static const topReserved = 96.0;
+
+  @override
+  bool isPointerAllowed(PointerDownEvent event) =>
+      event.position.dy >= topReserved && super.isPointerAllowed(event);
 }
