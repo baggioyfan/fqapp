@@ -441,9 +441,13 @@ void main() {
             bounds.height,
             greaterThanOrEqualTo(title.height + progress.height),
           );
+          // 固定步长取这一批行里最高的那行。320 + 2x 字号下，最长标题要占
+          // 三行（154），而 row-2 自己的标题只占两行（86 + 26 进度），
+          // 于是留了一行 ≈42 的余量；390 宽时所有行同高，差值只有 padding
+          // 的 16。这里按「最多一行余量」卡住回归。
           expect(
             bounds.height,
-            lessThanOrEqualTo(title.height + progress.height + 16.5),
+            lessThanOrEqualTo(title.height + progress.height + 42),
             reason: 'Fixed fast-scroll extent follows actual text metrics.',
           );
           // Non-current rows use the same fixed stride without a progress child.
