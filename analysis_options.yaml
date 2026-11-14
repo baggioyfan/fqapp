@@ -9,6 +9,12 @@
 # packages, and plugins designed to encourage good coding practices.
 include: package:flutter_lints/flutter.yaml
 
+# Dart 3.14（Flutter 3.50）的格式化口径：与上游仓库保持一致，否则每轮格式化
+# 都会因为换行宽度和尾逗号策略不同而产出无意义的 diff。
+formatter:
+  page_width: 80
+  trailing_commas: automate
+
 analyzer:
   # Generated output and local diagnostic copies are not application sources.
   exclude:
