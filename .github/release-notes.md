@@ -62,9 +62,9 @@ versionCode `209` 高于 `v1.0.201-fq4` 的 `206`、与 `v1.0.204-fq1` 持平，
 
 ## 校验
 
-资产文件名一览见本页下方的 Assets，与 `build-info.txt` 逐项对应。
-
-- `fqapp-*-arm64-v8a.apk`，versionName `1.0.204` / versionCode `209`，显示名「什锦铺」
-- `fqapp-*-macos.zip`，universal，要求 macOS 13+
+- APK：`arm64-v8a`，versionName `1.0.204` / versionCode `209`，显示名「什锦铺」
+- macOS：universal，要求 macOS 13+
 - 本版为全量重新编译：analyze 无告警 + 全量测试通过 + APK 签名与 16 KiB 对齐校验
-  + 包内 Mach-O 架构校验；sha256 与体积见 `build-info.txt`
+  + 包内 Mach-O 架构校验
+- 文件名的准确拼写与体积见本页末尾「资产」一节（发版时按实际上传的文件生成），
+  sha256 见 `build-info.txt`

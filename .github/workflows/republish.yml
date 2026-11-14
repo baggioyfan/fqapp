@@ -68,12 +68,23 @@ jobs:
           set -euo pipefail
           sha=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID" --jq .head_sha)
           echo "target commit = $sha"
-          # 同 build.yml：正文按原样取用，发版前先确保那份稿子写的是当次版本。
+          # 同 build.yml：正文取自 `.github/release-notes.md`，资产清单按实际文件生成，
+          # 免得正文里的文件名跟着上一版的 tag 走。
+          notes=$(mktemp)
+          {
+            cat .github/release-notes.md
+            printf '\n## 资产\n\n'
+            for a in dist/fqapp-*.apk dist/fqapp-*.zip dist/build-info.txt; do
+              [ -f "$a" ] || continue
+              printf -- '- `%s` — %s B\n' "$(basename "$a")" "$(wc -c < "$a" | tr -d ' ')"
+            done
+          } > "$notes"
+
           gh release create "$TAG" \
             -R "$GITHUB_REPOSITORY" \
             --target "$sha" \
             --title "$TAG" \
-            --notes-file .github/release-notes.md \
+            --notes-file "$notes" \
             dist/fqapp-*.apk dist/fqapp-*.zip dist/build-info.txt
           gh release view "$TAG" -R "$GITHUB_REPOSITORY" --json url,assets \
             --jq '"\(.url)", (.assets[] | "  \(.name) \(.size) B")'

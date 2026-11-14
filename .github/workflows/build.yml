@@ -1000,13 +1000,23 @@ jobs:
           fi
           ls -l dist
 
-          # 正文用的是仓库里的 `.github/release-notes.md`，按原样取用，这里不做任何替换。
-          # 所以每次发版前必须先把那份稿子重写成「当次」的内容：本版要点、升级必读里的
-          # versionName/versionCode、已知限制里这次实际带了哪些可选资产（windows / linux）。
-          # 资产文件名一律写成 `fqapp-*-xxx` 的形式，不要写死 tag —— 写了必然在下次发版时过期。
+          # 正文取自仓库里的 `.github/release-notes.md`，但**资产清单由这里按实际
+          # 上传的文件生成**：正文里一旦写死文件名，下次发版就会带着上一版的 tag
+          # （fq2 的发布页写着 fq1 的资产名，就是这么来的）。正文只写本版要点与限制，
+          # 具体文件名、体积交给这一段。
+          # 仍需手改的只有：本版要点、升级必读里的版本号、已知限制里的可选资产。
+          notes=$(mktemp)
+          {
+            cat .github/release-notes.md
+            printf '\n## 资产\n\n'
+            for a in "${assets[@]}"; do
+              printf -- '- `%s` — %s B\n' "$(basename "$a")" "$(wc -c < "$a" | tr -d ' ')"
+            done
+          } > "$notes"
+
           gh release create "$RELEASE_TAG" \
             --title "$RELEASE_TAG" \
-            --notes-file .github/release-notes.md \
+            --notes-file "$notes" \
             --target "$GITHUB_SHA" \
             "${assets[@]}"
           printf 'Published %s with %s assets\n' "$RELEASE_TAG" "${#assets[@]}"
