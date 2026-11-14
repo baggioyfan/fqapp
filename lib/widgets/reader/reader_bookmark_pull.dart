@@ -191,6 +191,16 @@ class _ReaderBookmarkPullState extends State<ReaderBookmarkPull>
   }
 
   bool _scrollNotification(ScrollNotification notification) {
+    assert(() {
+      debugPrint(
+        '[pull] scroll ${notification.runtimeType} '
+        'depth=${notification.depth} '
+        'axis=${notification.metrics.axisDirection} '
+        'pixels=${notification.metrics.pixels} '
+        'min=${notification.metrics.minScrollExtent}',
+      );
+      return true;
+    }());
     if (notification.depth != 0 ||
         !widget.enabled ||
         _saving ||
@@ -231,8 +241,15 @@ class _ReaderBookmarkPullState extends State<ReaderBookmarkPull>
                           _BookmarkDragRecognizer
                         >(_BookmarkDragRecognizer.new, (recognizer) {
                           recognizer.onPointerCancel = _cancel;
-                          recognizer.onUpdate = (event) =>
-                              _update(event.delta.dy);
+                          recognizer.onStart = (_) {
+                            assert(() {
+                              debugPrint('[pull] start');
+                              return true;
+                            }());
+                          };
+                          recognizer.onUpdate = (event) => _update(
+                            event.delta.dy,
+                          );
                           recognizer.onEnd = (_) => _end();
                           recognizer.onCancel = _cancel;
                         }),
