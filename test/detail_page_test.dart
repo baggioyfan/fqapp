@@ -850,21 +850,26 @@ class _PendingHistory extends MemoryReaderStore {
 }
 
 Future<void> _revealSecondChapter(
-  WidgetTester tester,
-  AppThemeStyle style,
-) async {
+  WidgetTester tester, [
+  AppThemeStyle? style,
+]) async {
   // 两种版式取第二集的入口不同：
   // - classic 只列「当前 ±1」的目录预览，key 带章节 id；
   // - archive 才是内联全量目录，key 带下标。
+  // 没显式给版式时按现场存在的那个取，省得每个用例都记一遍。
+  final preview = find.byKey(
+    const ValueKey('detail_preview_chapter_second'),
+    skipOffstage: false,
+  );
+  final entry = find.byKey(
+    const ValueKey('detail-directory-entry-1'),
+    skipOffstage: false,
+  );
   final row = style == AppThemeStyle.classic
-      ? find.byKey(
-          const ValueKey('detail_preview_chapter_second'),
-          skipOffstage: false,
-        )
-      : find.byKey(
-          const ValueKey('detail-directory-entry-1'),
-          skipOffstage: false,
-        );
+      ? preview
+      : style == AppThemeStyle.archive
+      ? entry
+      : (preview.evaluate().isEmpty ? entry : preview);
   await tester.ensureVisible(row);
   await tester.pump();
   // ensureVisible parks the row under the frosted header; drag it back down.
