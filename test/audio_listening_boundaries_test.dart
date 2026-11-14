@@ -139,10 +139,12 @@ void main() {
       expect(find.byKey(const Key('audio_advance_banner')), findsOneWidget);
       switch (action) {
         case 'pause':
+          // 原生通知/媒体键只发 playPause（ListenKeepAliveService 的
+          // ACTION_NAME_PLAY_PAUSE），没有单独的 pause 值。
           await PlatformChannels.notify(
             'fqapp/native_player',
             'onNotificationAction',
-            'pause',
+            'playPause',
           );
         case 'noisy':
           await PlatformChannels.notify(

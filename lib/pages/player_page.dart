@@ -1698,17 +1698,16 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   /// 失败（media3 的 3001–3004、4001–4005）与地址无关，换地址只是白等，
   /// 直接把原因交给用户。
   bool _retryableFailure(Object error) {
-    if (error is NativePlaybackException) {
-      final status = error.httpStatusCode;
-      if (status != null && status >= 400 && status <= 599) return true;
-      return switch (error.errorCode ?? 0) {
-        2000 || 2001 || 2002 || 2004 || 2005 => true, // media3 的 IO 系
-        _ => false,
-      };
-    }
-    return error is ApiException ||
-        error is TimeoutException ||
-        error is SocketException;
+    // 只重试「播放器已经拿到地址、但这次取流被拒」的失败。取地址本身
+    // （ApiException / TimeoutException / SocketException）不走这里：换一份
+    // 地址对「拿不到地址」没有意义，重试只会把失败页往后推几秒。
+    if (error is! NativePlaybackException) return false;
+    final status = error.httpStatusCode;
+    if (status != null && status >= 400 && status <= 599) return true;
+    return switch (error.errorCode ?? 0) {
+      2000 || 2001 || 2002 || 2004 || 2005 => true, // media3 的 IO 系
+      _ => false,
+    };
   }
 
   void _fail(Object error, int generation) {

@@ -79,7 +79,7 @@ void main() {
                   // archive 分了两条取法，其中 classic 的
                   // `detail_preview_chapter_second` 在本仓不存在，照搬会让
                   // classic 那半矩阵必然找不到控件。
-                  await _revealSecondChapter(tester);
+                  await _revealSecondChapter(tester, style);
                   target = find.byKey(
                     const ValueKey('detail-directory-entry-1'),
                   );
@@ -849,13 +849,22 @@ class _PendingHistory extends MemoryReaderStore {
   Future<Map<String, dynamic>?> historyEntry(String id) => pending.future;
 }
 
-Future<void> _revealSecondChapter(WidgetTester tester) async {
-  // The ported page lists the whole catalogue inline; entry 1 is 第二章 because
-  // this fixture has no volume names.
-  final row = find.byKey(
-    const ValueKey('detail-directory-entry-1'),
-    skipOffstage: false,
-  );
+Future<void> _revealSecondChapter(
+  WidgetTester tester,
+  AppThemeStyle style,
+) async {
+  // 两种版式取第二集的入口不同：
+  // - classic 只列「当前 ±1」的目录预览，key 带章节 id；
+  // - archive 才是内联全量目录，key 带下标。
+  final row = style == AppThemeStyle.classic
+      ? find.byKey(
+          const ValueKey('detail_preview_chapter_second'),
+          skipOffstage: false,
+        )
+      : find.byKey(
+          const ValueKey('detail-directory-entry-1'),
+          skipOffstage: false,
+        );
   await tester.ensureVisible(row);
   await tester.pump();
   // ensureVisible parks the row under the frosted header; drag it back down.
