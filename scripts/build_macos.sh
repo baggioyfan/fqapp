@@ -182,21 +182,34 @@ echo "==> 2e/6 抬最低系统版本到 ${DEPLOY_MIN}（Ventura 基线）"
 # 对外宣称的 13；Xcode 对 arm64 会直接报「range of supported deployment target
 # versions is 11.0 to ...」。这里只抬不降 —— 匹配 0–12 的主版本号，已经 ≥ 13 的
 # 一律不动（模板哪天变成 14 也不会被这个脚本降回去）。
-/usr/bin/sed -i '' -E \
-  "s/^platform :osx, *'([0-9]|1[0-2])\.[0-9]+'/platform :osx, '${DEPLOY_MIN}'/" \
-  macos/Podfile
+# Podfile 是可选的：Flutter 3.44 起 Swift Package Manager 成为默认依赖管理器，
+# 3.50 的 `flutter create --platforms=macos` 不再生成 Podfile（CocoaPods trunk
+# 2026-12-02 起永久只读）。有 Podfile 就照旧抬它的 platform，没有就只校验
+# pbxproj —— 部署目标在两条路径下都落在那里。
+if [ -f macos/Podfile ]; then
+  /usr/bin/sed -i '' -E \
+    "s/^platform :osx, *'([0-9]|1[0-2])\.[0-9]+'/platform :osx, '${DEPLOY_MIN}'/" \
+    macos/Podfile
+fi
 /usr/bin/sed -i '' -E \
   "s/MACOSX_DEPLOYMENT_TARGET = ([0-9]|1[0-2])\.[0-9]+;/MACOSX_DEPLOYMENT_TARGET = ${DEPLOY_MIN};/g" \
   macos/Runner.xcodeproj/project.pbxproj
 
-POD_PLATFORM="$(/usr/bin/sed -n -E "s/^platform :osx, *'([0-9.]+)'.*/\1/p" macos/Podfile | head -1)"
-[ -n "$POD_PLATFORM" ] ||
-  die "macos/Podfile 里读不出 platform :osx（模板结构变了？）"
-awk -v p="$POD_PLATFORM" -v want="$DEPLOY_MAJOR" 'BEGIN {
-      split(p, a, "."); exit !(a[1] + 0 >= want + 0)
-    }' ||
-  die "macos/Podfile 的 platform :osx 仍是 ${POD_PLATFORM}，低于 ${DEPLOY_MIN}"
-echo "    Podfile platform :osx → ${POD_PLATFORM}"
+if [ -f macos/Podfile ]; then
+  POD_PLATFORM="$(/usr/bin/sed -n -E "s/^platform :osx, *'([0-9.]+)'.*/\1/p" macos/Podfile | head -1)"
+  [ -n "$POD_PLATFORM" ] ||
+    die "macos/Podfile 里读不出 platform :osx（模板结构变了？）"
+  awk -v p="$POD_PLATFORM" -v want="$DEPLOY_MAJOR" 'BEGIN {
+        split(p, a, "."); exit !(a[1] + 0 >= want + 0)
+      }' ||
+    die "macos/Podfile 的 platform :osx 仍是 ${POD_PLATFORM}，低于 ${DEPLOY_MIN}"
+  echo "    Podfile platform :osx → ${POD_PLATFORM}"
+else
+  /usr/bin/grep -q "MACOSX_DEPLOYMENT_TARGET = ${DEPLOY_MIN};" \
+    macos/Runner.xcodeproj/project.pbxproj ||
+    die "Runner.xcodeproj 里没有 MACOSX_DEPLOYMENT_TARGET = ${DEPLOY_MIN}"
+  echo "    无 Podfile（SwiftPM 工程），部署目标由 pbxproj 校验"
+fi
 
 echo "==> 2f/6 关掉 Impeller（macOS 桌面用回 Skia）"
 # Flutter 3.47 起把 macOS 桌面的默认渲染器从 Skia 换成了 Impeller（Metal），
