@@ -74,15 +74,8 @@ void main() {
                 expect(MediaQuery.sizeOf(context).width, 390);
                 var target = find.byKey(const Key('detail_read_button'));
                 if (action == 'episode') {
-                  // fork 只有一套详情版式（目录行统一是
-                  // `detail-directory-entry-$index`）。上游这里按 classic /
-                  // archive 分了两条取法，其中 classic 的
-                  // `detail_preview_chapter_second` 在本仓不存在，照搬会让
-                  // classic 那半矩阵必然找不到控件。
                   await _revealSecondChapter(tester, style);
-                  target = find.byKey(
-                    const ValueKey('detail-directory-entry-1'),
-                  );
+                  target = _secondChapterRow(style);
                 }
                 expect(target.hitTestable(), findsOneWidget);
                 await tester.tap(target);
@@ -849,14 +842,13 @@ class _PendingHistory extends MemoryReaderStore {
   Future<Map<String, dynamic>?> historyEntry(String id) => pending.future;
 }
 
-Future<void> _revealSecondChapter(
-  WidgetTester tester, [
-  AppThemeStyle? style,
-]) async {
-  // 两种版式取第二集的入口不同：
-  // - classic 只列「当前 ±1」的目录预览，key 带章节 id；
-  // - archive 才是内联全量目录，key 带下标。
-  // 没显式给版式时按现场存在的那个取，省得每个用例都记一遍。
+/// 第二集在目录里的那一行。
+///
+/// 两种版式的入口不同：
+/// - classic 只列「当前 ±1」的目录预览，key 带章节 id；
+/// - archive 才是内联全量目录，key 带下标。
+/// 没显式给版式时按现场存在的那个取，省得每个用例都记一遍。
+Finder _secondChapterRow([AppThemeStyle? style]) {
   final preview = find.byKey(
     const ValueKey('detail_preview_chapter_second'),
     skipOffstage: false,
@@ -865,11 +857,16 @@ Future<void> _revealSecondChapter(
     const ValueKey('detail-directory-entry-1'),
     skipOffstage: false,
   );
-  final row = style == AppThemeStyle.classic
-      ? preview
-      : style == AppThemeStyle.archive
-      ? entry
-      : (preview.evaluate().isEmpty ? entry : preview);
+  if (style == AppThemeStyle.classic) return preview;
+  if (style == AppThemeStyle.archive) return entry;
+  return preview.evaluate().isEmpty ? entry : preview;
+}
+
+Future<void> _revealSecondChapter(
+  WidgetTester tester, [
+  AppThemeStyle? style,
+]) async {
+  final row = _secondChapterRow(style);
   await tester.ensureVisible(row);
   await tester.pump();
   // ensureVisible parks the row under the frosted header; drag it back down.

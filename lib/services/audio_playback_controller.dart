@@ -443,6 +443,13 @@ class _AudioPlaybackController extends ChangeNotifier
     switch (action) {
       case 'playPause':
         unawaited(_togglePlayback());
+      // Linux 的 MPRIS 会把 Play / Pause 分开发（native/linux/bridge.cc 的
+      // `action("play")` / `action("pause")`），Android 只发 playPause。
+      // 少这两个分支时，桌面媒体键按暂停是空操作。
+      case 'play':
+        if (!_wantPlay) unawaited(_togglePlayback());
+      case 'pause':
+        unawaited(_pauseForOtherMedia());
       case 'prev':
         if (_index > 0) unawaited(_openChapter(_index - 1));
       case 'next':
