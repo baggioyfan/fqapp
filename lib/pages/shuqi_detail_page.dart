@@ -7,6 +7,7 @@ import '../models/shuqi_book.dart';
 import '../services/api_client.dart';
 import '../services/app_style_tokens.dart';
 import '../services/app_theme_style.dart';
+import '../services/chapter_cache_store.dart';
 import '../services/shuqi_reader_source.dart';
 import '../services/user_facing_error.dart';
 import '../widgets/app_ui/app_ui_scope.dart';
@@ -43,6 +44,10 @@ class ShuqiDetailPage extends StatefulWidget {
   final Future<Map<String, dynamic>> Function(String bookId)? bookLoader;
   final Future<Map<String, dynamic>> Function(String bookId)? tocLoader;
 
+  /// 注解读写缓存。留空走加密的真实目录缓存（`ChapterCacheStore.instance`）；
+  /// 用例注内存实现，避免在测试进程里打开需要平台密钥的 Hive box。
+  final ChapterCache? chapterCache;
+
   const ShuqiDetailPage({
     super.key,
     required this.bookId,
@@ -50,6 +55,7 @@ class ShuqiDetailPage extends StatefulWidget {
     this.initialCover = '',
     this.bookLoader,
     this.tocLoader,
+    this.chapterCache,
   });
 
   @override
@@ -189,6 +195,7 @@ class _ShuqiDetailPageState extends State<ShuqiDetailPage> {
           // `localOnly` 关闭番茄在线功能，不禁止书旗独立作用域的自动缓存。
           // 历史与时长仍须由只读 store 拦截，不能写入本机阅读统计。
           readerStore: const ReadOnlyReaderStore(),
+          chapterCache: widget.chapterCache,
           chapterLoader: (chapter) => loadShuqiChapter(widget.bookId, chapter),
         ),
       ),

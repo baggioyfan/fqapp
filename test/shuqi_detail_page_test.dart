@@ -8,6 +8,8 @@ import 'package:fqapp/pages/reader_page.dart';
 import 'package:fqapp/pages/shuqi_detail_page.dart';
 import 'package:fqapp/services/secure_key_provider.dart';
 
+import 'support/fakes.dart';
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   const secureKeys = MethodChannel('fqapp/secure_keys');
@@ -89,6 +91,9 @@ void main() {
       MaterialApp(
         home: ShuqiDetailPage(
           bookId: '34078',
+          // 阅读页默认打开加密的目录缓存，测试进程里没有平台密钥会让
+          // SecureKeyProvider 挂满 10 秒超时；这里注内存实现隔离掉。
+          chapterCache: MemoryChapterCache(),
           bookLoader: (_) async => {
             'data': {
               'bookId': '34078',
