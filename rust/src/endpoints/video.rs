@@ -43,6 +43,7 @@ const VIDEO_VARIANT_BUDGET: Duration = Duration::from_secs(4);
 const VIDEO_RESPONSE_RESERVE: Duration = Duration::from_secs(1);
 const VIDEO_SOURCE_RETRY_DELAYS: [Duration; 2] = [Duration::from_secs(1), Duration::from_secs(2)];
 const VIDEO_RETRY_MIN_BUDGET: Duration = Duration::from_millis(250);
+const VIDEO_DEVICE_ROTATION_BUDGET: Duration = Duration::from_secs(6);
 
 fn retry_has_budget(at: Instant, deadline: Instant) -> bool {
     at + VIDEO_RETRY_MIN_BUDGET < deadline
@@ -130,17 +131,19 @@ impl StreamVideoSource {
         }
     }
 
-    async fn fetch(self, ctx: &Ctx, video_id: &str) -> ApiResult<Vec<u8>> {
+    async fn fetch(self, ctx: &Ctx, video_id: &str) -> ApiResult<(Vec<u8>, String)> {
         match self {
             Self::Shortplay => fetch_shortplay_video_model(ctx, video_id).await,
             Self::DragonBatch => fetch_dragon_batch_video_model(ctx, video_id).await,
-            Self::Phoenix => fetch_phoenix_video_model(ctx, video_id).await,
+            Self::Phoenix => fetch_phoenix_video_model_with_device(ctx, video_id).await,
         }
     }
 }
 
 struct FetchedVideoSource {
     source: StreamVideoSource,
+    device_id: Option<String>,
+    empty_playback: bool,
     parsed: Option<ParsedVideoResponse>,
     retryable: bool,
 }
@@ -222,6 +225,7 @@ fn handle_video<'a>(ctx: &'a Ctx, params: &'a Params) -> BoxFuture<'a, ApiResult
             let mut stream_resolution =
                 resolve_stream_video_sources(ctx, &video_id, &mut sources, resolution_deadline)
                     .await;
+            let mut playback_device_rotated = false;
             for (retry_index, retry_delay) in VIDEO_SOURCE_RETRY_DELAYS.into_iter().enumerate() {
                 let has_legacy_raw = parsed_stream_bodies(&sources)
                     .iter()
@@ -251,6 +255,53 @@ fn handle_video<'a>(ctx: &'a Ctx, params: &'a Params) -> BoxFuture<'a, ApiResult
                     .collect();
                 if retryable.is_empty() {
                     break;
+                }
+                if !playback_device_rotated {
+                    if let Some((source, device_id, deadline)) =
+                        retryable.iter().find_map(|(index, _, deadline)| {
+                            let fetched = &sources[*index];
+                            if fetched.empty_playback {
+                                fetched
+                                    .device_id
+                                    .as_deref()
+                                    .map(|device_id| (fetched.source, device_id, *deadline))
+                            } else {
+                                None
+                            }
+                        })
+                    {
+                        playback_device_rotated = true;
+                        let rotation_deadline =
+                            (Instant::now() + VIDEO_DEVICE_ROTATION_BUDGET).min(deadline);
+                        log::warn!(
+                            "video {video_id}: empty playback model from {}; rotating device before retry attempt={}",
+                            source.name(),
+                            retry_index + 1
+                        );
+                        match tokio::time::timeout_at(
+                            rotation_deadline,
+                            ctx.pool.replace_failed(device_id),
+                        )
+                        .await
+                        {
+                            Ok(Ok(_)) => {
+                                log::info!(
+                                    "video {video_id}: replacement device ready for retry attempt={}",
+                                    retry_index + 1
+                                );
+                            }
+                            Ok(Err(_)) => {
+                                log::warn!(
+                                    "video {video_id}: replacement device registration failed"
+                                );
+                            }
+                            Err(_) => {
+                                log::warn!(
+                                    "video {video_id}: replacement device registration deadline exceeded"
+                                );
+                            }
+                        }
+                    }
                 }
                 tokio::time::sleep_until(retry_at).await;
                 let now = Instant::now();
@@ -421,16 +472,27 @@ fn multi_video_model_body(video_id: &str) -> ApiResult<Vec<u8>> {
 
 /// Queries the phoenix multi_video_model endpoint.
 async fn fetch_phoenix_video_model(ctx: &Ctx, video_id: &str) -> ApiResult<Vec<u8>> {
+    fetch_phoenix_video_model_with_device(ctx, video_id)
+        .await
+        .map(|(raw, _)| raw)
+}
+
+async fn fetch_phoenix_video_model_with_device(
+    ctx: &Ctx,
+    video_id: &str,
+) -> ApiResult<(Vec<u8>, String)> {
     let post_body = multi_video_model_body(video_id)?;
     Upstream::new(ctx.up.clone())
-        .raw(&UpstreamRequestSpec {
+        .raw_with_device(&UpstreamRequestSpec {
             mode: UpstreamMode::DeviceSigned,
             raw_url: Some(phoenix_player_url()),
             body: Some(post_body),
             headers: phoenix_player_headers(),
+            playback_sign: true,
             ..Default::default()
         })
         .await
+        .map(|(raw, device)| (raw, device.device_id))
 }
 
 async fn fetch_parsed_video_response(
@@ -506,32 +568,39 @@ async fn fetch_stream_video_source(
     deadline: Instant,
 ) -> FetchedVideoSource {
     let source_name = source.name();
-    let raw = match tokio::time::timeout_at(deadline, source.fetch(ctx, video_id)).await {
-        Ok(Ok(raw)) => raw,
-        Ok(Err(error)) => {
-            log::warn!(
-                "video {video_id}: {source_name} request failed: {}",
-                error.message()
-            );
-            return FetchedVideoSource {
-                source,
-                parsed: None,
-                retryable: true,
-            };
-        }
-        Err(_) => {
-            log::warn!("video {video_id}: {source_name} request deadline exceeded");
-            return FetchedVideoSource {
-                source,
-                parsed: None,
-                retryable: true,
-            };
-        }
-    };
+    let (raw, device_id) =
+        match tokio::time::timeout_at(deadline, source.fetch(ctx, video_id)).await {
+            Ok(Ok(response)) => response,
+            Ok(Err(error)) => {
+                log::warn!(
+                    "video {video_id}: {source_name} request failed: {}",
+                    error.message()
+                );
+                return FetchedVideoSource {
+                    source,
+                    device_id: None,
+                    empty_playback: false,
+                    parsed: None,
+                    retryable: true,
+                };
+            }
+            Err(_) => {
+                log::warn!("video {video_id}: {source_name} request deadline exceeded");
+                return FetchedVideoSource {
+                    source,
+                    device_id: None,
+                    empty_playback: false,
+                    parsed: None,
+                    retryable: true,
+                };
+            }
+        };
     if raw.is_empty() {
         log::warn!("video {video_id}: {source_name} empty response body; body_len=0");
         return FetchedVideoSource {
             source,
+            device_id: Some(device_id),
+            empty_playback: true,
             parsed: None,
             retryable: true,
         };
@@ -546,6 +615,8 @@ async fn fetch_stream_video_source(
             );
             return FetchedVideoSource {
                 source,
+                device_id: Some(device_id),
+                empty_playback: false,
                 parsed: None,
                 retryable: true,
             };
@@ -558,11 +629,14 @@ async fn fetch_stream_video_source(
         );
         return FetchedVideoSource {
             source,
+            device_id: Some(device_id),
+            empty_playback: false,
             parsed: None,
             retryable: false,
         };
     }
-    if !video_data_is_usable(&parsed.root) {
+    let empty_playback = !video_data_is_usable(&parsed.root);
+    if empty_playback {
         log::warn!(
             "video {video_id}: {source_name} body has no video payload: {}",
             body_envelope(&parsed.root)
@@ -570,6 +644,8 @@ async fn fetch_stream_video_source(
     }
     FetchedVideoSource {
         source,
+        device_id: Some(device_id),
+        empty_playback,
         parsed: Some(parsed),
         retryable: false,
     }
@@ -682,11 +758,13 @@ fn video_entry_has_candidate(entry: &Value) -> bool {
         return false;
     };
     video_quality_score(info).is_some()
-        && ["main_url", "backup_url_1", "play_url"].iter().any(|key| {
-            info.get(*key)
-                .and_then(Value::as_str)
-                .is_some_and(|url| !url.is_empty())
-        })
+        && ["main_url", "backup_url", "backup_url_1", "play_url"]
+            .iter()
+            .any(|key| {
+                info.get(*key)
+                    .and_then(Value::as_str)
+                    .is_some_and(|url| !url.is_empty())
+            })
 }
 
 fn upstream_response_is_failure(root: &Value) -> bool {
@@ -773,10 +851,16 @@ fn has_compatible_playable_url(value: &Value, depth: usize) -> bool {
     match value {
         Value::Object(map) => {
             if video_quality_score(map).is_some()
-                && ["video_url", "play_url", "main_url", "backup_url_1"]
-                    .iter()
-                    .filter_map(|key| map.get(*key).and_then(Value::as_str))
-                    .any(playable_url_text)
+                && [
+                    "video_url",
+                    "play_url",
+                    "main_url",
+                    "backup_url",
+                    "backup_url_1",
+                ]
+                .iter()
+                .filter_map(|key| map.get(*key).and_then(Value::as_str))
+                .any(playable_url_text)
             {
                 return true;
             }
@@ -797,7 +881,7 @@ fn playable_url_text(url: &str) -> bool {
 }
 
 /// Queries the `aid=1967/novelapp` batch endpoint from the 2026-11-14 HAR.
-async fn fetch_dragon_batch_video_model(ctx: &Ctx, video_id: &str) -> ApiResult<Vec<u8>> {
+async fn fetch_dragon_batch_video_model(ctx: &Ctx, video_id: &str) -> ApiResult<(Vec<u8>, String)> {
     let post_body = multi_video_model_body(video_id)?;
     let mut url = dragon_batch_player_url();
     url.push_str("&_rticket=");
@@ -808,14 +892,15 @@ async fn fetch_dragon_batch_video_model(ctx: &Ctx, video_id: &str) -> ApiResult<
             raw_url: Some(url),
             body: Some(post_body),
             headers: dragon_batch_player_headers(),
+            playback_sign: true,
             ..Default::default()
         })
         .await
-        .map(|(raw, _)| raw)
+        .map(|(raw, device)| (raw, device.device_id))
 }
 
 /// Queries the shortplay-style video_model endpoint used for short drama ids.
-async fn fetch_shortplay_video_model(ctx: &Ctx, video_id: &str) -> ApiResult<Vec<u8>> {
+async fn fetch_shortplay_video_model(ctx: &Ctx, video_id: &str) -> ApiResult<(Vec<u8>, String)> {
     let post_body = serde_json::to_vec(&json!({
         "video_id": video_id,
         "content_type": 1004,
@@ -836,14 +921,16 @@ async fn fetch_shortplay_video_model(ctx: &Ctx, video_id: &str) -> ApiResult<Vec
     .map_err(|e| ApiError::Internal(format!("marshal shortplay video body: {e}")))?;
 
     Upstream::new(ctx.up.clone())
-        .raw(&UpstreamRequestSpec {
+        .raw_with_device(&UpstreamRequestSpec {
             mode: UpstreamMode::DeviceSigned,
             raw_url: Some(SHORTPLAY_VIDEO_MODEL_URL.to_string()),
             body: Some(post_body),
             headers: dragon_read_json_headers(),
+            playback_sign: true,
             ..Default::default()
         })
         .await
+        .map(|(raw, device)| (raw, device.device_id))
 }
 
 /// Parses the multi_video_model response and extracts the best quality MP4 URL.
@@ -1100,6 +1187,13 @@ fn decrypt_variant_entry(
         .and_then(|v| v.as_str())
         .unwrap_or("")
         .to_string();
+    if raw_url.is_empty() {
+        raw_url = info
+            .get("backup_url")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+    }
     if raw_url.is_empty() {
         raw_url = info
             .get("backup_url_1")
@@ -1467,7 +1561,7 @@ fn extract_video_model_url(model: &Map<String, Value>) -> VideoSourceResolution 
 fn extract_video_list_source(video_list: &[Value]) -> VideoSourceResolution {
     // Preserve the legacy last-entry preference when quality metadata is absent.
     select_video_source(video_list.iter().rev(), |info| {
-        ["play_url", "main_url"]
+        ["play_url", "main_url", "backup_url", "backup_url_1"]
             .iter()
             .filter_map(|key| info.get(*key).and_then(|v| v.as_str()))
             .find(|url| !url.is_empty())
@@ -2029,6 +2123,7 @@ async fn unsigned_get(ctx: &Ctx, url: &str, user_agent: &str, max_bytes: usize) 
         headers: vec![("User-Agent".to_string(), user_agent.to_string())],
         no_sign: true,
         pin: None,
+        playback_sign: false,
     };
     match ctx.up.do_request_capped(&req, max_bytes).await {
         Ok((body, _)) => Some(body),
