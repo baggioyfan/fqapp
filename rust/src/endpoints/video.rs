@@ -45,6 +45,7 @@ const VIDEO_SOURCE_RETRY_DELAYS: [Duration; 2] = [Duration::from_secs(1), Durati
 const VIDEO_RETRY_MIN_BUDGET: Duration = Duration::from_millis(250);
 const VIDEO_DEVICE_ROTATION_BUDGET: Duration = Duration::from_secs(6);
 const VIDEO_DEVICE_RETRY_RESERVE: Duration = Duration::from_secs(2);
+const VIDEO_DEVICE_SETTLE: Duration = Duration::from_millis(500);
 
 fn retry_has_budget(at: Instant, deadline: Instant) -> bool {
     at + VIDEO_RETRY_MIN_BUDGET < deadline
@@ -154,6 +155,38 @@ struct FetchedVideoSource {
     retryable: bool,
 }
 
+impl FetchedVideoSource {
+    fn remember_empty_device(&self, devices: &mut HashSet<String>) {
+        if self.empty_playback {
+            if let Some(device_id) = &self.device_id {
+                devices.insert(device_id.clone());
+            }
+        }
+    }
+}
+
+fn empty_playback_devices(sources: &[FetchedVideoSource]) -> HashSet<String> {
+    let mut devices = HashSet::new();
+    for source in sources {
+        source.remember_empty_device(&mut devices);
+    }
+    devices
+}
+
+async fn quarantine_empty_playback_devices(ctx: &Ctx, video_id: &str, devices: &HashSet<String>) {
+    let mut quarantined = 0;
+    for device_id in devices {
+        if ctx.pool.quarantine(device_id).await {
+            quarantined += 1;
+        }
+    }
+    if quarantined > 0 {
+        log::warn!(
+            "video {video_id}: quarantined {quarantined} device(s) after empty playback response"
+        );
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum DirectVideoSourceStatus {
     Missing,
@@ -227,12 +260,11 @@ fn handle_video<'a>(ctx: &'a Ctx, params: &'a Params) -> BoxFuture<'a, ApiResult
             let mut sources =
                 fetch_stream_video_sources(ctx, &video_id, fetch_deadline, auxiliary_deadline)
                     .await;
+            let mut empty_device_ids = empty_playback_devices(&sources);
 
             let mut stream_resolution =
                 resolve_stream_video_sources(ctx, &video_id, &mut sources, resolution_deadline)
                     .await;
-            let mut playback_rotation_attempted = false;
-            let mut replacement_device_id = String::new();
             for (retry_index, retry_delay) in VIDEO_SOURCE_RETRY_DELAYS.into_iter().enumerate() {
                 let has_legacy_raw = parsed_stream_bodies(&sources)
                     .iter()
@@ -244,7 +276,7 @@ fn handle_video<'a>(ctx: &'a Ctx, params: &'a Params) -> BoxFuture<'a, ApiResult
                 {
                     break;
                 }
-                let retry_at = Instant::now() + retry_delay;
+                let mut retry_at = Instant::now() + retry_delay;
                 let retryable: Vec<_> = sources
                     .iter()
                     .enumerate()
@@ -263,55 +295,54 @@ fn handle_video<'a>(ctx: &'a Ctx, params: &'a Params) -> BoxFuture<'a, ApiResult
                 if retryable.is_empty() {
                     break;
                 }
-                if !playback_rotation_attempted {
-                    if let Some((source, device_id, deadline)) =
-                        retryable.iter().find_map(|(index, _, deadline)| {
-                            let fetched = &sources[*index];
-                            if fetched.empty_playback {
-                                fetched
-                                    .device_id
-                                    .as_deref()
-                                    .map(|device_id| (fetched.source, device_id, *deadline))
-                            } else {
-                                None
+                let mut replacement_device_id = String::new();
+                if let Some((source, device_id, deadline)) =
+                    retryable.iter().find_map(|(index, _, deadline)| {
+                        let fetched = &sources[*index];
+                        if fetched.empty_playback {
+                            fetched
+                                .device_id
+                                .as_deref()
+                                .map(|device_id| (fetched.source, device_id, *deadline))
+                        } else {
+                            None
+                        }
+                    })
+                {
+                    let now = Instant::now();
+                    let rotation_budget = deadline
+                        .saturating_duration_since(now)
+                        .saturating_sub(VIDEO_DEVICE_RETRY_RESERVE)
+                        .min(VIDEO_DEVICE_ROTATION_BUDGET);
+                    if rotation_budget >= VIDEO_RETRY_MIN_BUDGET {
+                        log::warn!(
+                            "video {video_id}: empty playback model from {}; rotating device before retry attempt={}",
+                            source.name(),
+                            retry_index + 1
+                        );
+                        match tokio::time::timeout_at(
+                            now + rotation_budget,
+                            ctx.pool.replace_failed(device_id),
+                        )
+                        .await
+                        {
+                            Ok(Ok(device)) => {
+                                replacement_device_id = device.device_id;
+                                retry_at = retry_at.max(Instant::now() + VIDEO_DEVICE_SETTLE);
+                                log::info!(
+                                    "video {video_id}: replacement device ready for retry attempt={}",
+                                    retry_index + 1
+                                );
                             }
-                        })
-                    {
-                        let now = Instant::now();
-                        let rotation_budget = deadline
-                            .saturating_duration_since(now)
-                            .saturating_sub(VIDEO_DEVICE_RETRY_RESERVE)
-                            .min(VIDEO_DEVICE_ROTATION_BUDGET);
-                        if rotation_budget >= VIDEO_RETRY_MIN_BUDGET {
-                            playback_rotation_attempted = true;
-                            log::warn!(
-                                "video {video_id}: empty playback model from {}; rotating device before retry attempt={}",
-                                source.name(),
-                                retry_index + 1
-                            );
-                            match tokio::time::timeout_at(
-                                now + rotation_budget,
-                                ctx.pool.replace_failed(device_id),
-                            )
-                            .await
-                            {
-                                Ok(Ok(device)) => {
-                                    replacement_device_id = device.device_id;
-                                    log::info!(
-                                        "video {video_id}: replacement device ready for retry attempt={}",
-                                        retry_index + 1
-                                    );
-                                }
-                                Ok(Err(_)) => {
-                                    log::warn!(
-                                        "video {video_id}: replacement device registration failed"
-                                    );
-                                }
-                                Err(_) => {
-                                    log::warn!(
-                                        "video {video_id}: replacement device registration deadline exceeded"
-                                    );
-                                }
+                            Ok(Err(_)) => {
+                                log::warn!(
+                                    "video {video_id}: replacement device registration failed"
+                                );
+                            }
+                            Err(_) => {
+                                log::warn!(
+                                    "video {video_id}: replacement device registration deadline exceeded"
+                                );
                             }
                         }
                     }
@@ -355,6 +386,7 @@ fn handle_video<'a>(ctx: &'a Ctx, params: &'a Params) -> BoxFuture<'a, ApiResult
                         )
                     });
                 for (index, fetched) in futures::future::join_all(retries).await {
+                    fetched.remember_empty_device(&mut empty_device_ids);
                     sources[index] = fetched;
                 }
                 stream_resolution =
@@ -375,6 +407,7 @@ fn handle_video<'a>(ctx: &'a Ctx, params: &'a Params) -> BoxFuture<'a, ApiResult
                 }
             }
 
+            quarantine_empty_playback_devices(ctx, &video_id, &empty_device_ids).await;
             let bodies = sources
                 .into_iter()
                 .filter_map(|source| source.parsed)
@@ -933,7 +966,7 @@ async fn fetch_dragon_batch_video_model(
     url.push_str(&crate::timeutil::now_millis().to_string());
     Upstream::new(ctx.up.clone())
         .raw_with_device(&UpstreamRequestSpec {
-            mode: UpstreamMode::NoSign,
+            mode: UpstreamMode::DeviceSigned,
             raw_url: Some(url),
             body: Some(post_body),
             headers: dragon_batch_player_headers(),
