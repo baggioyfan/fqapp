@@ -386,6 +386,6 @@ class _BrightnessDragRecognizer extends VerticalDragGestureRecognizer {
   static const topReserved = 96.0;
 
   @override
-  bool isPointerAllowed(PointerDownEvent event) =>
+  bool isPointerAllowed(PointerEvent event) =>
       event.position.dy >= topReserved && super.isPointerAllowed(event);
 }
