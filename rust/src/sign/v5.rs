@@ -90,7 +90,7 @@ fn process_nonce() -> &'static str {
 /// Process start time in milliseconds, embedded in the v5 device proto.
 fn process_started_ms() -> i64 {
     static STARTED: OnceLock<i64> = OnceLock::new();
-    *STARTED.get_or_init(|| chrono_now_millis())
+    *STARTED.get_or_init(chrono_now_millis)
 }
 
 /// Wall clock in milliseconds. Kept in one place so the probe can freeze it.
@@ -190,13 +190,13 @@ fn iv(query: &[u8], body: &[u8], ts: i32) -> u32 {
 /// `sumMd5` fold over the first 12 bytes.
 fn sum_md5(data: &[u8]) -> u32 {
     let mut check: u32 = 0x2022_0420;
-    for i in 0..12 {
+    for (i, &byte) in data.iter().take(12).enumerate() {
         let shift = if i & 1 == 0 { 3 } else { 5 };
         let temp = (check >> shift) ^ check;
         check = if i & 1 == 0 {
-            (data[i] as u32) ^ check.wrapping_shl(7)
+            (byte as u32) ^ check.wrapping_shl(7)
         } else {
-            !((data[i] as u32) | check.wrapping_shl(11))
+            !((byte as u32) | check.wrapping_shl(11))
         };
         check ^= temp;
     }
@@ -251,8 +251,10 @@ fn hash_f13_core(
     data.extend_from_slice(&[0, 0, 0, 0, 0, 0, 0x01, 0xa0]);
 
     let mut di: Vec<u32> = data
-        .chunks_exact(4)
-        .map(|c| u32::from_be_bytes([c[0], c[1], c[2], c[3]]))
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .map(|c| u32::from_be_bytes(*c))
         .collect();
 
     for i in 0..112 {
@@ -343,7 +345,7 @@ fn xmxor(data: &[u8], key: &[u8]) -> Vec<u8> {
         let d0 = key[at] as u32;
         let d1 = key[at + 1] as u32;
         let v = data[i] as u32;
-        let mut d2 = ((((v << 4) | (v >> 4)) & 255) + d0) & u32::MAX;
+        let mut d2 = (((v << 4) | (v >> 4)) & 255) + d0;
         d2 = (!d2) ^ d1;
         let masked = d2 & 255;
         d2 = ((masked << 3) | (masked >> 5)) & 255;
@@ -508,9 +510,9 @@ impl AesV3 {
             }
 
             if round == 1 {
-                for i in 0..4 {
-                    let old = rows[i];
-                    rows[i] = [
+                for row in rows.iter_mut() {
+                    let old = *row;
+                    *row = [
                         old[self.con[0]],
                         old[self.con[1]],
                         old[self.con[2]],
@@ -587,11 +589,11 @@ impl AesV3 {
         key[16..].copy_from_slice(&second);
 
         let mut out = source.to_vec();
-        for i in 0..31 {
+        for (i, byte) in key.iter().take(31).enumerate() {
             for j in 0..8 {
                 let at = i * 8 + j;
-                let bit = (key[i] >> compact[j]) & 1;
-                out[at] = (out[at] & !(1u8 << wire[j])) | ((bit as u8) << wire[j]);
+                let bit = (byte >> compact[j]) & 1;
+                out[at] = (out[at] & !(1u8 << wire[j])) | (bit << wire[j]);
             }
         }
 
@@ -650,7 +652,7 @@ fn helios_with_license(ts: i32, random: u32, license: &str) -> String {
     let text_bytes = text.as_bytes();
     let padding = 16 - text_bytes.len() % 16;
     let mut data = text_bytes.to_vec();
-    data.extend(std::iter::repeat(padding as u8).take(padding));
+    data.extend(std::iter::repeat_n(padding as u8, padding));
 
     let mut output: Vec<u8> = le32(random).to_vec();
     for at in (0..data.len()).step_by(16) {
@@ -1131,12 +1133,12 @@ pub(super) mod v3_reference {
             s(12, "Asia/Shanghai,8"),
             s(13, "zh_CN"),
             (14, Field::Sint(4)),
-            (16, Field::Float(255.249_938_964_843_75)),
-            (17, Field::Float(35.585_990_905_761_72)),
-            (18, Field::Float(3.467_449_188_232_422)),
-            (19, Field::Float(3.467_449_188_232_422)),
-            (20, Field::Float(255.175_491_333_007_8)),
-            (21, Field::Float(42.175_441_741_943_36)),
+            (16, Field::Float(255.249_94)),
+            (17, Field::Float(35.585_99)),
+            (18, Field::Float(3.467_449_2)),
+            (19, Field::Float(3.467_449_2)),
+            (20, Field::Float(255.175_49)),
+            (21, Field::Float(42.175_44)),
             s(22, "16"),
             (23, Field::Sint(41)),
             (24, Field::Sint(36)),
