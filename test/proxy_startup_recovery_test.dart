@@ -3,6 +3,7 @@ import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:material_ui/material_ui.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:fqapp/main.dart';
@@ -27,13 +28,16 @@ void main() {
       final pending = Completer<void>();
       var starts = 0;
       await tester.pumpWidget(
-        MaterialApp(
-          home: RootShell(
-            backendStarter: () async {
-              starts++;
-              await NetworkProxyPreferences.instance.load();
-              await pending.future;
-            },
+        // RootShell 立刻渲染真实首页（#318），HomePage 需要 ProviderScope。
+        ProviderScope(
+          child: MaterialApp(
+            home: RootShell(
+              backendStarter: () async {
+                starts++;
+                await NetworkProxyPreferences.instance.load();
+                await pending.future;
+              },
+            ),
           ),
         ),
       );
@@ -44,7 +48,8 @@ void main() {
       await tester.pump(const Duration(milliseconds: 100));
       expect((await NetworkProxyPreferences.instance.load()).enabled, isFalse);
       expect(starts, 2);
-      expect(find.text('正在启动本地服务...'), findsOneWidget);
+      // 成功路径不再有整屏等待文案：壳层与首页直接出现。
+      expect(find.text('正在启动本地服务...'), findsNothing);
       await tester.pumpWidget(const SizedBox());
       pending.complete();
       await tester.pump();
