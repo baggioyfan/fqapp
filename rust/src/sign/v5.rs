@@ -478,16 +478,18 @@ impl AesV3 {
 
     fn block(&self, value: &[u8; 16]) -> [u8; 16] {
         let mut rows = [[0u32; 4]; 4];
-        for i in 0..4 {
-            for j in 0..4 {
-                rows[i][j] = value[i * 4 + j] as u32;
+        for (i, row) in rows.iter_mut().enumerate() {
+            for (j, cell) in row.iter_mut().enumerate() {
+                *cell = value[i * 4 + j] as u32;
             }
         }
 
+        // Round-key mixing: one `con` permutation per column, offset selects the
+        // round's four key rows.
         let add_con = |rows: &mut [[u32; 4]; 4], offset: usize| {
-            for i in 0..4 {
-                for j in 0..4 {
-                    rows[i][j] ^= self.keys[offset + i][self.con[j]];
+            for (i, row) in rows.iter_mut().enumerate() {
+                for (j, cell) in row.iter_mut().enumerate() {
+                    *cell ^= self.keys[offset + i][self.con[j]];
                 }
             }
         };
@@ -495,18 +497,20 @@ impl AesV3 {
         add_con(&mut rows, 0);
 
         for round in 1..=2 {
-            for i in 0..4 {
-                for j in 0..4 {
-                    rows[i][j] = self.sbox[rows[i][j] as usize];
+            for row in rows.iter_mut() {
+                for cell in row.iter_mut() {
+                    *cell = self.sbox[*cell as usize];
                 }
             }
+
             let before = rows;
-            for i in 0..4 {
-                rows[i] = before[self.con[i]];
+            for (row, &source) in rows.iter_mut().zip(self.con.iter()) {
+                *row = before[source];
             }
+
             let flat: Vec<u32> = rows.iter().flatten().copied().collect();
-            for i in 0..16 {
-                rows[i / 4][i % 4] = flat[self.order[i]];
+            for (cell, &at) in rows.iter_mut().flatten().zip(self.order.iter()) {
+                *cell = flat[at];
             }
 
             if round == 1 {
@@ -519,31 +523,31 @@ impl AesV3 {
                         old[self.con[3]],
                     ];
                 }
+
                 let xt = |x: u32| ((x << 1) ^ if x & 128 != 0 { 0x1b } else { 0 }) & 255;
+                let [r0, r1, r2, r3] = &mut rows;
                 for i in 0..4 {
-                    let t = rows[0][i] ^ rows[1][i] ^ rows[2][i] ^ rows[3][i];
-                    let u = rows[0][i];
-                    rows[0][i] ^= t ^ xt(rows[0][i] ^ rows[1][i]);
-                    rows[1][i] ^= t ^ xt(rows[1][i] ^ rows[2][i]);
-                    rows[2][i] ^= t ^ xt(rows[2][i] ^ rows[3][i]);
-                    rows[3][i] ^= t ^ xt(rows[3][i] ^ u);
+                    let t = r0[i] ^ r1[i] ^ r2[i] ^ r3[i];
+                    let u = r0[i];
+                    r0[i] ^= t ^ xt(r0[i] ^ r1[i]);
+                    r1[i] ^= t ^ xt(r1[i] ^ r2[i]);
+                    r2[i] ^= t ^ xt(r2[i] ^ r3[i]);
+                    r3[i] ^= t ^ xt(r3[i] ^ u);
                 }
             }
 
             add_con(&mut rows, round * 4);
         }
 
-        for i in 0..4 {
-            for j in 0..4 {
-                rows[i][j] ^= self.keys[4 + i][j];
+        for (i, row) in rows.iter_mut().enumerate() {
+            for (j, cell) in row.iter_mut().enumerate() {
+                *cell ^= self.keys[4 + i][j];
             }
         }
 
         let mut out = [0u8; 16];
-        for i in 0..4 {
-            for j in 0..4 {
-                out[i * 4 + j] = rows[i][j] as u8;
-            }
+        for (cell, &value) in out.iter_mut().zip(rows.iter().flatten()) {
+            *cell = value as u8;
         }
         out
     }
