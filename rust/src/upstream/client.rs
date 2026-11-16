@@ -376,6 +376,137 @@ impl UpstreamClient {
             last_err.map(|e| e.to_string()).unwrap_or_default()
         )))
     }
+
+    /// One v5 playback call against `base` (an origin+path, no query).
+    ///
+    /// The v5 door builds its own query string and signs the exact bytes that
+    /// go on the wire, so it cannot share [`UpstreamClient::do_resp`]: that path
+    /// signs whatever URL the spec assembled and then strips `x-medusa`, which
+    /// is precisely the header v5 requires. Device rotation behaves the same as
+    /// [`UpstreamClient::do_with_device_capped`] - a pin that rotated out falls
+    /// back to the pool, and a device that fails auth is replaced.
+    pub async fn v5_playback(
+        &self,
+        base: &str,
+        body: &[u8],
+        pin_device: &str,
+    ) -> Result<(Vec<u8>, Device), ClientError> {
+        let mut last_err: Option<ClientError> = None;
+        let mut pin = if pin_device.is_empty() {
+            None
+        } else {
+            Some(pin_device.to_string())
+        };
+
+        for _attempt in 0..self.max_retries {
+            let mut use_pin = pin.clone();
+            let dev = match &use_pin {
+                Some(id) => match self.pool.get_by_id(id).await {
+                    Ok(d) => d,
+                    Err(_) => {
+                        use_pin = None;
+                        self.pool
+                            .get()
+                            .await
+                            .map_err(|e| ClientError::Other(format!("get device: {e}")))?
+                    }
+                },
+                None => self
+                    .pool
+                    .get()
+                    .await
+                    .map_err(|e| ClientError::Other(format!("get device: {e}")))?,
+            };
+
+            let cdid = if dev.cdid.is_empty() {
+                dev.openudid.as_str()
+            } else {
+                dev.cdid.as_str()
+            };
+            let identity = crate::sign::v5::V5Identity {
+                device_id: &dev.device_id,
+                iid: &dev.install_id,
+                cdid,
+                ..Default::default()
+            };
+            let signed = match crate::sign::v5::sign_playback_v5(
+                base,
+                &identity,
+                Some(body),
+                crate::timeutil::now_millis(),
+            ) {
+                Some(signed) => signed,
+                None => {
+                    return Err(ClientError::Other(
+                        "v5 signing found no branch-12 ticket".to_string(),
+                    ))
+                }
+            };
+
+            let target = self.effective_url(&signed.url);
+            let mut headers = signed.headers;
+            headers.push((
+                "Content-Type".to_string(),
+                "application/json; charset=utf-8".to_string(),
+            ));
+            let attempt = self
+                .http
+                .request_with_limit(
+                    "POST",
+                    &target,
+                    &headers,
+                    Some(body.to_vec()),
+                    None,
+                    Some(crate::upstream::http::API_BODY_LIMIT_BYTES),
+                )
+                .await;
+            let resp = match attempt {
+                Ok(resp) => resp,
+                Err(TransportError::Network(m)) => {
+                    last_err = Some(ClientError::Transient {
+                        message: m,
+                        retry_after: None,
+                    });
+                    continue;
+                }
+                Err(TransportError::TooLarge(m)) => return Err(ClientError::Other(m)),
+            };
+
+            if resp.status != 200 {
+                let err = if is_auth_fail_status(resp.status) {
+                    ClientError::DeviceFailed(format!("HTTP {}", resp.status))
+                } else if is_retryable_status(resp.status) {
+                    ClientError::Transient {
+                        message: format!("HTTP {}", resp.status),
+                        retry_after: parse_retry_after(resp.header("retry-after")),
+                    }
+                } else {
+                    ClientError::Http(format!("HTTP {}", resp.status))
+                };
+                last_err = Some(err.clone());
+                if err.is_device_failed() {
+                    if super::budget::remaining().is_some_and(|left| left.is_zero()) {
+                        return Err(err);
+                    }
+                    let _ = self.pool.replace_failed(&dev.device_id).await;
+                    pin = None;
+                    if !super::budget::retry_pause(Duration::from_millis(100)).await {
+                        return Err(err);
+                    }
+                    continue;
+                }
+                return Err(err);
+            }
+
+            return Ok((resp.body, dev));
+        }
+
+        Err(ClientError::Other(format!(
+            "v5 playback failed after {} retries: {}",
+            self.max_retries,
+            last_err.map(|e| e.to_string()).unwrap_or_default()
+        )))
+    }
 }
 
 pub fn substitute_device(raw_url: &str, dev: &Device) -> String {

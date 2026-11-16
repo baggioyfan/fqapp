@@ -2,14 +2,13 @@
 //! series detail and episode-list endpoints.
 
 use std::collections::{HashMap, HashSet};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock, Weak};
 use std::time::Duration;
 
 use base64::Engine;
 use futures::future::BoxFuture;
-use futures::stream::FuturesUnordered;
-use futures::StreamExt;
 use once_cell::sync::Lazy;
 use serde_json::{json, Map, Value};
 use sha2::{Digest, Sha512};
@@ -17,7 +16,6 @@ use tokio::io::AsyncWriteExt;
 use tokio::time::Instant;
 
 use crate::endpoints::base::{
-    dragon_batch_player_headers, dragon_batch_player_url, dragon_read_json_headers,
     phoenix_player_headers, phoenix_player_url, Upstream, UpstreamMode, UpstreamRequestSpec,
     UA_ANDROID_BROWSER, UA_WINDOWS_BROWSER,
 };
@@ -37,7 +35,6 @@ const SPADE_CONSTANTS: [u8; 64] = [
 const FALLBACK_USER_AGENT: &str = "com.xs.fm/632 (Linux; U; Android 15; zh_CN; 23049RAD8C; Build/AQ3A.250226.002; Cronet/TTNetVersion:fc4cebd3 2024-12-10 QuicVersion:d9628e3d 2024-10-11)";
 
 const VIDEO_FETCH_BUDGET: Duration = Duration::from_secs(12);
-const VIDEO_AUXILIARY_BUDGET: Duration = Duration::from_secs(8);
 const VIDEO_RESOLUTION_BUDGET: Duration = Duration::from_secs(14);
 const VIDEO_RESOLUTION_RESERVE: Duration = Duration::from_secs(2);
 const VIDEO_WORK_BUDGET: Duration = Duration::from_secs(18);
@@ -48,12 +45,15 @@ const VIDEO_RETRY_MIN_BUDGET: Duration = Duration::from_millis(250);
 const VIDEO_DEVICE_ROTATION_BUDGET: Duration = Duration::from_secs(6);
 const VIDEO_DEVICE_RETRY_RESERVE: Duration = Duration::from_secs(2);
 const VIDEO_DEVICE_SETTLE: Duration = Duration::from_millis(500);
-const VIDEO_SOURCE_COMPLETION_GRACE: Duration = Duration::from_secs(1);
-const STREAM_VIDEO_SOURCES: [StreamVideoSource; 3] = [
-    StreamVideoSource::Shortplay,
-    StreamVideoSource::DragonBatch,
-    StreamVideoSource::Phoenix,
-];
+/// The only playback door that still answers.
+///
+/// The three older doors (`multi_video_model/v1` for phoenix/dragon batch and
+/// `video_model/v1` for shortplay) were retired upstream on 2026-11-16 and now
+/// answer `HTTP 200` with a zero-byte body. Racing them alongside v5 meant three
+/// wasted upstream calls plus three extra device rotations per episode, so the
+/// door list is down to the one that works. Their implementations are in the git
+/// history if upstream ever revives one.
+const STREAM_VIDEO_SOURCES: [StreamVideoSource; 1] = [StreamVideoSource::V5];
 const STREAM_SOURCE_COUNT: usize = STREAM_VIDEO_SOURCES.len();
 const STREAM_SOURCE_ATTEMPT_LIMIT: usize = VIDEO_SOURCE_RETRY_DELAYS.len() + 1;
 const STREAM_BODY_LIMIT: usize = STREAM_SOURCE_COUNT * STREAM_SOURCE_ATTEMPT_LIMIT;
@@ -62,9 +62,6 @@ static STREAM_TRACE_SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::
 fn retry_has_budget(at: Instant, deadline: Instant) -> bool {
     at + VIDEO_RETRY_MIN_BUDGET < deadline
 }
-
-/// The shortplay video_model URL from fetchShortplayVideoModel.
-const SHORTPLAY_VIDEO_MODEL_URL: &str = "https://api3-normal-sinfonlinea.fqnovel.com/novel/player/video_model/v1/?iid={install_id}&device_id={device_id}&aid=1967&app_name=novelapp&version_code=72132&version_name=7.2.1.32&device_platform=android&device_brand=Xiaomi&os_version=13&cdid={cdid}";
 
 /// Reading directory endpoint, copied from directory.go so pseries can fall
 /// back to it (the Rust directory endpoint is not wired into this crate yet).
@@ -124,33 +121,16 @@ impl ParsedVideoResponse {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum StreamVideoSource {
-    Shortplay,
-    DragonBatch,
-    Phoenix,
+    V5,
 }
 
 impl StreamVideoSource {
     fn index(self) -> usize {
-        match self {
-            Self::Shortplay => 0,
-            Self::DragonBatch => 1,
-            Self::Phoenix => 2,
-        }
+        0
     }
 
     fn name(self) -> &'static str {
-        match self {
-            Self::Shortplay => "shortplay",
-            Self::DragonBatch => "dragon-batch",
-            Self::Phoenix => "phoenix",
-        }
-    }
-
-    fn deadline(self, fetch_deadline: Instant, auxiliary_deadline: Instant) -> Instant {
-        match self {
-            Self::DragonBatch => auxiliary_deadline,
-            Self::Shortplay | Self::Phoenix => fetch_deadline,
-        }
+        "v5"
     }
 
     async fn fetch(
@@ -159,11 +139,7 @@ impl StreamVideoSource {
         video_id: &str,
         pin_device: &str,
     ) -> ApiResult<(Vec<u8>, String)> {
-        match self {
-            Self::Shortplay => fetch_shortplay_video_model(ctx, video_id, pin_device).await,
-            Self::DragonBatch => fetch_dragon_batch_video_model(ctx, video_id, pin_device).await,
-            Self::Phoenix => fetch_phoenix_video_model_with_device(ctx, video_id, pin_device).await,
-        }
+        fetch_v5_video_model(ctx, video_id, pin_device).await
     }
 }
 
@@ -210,8 +186,6 @@ struct SourceAttemptResolution {
 }
 
 struct StreamSourceRun {
-    index: usize,
-    fetched: FetchedVideoSource,
     resolution: VideoSourceResolution,
     empty_devices: HashSet<String>,
 }
@@ -471,12 +445,10 @@ fn handle_video<'a>(ctx: &'a Ctx, params: &'a Params) -> BoxFuture<'a, ApiResult
         let stream_mode = params.get_str("mode") == "stream";
         let source_trace_id =
             STREAM_TRACE_SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
-        // 短剧 stream 仍以 shortplay 模型选流，但清晰度列表要合并官方接口：
-        // 顶档（1080p）只出现在 phoenix 模型的 `fallback_api` 列表里，而两路
-        // 接口的编码分布并不相同——shortplay 各档是 h265，phoenix 的低档是解不
-        // 了的 bytevc2（实测 2026-10-12 同一集对拍）。2026-11-14 的 HAR 又
-        // 增加了 aid=1967 的批量接口；三路互不依赖，并发发出，任何一路失败
-        // 都不能取消其余已经返回的结果。
+        // 取址现在只有 v5 一门（见 `STREAM_VIDEO_SOURCES`）。清晰度列表仍然要
+        // 合并模型的 `fallback_api`：顶档只出现在那份列表里，且同一集在不同接口
+        // 下的编码分布并不相同（实测 2026-10-12，shortplay 各档 h265、phoenix
+        // 低档是解不了的 bytevc2），所以选流后再补一次变体请求。
         let work_started = Instant::now();
         let work_budget = crate::upstream::budget::remaining()
             .map(|left| left.saturating_sub(VIDEO_RESPONSE_RESERVE))
@@ -494,12 +466,10 @@ fn handle_video<'a>(ctx: &'a Ctx, params: &'a Params) -> BoxFuture<'a, ApiResult
         let fallback_bodies: FallbackBodyCache;
         let selected_source;
         let (bodies, resolved) = if stream_mode {
-            let auxiliary_deadline = work_started + VIDEO_AUXILIARY_BUDGET.min(fetch_budget);
             let collected = collect_stream_sources(
                 ctx,
                 &video_id,
                 fetch_deadline,
-                auxiliary_deadline,
                 resolution_deadline,
                 source_trace_id,
             )
@@ -507,14 +477,19 @@ fn handle_video<'a>(ctx: &'a Ctx, params: &'a Params) -> BoxFuture<'a, ApiResult
             let empty_devices = collected.empty_devices;
             let bodies = collected.bodies;
             if bodies.is_empty() {
-                // 三路来源、池里所有设备都只拿到 200 + 0 字节：这是上游按出口
-                // IP 做的整体拒绝，不是某一台设备坏了。以前这里无条件
-                // quarantine，会把整池设备反复杀光再重注册——实测一台机器
-                // 5 分钟内注册了 18 个新身份，反而把风控越拉越紧，之后怎么点
-                // 都是空响应。整体失败时保留设备池，直接报错让用户稍后重试。
+                // 连 v5 门都只拿到 200 + 0 字节：这是上游按出口 IP 做的整体
+                // 拒绝，不是某一台设备坏了。以前这里无条件 quarantine，会把整池
+                // 设备反复杀光再重注册——实测一台机器 5 分钟内注册了 18 个新身份，
+                // 反而把风控越拉越紧，之后怎么点都是空响应。整体失败时保留设备池，
+                // 直接报错让用户稍后重试。
                 return Err(ApiError::Internal("视频取流失败，请稍后重试".to_string()));
             }
-            quarantine_empty_playback_devices(ctx, &video_id, &empty_devices).await;
+            // 空响应不再等于"这台设备被拉黑"：2026-11-16 之后 200 + 0 字节更多
+            // 说明的是"那扇门关停了"，不是"那台设备有问题"。真的取到流的时候
+            // 再拿空响应去 quarantine，只会平白烧掉设备池。
+            if collected.selected_source.is_none() {
+                quarantine_empty_playback_devices(ctx, &video_id, &empty_devices).await;
+            }
             fallback_bodies = collected.fallback_bodies;
             selected_source = collected
                 .selected_source
@@ -523,28 +498,27 @@ fn handle_video<'a>(ctx: &'a Ctx, params: &'a Params) -> BoxFuture<'a, ApiResult
 
             (bodies, collected.resolution)
         } else {
-            let parsed = fetch_parsed_video_response(
-                "phoenix",
-                &video_id,
-                fetch_deadline,
-                fetch_phoenix_video_model(ctx, &video_id),
-            )
+            let parsed = fetch_parsed_video_response("v5", &video_id, fetch_deadline, async {
+                fetch_v5_video_model(ctx, &video_id, "")
+                    .await
+                    .map(|(raw, _)| raw)
+            })
             .await
             .ok_or_else(|| ApiError::Internal("视频取流失败，请稍后重试".to_string()))?;
             let parsed = Arc::new(parsed);
             let resolved = resolve_video_source_until(
                 ctx,
                 &video_id,
-                StreamVideoSource::Phoenix,
+                StreamVideoSource::V5,
                 parsed.as_ref(),
                 resolution_deadline,
             )
             .await;
             fallback_bodies = new_fallback_body_cache();
-            selected_source = StreamVideoSource::Phoenix.name();
+            selected_source = StreamVideoSource::V5.name();
             (
                 vec![StreamBody {
-                    source_index: StreamVideoSource::Phoenix.index(),
+                    source_index: StreamVideoSource::V5.index(),
                     attempt: 0,
                     parsed,
                 }],
@@ -660,52 +634,6 @@ fn handle_video<'a>(ctx: &'a Ctx, params: &'a Params) -> BoxFuture<'a, ApiResult
     })
 }
 
-fn multi_video_model_body(video_id: &str) -> ApiResult<Vec<u8>> {
-    serde_json::to_vec(&json!({
-        "biz_param": {
-            "detail_page_version": 0,
-            "device_level": 3,
-            "disable_digg_stat": false,
-            "need_all_video_definition": true,
-            "need_mp4_align": false,
-            "use_os_player": false,
-            "use_server_dns": false,
-            "video_platform": 1024,
-        },
-        "mixed_video_id_map": {
-            "1004": [video_id],
-        },
-    }))
-    .map_err(|e| ApiError::Internal(format!("marshal multi_video_model body: {e}")))
-}
-
-/// Queries the phoenix multi_video_model endpoint.
-async fn fetch_phoenix_video_model(ctx: &Ctx, video_id: &str) -> ApiResult<Vec<u8>> {
-    fetch_phoenix_video_model_with_device(ctx, video_id, "")
-        .await
-        .map(|(raw, _)| raw)
-}
-
-async fn fetch_phoenix_video_model_with_device(
-    ctx: &Ctx,
-    video_id: &str,
-    pin_device: &str,
-) -> ApiResult<(Vec<u8>, String)> {
-    let post_body = multi_video_model_body(video_id)?;
-    Upstream::new(ctx.up.clone())
-        .raw_with_device(&UpstreamRequestSpec {
-            mode: UpstreamMode::DeviceSigned,
-            raw_url: Some(phoenix_player_url()),
-            body: Some(post_body),
-            headers: phoenix_player_headers(),
-            playback_sign: true,
-            pin_device: pin_device.to_string(),
-            ..Default::default()
-        })
-        .await
-        .map(|(raw, device)| (raw, device.device_id))
-}
-
 async fn fetch_parsed_video_response(
     source: &str,
     video_id: &str,
@@ -756,103 +684,45 @@ async fn collect_stream_sources(
     ctx: &Ctx,
     video_id: &str,
     fetch_deadline: Instant,
-    auxiliary_deadline: Instant,
     resolution_deadline: Instant,
     source_trace_id: u64,
 ) -> StreamSourcesRun {
     let recovery = RecoveryDevice::new();
     let runtime = StreamRequestRuntime::new(source_trace_id);
-    let mut running = FuturesUnordered::new();
-    for source in STREAM_VIDEO_SOURCES {
-        running.push(run_stream_video_source(
-            source,
-            ctx,
-            video_id,
-            source.deadline(fetch_deadline, auxiliary_deadline),
-            resolution_deadline,
-            &recovery,
-            &runtime,
-        ));
-    }
+    // One door, so this is a plain call rather than a race. What survives from the
+    // multi-door era is the part that is still load bearing: `run_stream_video_source`
+    // owns the retry ladder, the device pin and the body collection.
+    let source = STREAM_VIDEO_SOURCES[0];
+    let run = run_stream_video_source(
+        source,
+        ctx,
+        video_id,
+        fetch_deadline,
+        resolution_deadline,
+        &recovery,
+        &runtime,
+    )
+    .await;
+    let StreamSourceRun {
+        resolution,
+        mut empty_devices,
+        ..
+    } = run;
+    log::info!(
+        "stream trace request={source_trace_id} source={} event=source_complete elapsed_ms={} result={}",
+        source.name(),
+        runtime.started.elapsed().as_millis(),
+        stream_resolution_trace_label(&resolution),
+    );
 
-    let mut sources = (0..STREAM_SOURCE_COUNT).map(|_| None).collect::<Vec<_>>();
-    let mut resolutions = (0..STREAM_SOURCE_COUNT).map(|_| None).collect::<Vec<_>>();
-    let mut empty_devices = HashSet::new();
-    let mut completed = 0;
-    let mut found_source = None;
-    let mut completion_deadline = None;
-
-    loop {
-        let next = if let Some(deadline) = completion_deadline {
-            match tokio::time::timeout_at(deadline, running.next()).await {
-                Ok(next) => next,
-                Err(_) => break,
-            }
-        } else {
-            running.next().await
-        };
-        let Some(run) = next else {
-            break;
-        };
-
-        completed += 1;
-        let StreamSourceRun {
-            index,
-            fetched,
-            resolution,
-            empty_devices: source_empty_devices,
-        } = run;
-        log::info!(
-            "stream trace request={source_trace_id} source={} event=source_complete elapsed_ms={} result={}",
-            STREAM_VIDEO_SOURCES[index].name(),
-            runtime.started.elapsed().as_millis(),
-            stream_resolution_trace_label(&resolution),
-        );
-        empty_devices.extend(source_empty_devices);
-        if matches!(resolution, VideoSourceResolution::Found(_, _))
-            && found_source.is_none_or(|current| index < current)
-        {
-            found_source = Some(index);
-            completion_deadline
-                .get_or_insert_with(|| Instant::now() + VIDEO_SOURCE_COMPLETION_GRACE);
-        }
-        sources[index] = Some(fetched);
-        resolutions[index] = Some(resolution);
-
-        if completed == sources.len() {
-            break;
-        }
-    }
-    drop(running);
-    for (index, source) in sources.iter().enumerate() {
-        if source.is_none() {
-            log::info!(
-                "stream trace request={source_trace_id} source={} event=source_cancel elapsed_ms={}",
-                STREAM_VIDEO_SOURCES[index].name(),
-                runtime.started.elapsed().as_millis(),
-            );
-        }
-    }
-
-    let resolution = if let Some(index) = found_source {
-        resolutions[index]
-            .take()
-            .expect("a completed found source must carry its resolution")
-    } else if resolutions
-        .iter()
-        .all(|resolution| matches!(resolution, Some(VideoSourceResolution::CodecRejected)))
-    {
-        VideoSourceResolution::CodecRejected
-    } else {
-        VideoSourceResolution::NotFound
-    };
+    let selected_source =
+        matches!(resolution, VideoSourceResolution::Found(_, _)).then(|| source.index());
     let successful_devices = recovery.successful_devices().await;
     empty_devices.retain(|device_id| !successful_devices.contains(device_id));
-    let bodies = take_stream_bodies(&runtime.body_collector);
     StreamSourcesRun {
-        bodies,
+        bodies: take_stream_bodies(&runtime.body_collector),
         resolution,
-        selected_source: found_source,
+        selected_source,
         fallback_bodies: runtime.fallback_bodies,
         empty_devices,
     }
@@ -867,7 +737,6 @@ async fn run_stream_video_source(
     recovery: &RecoveryDevice,
     runtime: &StreamRequestRuntime,
 ) -> StreamSourceRun {
-    let index = source.index();
     let deadline = source_deadline.min(resolution_deadline);
     let mut empty_devices = HashSet::new();
     let mut retry_pin = String::new();
@@ -903,7 +772,7 @@ async fn run_stream_video_source(
             record_stream_body(
                 &runtime.body_collector,
                 StreamBody {
-                    source_index: index,
+                    source_index: source.index(),
                     attempt: retry_index,
                     parsed,
                 },
@@ -967,8 +836,6 @@ async fn run_stream_video_source(
                 );
             }
             return StreamSourceRun {
-                index,
-                fetched,
                 resolution,
                 empty_devices,
             };
@@ -976,16 +843,12 @@ async fn run_stream_video_source(
 
         let Some(retry_delay) = VIDEO_SOURCE_RETRY_DELAYS.get(retry_index) else {
             return StreamSourceRun {
-                index,
-                fetched,
                 resolution,
                 empty_devices,
             };
         };
         if !retryable {
             return StreamSourceRun {
-                index,
-                fetched,
                 resolution,
                 empty_devices,
             };
@@ -998,8 +861,6 @@ async fn run_stream_video_source(
                 source.name()
             );
             return StreamSourceRun {
-                index,
-                fetched,
                 resolution,
                 empty_devices,
             };
@@ -1042,8 +903,6 @@ async fn run_stream_video_source(
                 source.name()
             );
             return StreamSourceRun {
-                index,
-                fetched,
                 resolution,
                 empty_devices,
             };
@@ -1057,16 +916,12 @@ async fn run_stream_video_source(
         tokio::time::sleep_until(retry_at).await;
         if !retry_has_budget(Instant::now(), deadline) {
             return StreamSourceRun {
-                index,
-                fetched,
                 resolution,
                 empty_devices,
             };
         }
         if !recovery.begin_retry(deadline).await {
             return StreamSourceRun {
-                index,
-                fetched,
                 resolution,
                 empty_devices,
             };
@@ -1319,65 +1174,59 @@ fn playable_url_text(url: &str) -> bool {
     url.starts_with("http://") || url.starts_with("https://") || url.starts_with("/src/")
 }
 
-/// Queries the `aid=1967/novelapp` batch endpoint from the 2026-11-14 HAR.
-async fn fetch_dragon_batch_video_model(
-    ctx: &Ctx,
-    video_id: &str,
-    pin_device: &str,
-) -> ApiResult<(Vec<u8>, String)> {
-    let post_body = multi_video_model_body(video_id)?;
-    let mut url = dragon_batch_player_url();
-    url.push_str("&_rticket=");
-    url.push_str(&crate::timeutil::now_millis().to_string());
-    Upstream::new(ctx.up.clone())
-        .raw_with_device(&UpstreamRequestSpec {
-            mode: UpstreamMode::DeviceSigned,
-            raw_url: Some(url),
-            body: Some(post_body),
-            headers: dragon_batch_player_headers(),
-            playback_sign: true,
-            pin_device: pin_device.to_string(),
-            ..Default::default()
-        })
-        .await
-        .map(|(raw, device)| (raw, device.device_id))
-}
+/// The door the upstream moved to on 2026-11-16.
+///
+/// The older playback doors now answer `HTTP 200` with a zero-byte body - a
+/// silent block rather than an error code, which is why an unusable request
+/// never used to surface as a failure.
+const V5_PLAYER_URL: &str =
+    "https://api5-normal-sinfonlinea.fqnovel.com/novel/player/multi_video_model/player/v1";
 
-/// Queries the shortplay-style video_model endpoint used for short drama ids.
-async fn fetch_shortplay_video_model(
-    ctx: &Ctx,
-    video_id: &str,
-    pin_device: &str,
-) -> ApiResult<(Vec<u8>, String)> {
-    let post_body = serde_json::to_vec(&json!({
-        "video_id": video_id,
-        "content_type": 1004,
+/// The v5 request body, already gzipped.
+///
+/// Compression has to happen *before* signing: the v5 signature covers the exact
+/// bytes that go on the wire (`x-ss-stub` is the MD5 of them), so a body
+/// compressed after signing would describe a different request.
+fn v5_playback_body(video_id: &str) -> ApiResult<Vec<u8>> {
+    let plain = serde_json::to_vec(&json!({
         "biz_param": {
             "detail_page_version": 0,
             "device_level": 3,
             "disable_digg_stat": false,
             "disable_video_relate_book": false,
-            "from_video_id": "",
             "need_all_video_definition": true,
             "need_mp4_align": false,
-            "source": 4,
             "use_os_player": false,
             "use_server_dns": false,
-            "video_platform": 3,
+            "video_platform": 1024,
         },
+        "mixed_video_id_map": {
+            "1004": [video_id],
+        },
+        "dr_scene": "player",
     }))
-    .map_err(|e| ApiError::Internal(format!("marshal shortplay video body: {e}")))?;
+    .map_err(|e| ApiError::Internal(format!("marshal v5 playback body: {e}")))?;
+    let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+    encoder
+        .write_all(&plain)
+        .map_err(|e| ApiError::Internal(format!("gzip v5 playback body: {e}")))?;
+    encoder
+        .finish()
+        .map_err(|e| ApiError::Internal(format!("gzip v5 playback body: {e}")))
+}
 
+/// Queries the v5 playback door.
+///
+/// It signs its own query string, so it does not go through
+/// [UpstreamRequestSpec]; see [crate::upstream::UpstreamClient::v5_playback].
+async fn fetch_v5_video_model(
+    ctx: &Ctx,
+    video_id: &str,
+    pin_device: &str,
+) -> ApiResult<(Vec<u8>, String)> {
+    let body = v5_playback_body(video_id)?;
     Upstream::new(ctx.up.clone())
-        .raw_with_device(&UpstreamRequestSpec {
-            mode: UpstreamMode::DeviceSigned,
-            raw_url: Some(SHORTPLAY_VIDEO_MODEL_URL.to_string()),
-            body: Some(post_body),
-            headers: dragon_read_json_headers(),
-            playback_sign: true,
-            pin_device: pin_device.to_string(),
-            ..Default::default()
-        })
+        .v5_playback_with_device(V5_PLAYER_URL, &body, pin_device)
         .await
         .map(|(raw, device)| (raw, device.device_id))
 }

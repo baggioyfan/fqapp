@@ -11,6 +11,8 @@ pub mod ladon;
 pub mod protobuf;
 pub mod simon;
 pub mod sm3;
+pub mod v5;
+mod v5_tables;
 
 use md5::{Digest, Md5};
 use rand::Rng;
