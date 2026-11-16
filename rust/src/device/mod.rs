@@ -21,6 +21,22 @@ use register::Registrar;
 pub const MIN_POOL_SIZE: usize = 5;
 pub const MAX_POOL_SIZE: usize = 20;
 
+/// 注册节流窗口：同一进程内每 `REGISTER_WINDOW` 最多注册 `REGISTER_WINDOW_MAX` 台设备。
+///
+/// 上游是按出口 IP 看设备注册量的，短时间注册太多会让新设备拿到「能注册、
+/// 但取不到流」的身份（视频接口回 200 + 0 字节）。2026-11-16 实测：一次播放
+/// 失败会隔离 3 台再补 3 台，用户点几下就在 5 分钟里注册了 18 个新身份，
+/// 之后换哪台设备都是空响应。这里把最坏情况钉死在每窗口几台——宁可池子
+/// 一时不满，也不要因为疯狂注册被上游按 IP 拉黑，那样连等都不好等。
+const REGISTER_WINDOW: Duration = Duration::from_secs(600);
+const REGISTER_WINDOW_MAX: u32 = 4;
+
+/// Registration budget for one rolling window.
+struct RegisterThrottle {
+    window_start: Instant,
+    count: u32,
+}
+
 /// How often usage counters (`last_used`, `use_count`) are written back.
 ///
 /// Only the write-back of usage hints is debounced; device additions,
@@ -196,6 +212,10 @@ pub struct DevicePool {
     registrar: Registrar,
     /// Serializes network registration without holding the pool lock.
     register_lock: Mutex<()>,
+    /// Caps how many registrations this process performs per window; see
+    /// `REGISTER_WINDOW`. Mock-origin pools (tests) are exempt.
+    register_throttle: Mutex<RegisterThrottle>,
+    register_window_max: u32,
     /// Serializes pool-size maintenance while network registration is in flight.
     /// `Arc` so a background top-up can own the lock while it runs.
     maintenance_lock: Arc<Mutex<()>>,
@@ -338,6 +358,11 @@ impl DevicePool {
                 );
             }
         }
+        // 测试用的 mock 池子会连着注册十几台，节流对它们没有意义。
+        let (registrar, register_window_max) = match mock_origin {
+            Some(origin) => (Registrar::with_mock_origin(origin)?, u32::MAX),
+            None => (Registrar::new()?, REGISTER_WINDOW_MAX),
+        };
         Ok(Arc::new(DevicePool {
             file,
             state: Arc::new(Mutex::new(PoolState {
@@ -347,11 +372,13 @@ impl DevicePool {
                 dirty: false,
                 last_save: None,
             })),
-            registrar: match mock_origin {
-                Some(origin) => Registrar::with_mock_origin(origin)?,
-                None => Registrar::new()?,
-            },
+            registrar,
+            register_window_max,
             register_lock: Mutex::new(()),
+            register_throttle: Mutex::new(RegisterThrottle {
+                window_start: Instant::now(),
+                count: 0,
+            }),
             maintenance_lock: Arc::new(Mutex::new(())),
             commit: Arc::new(CommitGate::new()),
         }))
@@ -736,6 +763,24 @@ impl DevicePool {
 
     async fn register_one(&self) -> Result<Device, String> {
         let _guard = self.register_lock.lock().await;
+        {
+            // 先扣预算再发请求：这一轮宁可注册失败，也不能放它出去。
+            let mut throttle = self.register_throttle.lock().await;
+            if throttle.window_start.elapsed() >= REGISTER_WINDOW {
+                throttle.window_start = Instant::now();
+                throttle.count = 0;
+            }
+            if throttle.count >= self.register_window_max {
+                log::warn!(
+                    "device registration throttled: {}/{} in {}s window",
+                    throttle.count,
+                    self.register_window_max,
+                    REGISTER_WINDOW.as_secs()
+                );
+                return Err("device registration throttled".to_string());
+            }
+            throttle.count += 1;
+        }
         self.registrar.register().await
     }
 

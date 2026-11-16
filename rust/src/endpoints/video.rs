@@ -421,7 +421,7 @@ fn handle_video<'a>(ctx: &'a Ctx, params: &'a Params) -> BoxFuture<'a, ApiResult
                 resolution_deadline,
             )
             .await;
-            quarantine_empty_playback_devices(ctx, &video_id, &collected.empty_devices).await;
+            let empty_devices = collected.empty_devices;
             let bodies = collected
                 .sources
                 .into_iter()
@@ -429,8 +429,14 @@ fn handle_video<'a>(ctx: &'a Ctx, params: &'a Params) -> BoxFuture<'a, ApiResult
                 .filter_map(|source| source.parsed)
                 .collect::<Vec<_>>();
             if bodies.is_empty() {
+                // 三路来源、池里所有设备都只拿到 200 + 0 字节：这是上游按出口
+                // IP 做的整体拒绝，不是某一台设备坏了。以前这里无条件
+                // quarantine，会把整池设备反复杀光再重注册——实测一台机器
+                // 5 分钟内注册了 18 个新身份，反而把风控越拉越紧，之后怎么点
+                // 都是空响应。整体失败时保留设备池，直接报错让用户稍后重试。
                 return Err(ApiError::Internal("视频取流失败，请稍后重试".to_string()));
             }
+            quarantine_empty_playback_devices(ctx, &video_id, &empty_devices).await;
 
             (bodies, collected.resolution)
         } else {
