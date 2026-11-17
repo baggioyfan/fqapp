@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:fqapp/services/app_theme.dart';
+import 'package:fqapp/services/reader_preferences.dart';
 import 'package:fqapp/widgets/reader/reader_theme.dart';
 
 /// 阅读页主题与软件主题的隔离约束。

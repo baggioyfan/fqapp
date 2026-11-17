@@ -1967,10 +1967,13 @@ final _manyChapters = [
 Widget _directory({
   required List<Chapter> chapters,
   Set<String> cachedIds = const {},
+  int currentIndex = 0,
+  ReaderThemePreset preset = ReaderThemePreset.light,
 }) => ReaderDirectorySheet(
   chapters: chapters,
-  currentIndex: 0,
+  currentIndex: currentIndex,
   cachedIds: cachedIds,
+  preset: preset,
 );
 
 /// 挂载嵌入态目录（经典书详情面板里的那一份）。
