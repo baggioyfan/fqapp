@@ -86,6 +86,9 @@ class _ShelfEntry implements ShelfProjectable {
       badge: '',
       ep: history['ep']?.toString() ?? '',
       kind: history['kind']?.toString() ?? 'book',
+      // 来源必须跟着记录走：书旗书的 id 与番茄同为纯数字，只看 id 会把它们
+      // 混成同一本（#377）。
+      source: historySource(history),
       // 同步/换机来的记录可能没有 seriesId（早期版本只写 bookId），而 bookId
       // 一直是剧集 id。缺了它，详情页会拿单集 id 去查目录：pseries 对单集 id
       // 回 code=101104 + 空 item_list，页面就只剩「当前这一集」。

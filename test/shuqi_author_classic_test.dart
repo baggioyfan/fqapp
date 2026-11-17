@@ -19,6 +19,8 @@ import 'package:fqapp/widgets/home/home_back_button.dart';
 import 'package:fqapp/widgets/home/home_media_card.dart';
 import 'package:fqapp/widgets/wenku/wenku_ui.dart';
 
+import 'support/fakes.dart';
+
 /// Classic 书旗 detail and author home (PR #292 task D).
 ///
 /// Both pages keep their current state and loaders; these tests drive the same
@@ -151,7 +153,7 @@ void main() {
       );
     });
 
-    testWidgets('开始阅读 opens the read-only shuqi reader', (tester) async {
+    testWidgets('开始阅读 opens the shuqi reader with scoped history', (tester) async {
       final observer = _RouteObserver();
       final store = await _pumpShuqi(tester, observer: observer);
       addTearDown(store.dispose);
@@ -169,10 +171,10 @@ void main() {
         isNotNull,
         reason: 'the reader must not fall back to the global history store',
       );
-      // 书旗 is read-only: progress/history writes are dropped.
+      // 书旗现在把进度写进本机历史（`shuqi:` 作用域），不再丢弃写入。
       await readerStore!.addHistory({'id': 'shuqi:34078', 'kind': 'book'});
       await readerStore.updateProgress('shuqi:34078', 0, 0.5);
-      expect(await readerStore.historyEntry('shuqi:34078'), isNull);
+      expect(await readerStore.historyEntry('shuqi:34078'), isNotNull);
 
       await tester.pumpWidget(const SizedBox.shrink());
       await tester.pumpAndSettle();
@@ -389,6 +391,7 @@ Future<AppThemeStyleStore> _pumpShuqi(
   List<String>? calls,
 }) async {
   final store = AppThemeStyleStore();
+  final history = MemoryReaderStore();
   await store.select(AppThemeStyle.classic);
   await _size(tester);
   await tester.pumpWidget(
@@ -398,6 +401,9 @@ Future<AppThemeStyleStore> _pumpShuqi(
       observers: observer == null ? const [] : [observer],
       home: ShuqiDetailPage(
         bookId: '34078',
+        // 详情页要读本机历史判「继续阅读」；测试进程里 LibraryStore 没 init，
+        // 注内存实现把历史隔离掉。
+        readerStore: history,
         bookLoader: (_) async {
           calls?.add('book:34078');
           return _shuqiBook;

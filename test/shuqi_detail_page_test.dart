@@ -36,6 +36,8 @@ void main() {
       MaterialApp(
         home: ShuqiDetailPage(
           bookId: '34078',
+          // 详情页现在会读本机历史判「继续阅读」，同样不能碰加密 Hive。
+          readerStore: MemoryReaderStore(),
           bookLoader: (_) async => {
             'data': {
               'bookId': '34078',
@@ -84,13 +86,15 @@ void main() {
     expect(find.text('共 1 章'), findsOneWidget);
   });
 
-  testWidgets('opening a chapter gives the reader a store that drops history', (
+  testWidgets('opening a chapter gives the reader the shuqi history store', (
     tester,
   ) async {
     await tester.pumpWidget(
       MaterialApp(
         home: ShuqiDetailPage(
           bookId: '34078',
+          // 详情页现在会读本机历史判「继续阅读」，同样不能碰加密 Hive。
+          readerStore: MemoryReaderStore(),
           // 阅读页默认打开加密的目录缓存，测试进程里没有平台密钥会让
           // SecureKeyProvider 挂满 10 秒超时；这里注内存实现隔离掉。
           chapterCache: MemoryChapterCache(),
@@ -129,16 +133,16 @@ void main() {
       reason: 'the reader must not fall back to the global history store',
     );
 
-    // ReaderPage 的 _persistProgress/_settleReadTime 会写这个 store；书旗是
-    // 只读源，所有写入必须被丢弃。
+    // 书旗现在把进度写进本机历史（`shuqi:` 作用域，与番茄同名 id 隔离）；
+    // 阅读时长另由 ReaderPage 的书旗分支排除，不进番茄的统计表。
     await store!.addHistory({
       'id': 'shuqi:34078',
       'kind': 'book',
       'bookId': 'shuqi:34078',
     });
-    await store.accumulateReadTime('shuqi:34078', 'book', 30);
+    expect(await store.historyEntry('shuqi:34078'), isNotNull);
     await store.updateProgress('shuqi:34078', 0, 0.5);
-    expect(await store.historyEntry('shuqi:34078'), isNull);
+    expect((await store.historyEntry('shuqi:34078'))!['progress'], 0.5);
 
     // 撤掉阅读器，别让还在跑的正文请求把 setState 带出测试。
     await tester.pumpWidget(const SizedBox.shrink());

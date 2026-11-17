@@ -160,7 +160,7 @@ void main() {
   });
 
   testWidgets(
-    'cached opening restores raw Shuqi shelf identity and drops history',
+    'cached opening restores raw Shuqi shelf identity and writes scoped history',
     (tester) async {
       final cache = await _cache();
       final history = _CountingHistory()
@@ -193,10 +193,7 @@ void main() {
       expect(reader.shelfItem!.id, '34078');
       expect(reader.shelfItem!.source, shuqiSourceId);
       expect(reader.shelfItem!.kind, 'book');
-      expect(reader.readerStore, isA<ReadOnlyReaderStore>());
-      expect(history.reads, 0);
-      expect(history.entry!['id'], '34078');
-      expect(history.seconds, 0);
+      expect(reader.readerStore, same(history));
       // This offline entry never falls back to Fanqie on a missing chapter.
       await expectLater(
         reader.chapterLoader!(_second),
@@ -208,39 +205,34 @@ void main() {
           ),
         ),
       );
+      // 书旗缓存入口同样写本机历史，键仍是 `shuqi:` 作用域，不落到番茄的同名
+      // id 上（只有 `shuqi:34078` 会被写）。
       await reader.readerStore!.addHistory({'id': _book.id, 'kind': 'book'});
       await reader.readerStore!.updateProgress(_book.id, 1, 0.5);
-      await reader.readerStore!.accumulateReadTime(_book.id, 'book', 60);
-      expect(await reader.readerStore!.historyEntry(_book.id), isNull);
-      expect(history.entry!['chapterId'], '20');
+      expect(await reader.readerStore!.historyEntry(_book.id), isNotNull);
       Navigator.of(tester.element(find.byType(ReaderPage))).pop();
       await tester.pumpAndSettle();
       expect(opened, isTrue);
     },
   );
 
-  testWidgets('recent Shuqi opening never reads a same-ID Fanqie history', (
+  testWidgets('recent Shuqi opening reads its own scoped history', (
     tester,
   ) async {
     final history = _CountingHistory()
       ..entry = {'id': '34078', 'kind': 'book', 'chapterId': '10'};
     final cache = await _cache();
-    var directoryCalls = 0;
-    bool? opened;
     await tester.pumpWidget(
       MaterialApp(
         home: Builder(
           builder: (context) => TextButton(
             onPressed: () async {
-              opened = await openRecentBook(
+              await openRecentBook(
                 context,
                 _item,
                 cache: cache.memory,
                 readerStore: history,
-                directoryLoader: (_) async {
-                  directoryCalls++;
-                  return [_first];
-                },
+                directoryLoader: (_) async => [_first],
               );
             },
             child: const Text('最近阅读'),
@@ -250,10 +242,11 @@ void main() {
     );
     await tester.tap(find.text('最近阅读'));
     await tester.pumpAndSettle();
-    expect(opened, isFalse);
-    expect(history.reads, 0);
-    expect(directoryCalls, 0);
-    expect(find.byType(ReaderPage), findsNothing);
+    // 书旗现在能从书架直接续读，但只查自己的 `shuqi:` 键，绝不碰同数字 id
+    // 的番茄记录。
+    expect(history.readIds, isNotEmpty);
+    expect(history.readIds, everyElement('shuqi:34078'));
+    expect(find.byType(ReaderPage), findsOneWidget);
   });
 
   for (final style in AppThemeStyle.values) {
@@ -414,9 +407,13 @@ void main() {
 class _CountingHistory extends MemoryReaderStore {
   int reads = 0;
 
+  /// 每次 `historyEntry` 的入参，用来验证查的是作用域键。
+  final List<String> readIds = [];
+
   @override
   Future<Map<String, dynamic>?> historyEntry(String id) {
     reads++;
+    readIds.add(id);
     return super.historyEntry(id);
   }
 }

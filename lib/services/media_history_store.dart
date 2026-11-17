@@ -1,3 +1,4 @@
+import '../models/shuqi_book.dart';
 import 'library_store.dart';
 
 final _scopedStores = Expando<Map<String, ReaderStore>>('media history stores');
@@ -18,9 +19,15 @@ String historyContentId(Map<String, dynamic> entry) =>
     (entry['contentId'] ?? entry['id'])?.toString() ?? '';
 
 String historyStatisticsId(Map<String, dynamic> entry) {
-  final kind = entry['kind'];
-  if (kind == 'audio' || kind == 'manga') {
-    return '$kind:${historyContentId(entry)}';
+  final contentId = historyContentId(entry);
+  final kind = entry['kind']?.toString() ?? 'book';
+  final source = historySource(entry);
+  // 听书 / 漫画按 kind 作用域；书旗书按来源作用域，免得与同数字 id 的番茄书
+  // 在统计里合流（#377）。
+  if (kind == 'audio' ||
+      kind == 'manga' ||
+      (source == shuqiSourceId && kind == 'book')) {
+    return historyStorageKeyFor(contentId, kind, source: source);
   }
   return (entry['contentId'] != null
               ? entry['id']

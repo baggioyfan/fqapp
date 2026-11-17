@@ -13,7 +13,6 @@ import 'package:fqapp/services/connectivity_status.dart';
 import 'package:fqapp/services/library_store.dart';
 import 'package:fqapp/services/shelf_store.dart';
 import 'package:fqapp/services/shelf_view_store.dart';
-import 'package:fqapp/services/shuqi_reader_source.dart';
 import 'package:fqapp/widgets/shelf/book_collection_tiles.dart';
 
 import 'support/fakes.dart';
@@ -153,15 +152,18 @@ void main() {
     expect(reader.startIndex, 0);
     expect(reader.localOnly, isTrue);
     expect(reader.shelfItem!.toJson(), item.toJson());
-    expect(reader.readerStore, isA<ReadOnlyReaderStore>());
+    expect(reader.readerStore, same(history));
     expect(find.byType(ShuqiDetailPage, skipOffstage: false), findsNothing);
     expect(directoryCalls, 0);
-    expect(history.reads, 0);
-    expect(history.writes, 0);
-    expect(history.entry!['chapterId'], '99');
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pumpAndSettle();
-    expect(history.writes, 0, reason: '退出也不能写入书旗历史或时长');
+    // 书旗现在会写本机历史，但只能写进 `shuqi:` 作用域：注入的 store 只有
+    // 番茄 `123` 那条记录，任何一次落到裸 `123` 上的写入都会串到番茄头上。
+    expect(
+      history.writtenKeys,
+      everyElement(startsWith('shuqi:')),
+      reason: '书旗进度不得写到番茄同名 id 上',
+    );
     expect(tester.takeException(), isNull);
   });
 
@@ -314,6 +316,10 @@ class _CountingReaderStore extends MemoryReaderStore {
   int reads = 0;
   int writes = 0;
 
+  /// 每次写入用的物理键（`addHistory` 取 entry 的 id，`updateProgress` 取 id），
+  /// 用来验证作用域前缀确实落在写入侧。
+  final List<String> writtenKeys = [];
+
   @override
   Future<Map<String, dynamic>?> historyEntry(String id) {
     reads++;
@@ -323,6 +329,7 @@ class _CountingReaderStore extends MemoryReaderStore {
   @override
   Future<void> addHistory(Map<String, dynamic> entry) async {
     writes++;
+    writtenKeys.add('${entry['id']}');
     await super.addHistory(entry);
   }
 
@@ -336,6 +343,7 @@ class _CountingReaderStore extends MemoryReaderStore {
     double? maxScroll,
   }) async {
     writes++;
+    writtenKeys.add(id);
     await super.updateProgress(
       id,
       episode,

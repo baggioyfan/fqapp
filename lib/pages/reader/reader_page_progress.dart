@@ -154,7 +154,12 @@ extension _ReaderPageProgress on _ReaderPageState {
   /// Settles the reading-time delta since the last event, legado-style:
   /// the time between this event and the previous one counts as reading.
   void _settleReadTime() {
-    if (!_sessionActive || _content.isEmpty) return;
+    // 书旗是导入的本地内容，时长不计入番茄的阅读统计（也只写本机历史）。
+    if (!_sessionActive ||
+        _content.isEmpty ||
+        shuqiBookIdFromReaderId(widget.bookId) != null) {
+      return;
+    }
     final now = DateTime.now();
     final delta = now.difference(_readStart).inMilliseconds / 1000;
     if (delta >= 1) {
@@ -289,11 +294,15 @@ extension _ReaderPageProgress on _ReaderPageState {
       maxScroll: max,
       index: index,
     );
+    final shuqiId = shuqiBookIdFromReaderId(widget.bookId);
     final entry = {
       'id': widget.bookId,
       'kind': 'book',
       'title': widget.title,
       'bookId': widget.bookId,
+      // 书旗书的物理键带 `shuqi:` 前缀，线上契约只认裸 id：把裸 id 放
+      // `contentId`，来源放 `source`，书架/统计据此还原身份（#377）。
+      if (shuqiId != null) ...{'contentId': shuqiId, 'source': shuqiSourceId},
       'chapterId': chapterId,
       'episode': index,
       // 总章数：书架靠「第 N/M 章」区分「读到末尾」与「全书读完」

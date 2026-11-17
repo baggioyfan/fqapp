@@ -521,9 +521,15 @@ class LibraryBackup {
     for (final value in records) {
       final record = _map(value);
       final clean = _common(record);
-      if (!historyKeys.add('${clean['kind']}:${clean['id']}')) {
+      // 来源是进度身份的一部分：书旗书的 id 与番茄同为纯数字，只用
+      // `kind:id` 判重会把两本不同的书当成重复进度整份拒收（#377）。
+      final source = _historySource(record['source']);
+      final identity =
+          '${source ?? ShelfIdentity.fanqie}:${clean['kind']}:${clean['id']}';
+      if (!historyKeys.add(identity)) {
         throw const FormatException('备份中有重复的进度');
       }
+      if (source != null) clean['source'] = source;
       for (final key in ['bookId', 'chapterId', 'toneId']) {
         if (record[key] != null && record[key] != '') {
           clean[key] = _id(record[key]);
@@ -903,6 +909,18 @@ class LibraryBackup {
       if (raw[key] != null && raw[key] != '') clean[key] = _id(raw[key]);
     }
     return clean;
+  }
+
+  /// 备份里的来源标识；缺省表示番茄。非法值直接拒收，避免把一条脏记录
+  /// 恢复成另一本书。
+  static String? _historySource(dynamic value) {
+    if (value == null) return null;
+    if (value is! String ||
+        !ShelfIdentity.sourcePattern.hasMatch(value) ||
+        !ShelfIdentity.isValidSource(value)) {
+      throw const FormatException('备份含无效来源标识');
+    }
+    return ShelfIdentity.normalizeSource(value);
   }
 
   static String _portableCover(String value) {

@@ -8,6 +8,9 @@ import '../services/api_client.dart';
 import '../services/app_style_tokens.dart';
 import '../services/app_theme_style.dart';
 import '../services/chapter_cache_store.dart';
+import '../services/library_store.dart';
+import '../services/player_history.dart';
+import '../services/reader_history.dart';
 import '../services/shuqi_reader_source.dart';
 import '../services/user_facing_error.dart';
 import '../widgets/app_ui/app_ui_scope.dart';
@@ -27,9 +30,9 @@ part 'detail/shuqi_detail_classic.dart';
 /// 行内目录和底部玻璃操作坞；经典主题走 `detail/shuqi_detail_classic.dart`
 /// 的旧版式（Material AppBar、封面头部、简介与目录行），两者共用同一个
 /// `_ShuqiDetailPageState` 和同一批 loader。书旗只读取上游内容，支持加入本机
-/// 书架，但不写阅读历史、不提供手动下载入口。阅读器以 `localOnly: true`
+/// 书架与阅读进度，不提供手动下载入口。阅读器以 `localOnly: true`
 /// 打开，使用书旗正文加载器，并以 `shuqi:` 作用域复用磁盘章节缓存；
-/// 进度/阅读时长写入靠 [ReadOnlyReaderStore] 丢弃。
+/// 本机历史使用相同作用域，阅读时长仍不计入统计。
 ///
 /// 书旗 bookId 与番茄同为纯数字，所以在阅读器里加 `shuqi:` 前缀，避免两套 id
 /// 在同一条进度/缓存键上相撞。
@@ -48,6 +51,10 @@ class ShuqiDetailPage extends StatefulWidget {
   /// 用例注内存实现，避免在测试进程里打开需要平台密钥的 Hive box。
   final ChapterCache? chapterCache;
 
+  /// 历史读写。留空走 `LibraryStore.instance`；用例注内存实现。
+  final ReaderStore? readerStore;
+  final ChapterTextLoader? chapterLoader;
+
   const ShuqiDetailPage({
     super.key,
     required this.bookId,
@@ -55,6 +62,8 @@ class ShuqiDetailPage extends StatefulWidget {
     this.initialCover = '',
     this.bookLoader,
     this.tocLoader,
+    this.readerStore,
+    this.chapterLoader,
     this.chapterCache,
   });
 
@@ -71,6 +80,14 @@ class _ShuqiDetailPageState extends State<ShuqiDetailPage> {
   /// 目录的加载/错误状态独立于详情：目录失败时详情照常展示。
   bool _tocLoading = true;
   String? _tocError;
+  Map<String, dynamic>? _savedHistory;
+
+  ReaderStore get _readerStore => widget.readerStore ?? LibraryStore.instance;
+
+  int? get _resumeIndex =>
+      resumeEpisodeIndex(_savedHistory, _toc?.toReaderChapters() ?? const []);
+
+  String get _readLabel => _resumeIndex == null ? '开始阅读' : '继续阅读';
 
   /// Both layouts read the same chapter list, so one controller serves the
   /// classic and the archive body.
@@ -127,7 +144,27 @@ class _ShuqiDetailPageState extends State<ShuqiDetailPage> {
       _tocError = null;
     });
     // 详情与目录互不依赖，并行发出：目录首次可能是一次整本 H5 页。
-    await Future.wait([_loadBook(), _loadToc()]);
+    await Future.wait([_loadBook(), _loadToc(), _loadHistory()]);
+  }
+
+  Future<void> _loadHistory() async {
+    Map<String, dynamic>? saved;
+    try {
+      saved = await ReaderHistory(
+        _readerStore,
+      ).load(shuqiReaderId(widget.bookId));
+      if (saved?['kind'] != null && saved?['kind'] != 'book') saved = null;
+    } catch (_) {
+      // 历史不可用不能挡住在线阅读。
+    }
+    if (mounted) setState(() => _savedHistory = saved);
+  }
+
+  /// 打开阅读器：先等上一次阅读的写盘落定（退出后立刻重开也能读到最新进度），
+  /// 再从进度位置续读。点目录则是显式选择，走 [_openChapter] 绕开这一步。
+  Future<void> _openReading() async {
+    await _loadHistory();
+    if (mounted) await _openChapter(_resumeIndex ?? 0);
   }
 
   Future<void> _loadBook() async {
@@ -193,13 +230,17 @@ class _ShuqiDetailPageState extends State<ShuqiDetailPage> {
           startIndex: start,
           localOnly: true,
           // `localOnly` 关闭番茄在线功能，不禁止书旗独立作用域的自动缓存。
-          // 历史与时长仍须由只读 store 拦截，不能写入本机阅读统计。
-          readerStore: const ReadOnlyReaderStore(),
+          // 历史以 `shuqi:` 作用域写进本机，与番茄同名 id 不冲突；阅读时长
+          // 由统计侧按来源排除，不计入番茄的时长表。
+          readerStore: _readerStore,
           chapterCache: widget.chapterCache,
-          chapterLoader: (chapter) => loadShuqiChapter(widget.bookId, chapter),
+          chapterLoader:
+              widget.chapterLoader ??
+              (chapter) => loadShuqiChapter(widget.bookId, chapter),
         ),
       ),
     );
+    if (mounted) await _loadHistory();
   }
 
   String get _title => _book?.name.isNotEmpty == true
@@ -286,7 +327,7 @@ class _ShuqiDetailPageState extends State<ShuqiDetailPage> {
     final chapters = toc?.chapters ?? const <ShuqiChapter>[];
     final geometry = glassActionDockGeometry(
       context,
-      primary: chapters.isEmpty ? '暂无章节' : '开始阅读',
+      primary: chapters.isEmpty ? '暂无章节' : _readLabel,
       secondary: '',
     );
     // 目录条目可能上万章，只有真正进入视口的行才构建（上游目录同样是
@@ -381,9 +422,9 @@ class _ShuqiDetailPageState extends State<ShuqiDetailPage> {
                 maxWidth: DockLayout.actionMaxWidth,
               ),
               child: DetailArchiveDock(
-                primaryLabel: chapters.isEmpty ? '暂无章节' : '开始阅读',
+                primaryLabel: chapters.isEmpty ? '暂无章节' : _readLabel,
                 primaryIcon: CupertinoIcons.play_fill,
-                onPrimary: chapters.isEmpty ? null : () => _openChapter(0),
+                onPrimary: chapters.isEmpty ? null : _openReading,
               ),
             ),
           ),

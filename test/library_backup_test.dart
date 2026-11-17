@@ -8,6 +8,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:fqapp/models/library_backup.dart';
 import 'package:fqapp/models/media_item.dart';
+import 'package:fqapp/models/shuqi_book.dart';
 import 'package:fqapp/services/library_backup_service.dart';
 import 'package:fqapp/services/library_store.dart';
 import 'package:fqapp/services/media_history_store.dart';
@@ -15,6 +16,7 @@ import 'package:fqapp/services/shelf_group_store.dart';
 import 'package:fqapp/services/shelf_store.dart';
 
 void main() {
+
   TestWidgetsFlutterBinding.ensureInitialized();
   late Directory directory;
   final library = LibraryStore.instance;
@@ -34,6 +36,45 @@ void main() {
     await groups.whenIdle();
     await Hive.close();
     await directory.delete(recursive: true);
+  });
+
+  test('书旗与番茄同 id 的进度各自成条并原样恢复', () async {
+    await library.addHistory({
+      'id': '34078',
+      'kind': 'book',
+      'title': '番茄书',
+      'episode': 3,
+      'progress': 0.3,
+      'time': 1000,
+    });
+    await library.addHistory({
+      'id': 'shuqi:34078',
+      'kind': 'book',
+      'contentId': '34078',
+      'source': shuqiSourceId,
+      'title': '书旗书',
+      'episode': 7,
+      'progress': 0.7,
+      'time': 2000,
+    });
+    expect(
+      library.historySnapshot(),
+      hasLength(2),
+      reason: '同数字 id 不同来源是两条独立进度',
+    );
+
+    final service = LibraryBackupService();
+    final restored = LibraryBackup.decode((await service.capture()).encode());
+    expect(restored.history, hasLength(2));
+
+    await library.clearHistory();
+    await service.restore(restored);
+
+    expect((await library.historyEntry('34078'))?['episode'], 3);
+    final shuqi = await library.historyEntry('shuqi:34078');
+    expect(shuqi?['episode'], 7);
+    expect(shuqi?['source'], shuqiSourceId);
+    expect(library.historySnapshot(), hasLength(2));
   });
 
   test(

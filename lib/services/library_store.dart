@@ -4,12 +4,37 @@ import 'package:flutter/foundation.dart';
 import 'package:hive_ce_flutter/hive_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../models/shelf_identity.dart';
+import '../models/shuqi_book.dart';
 import 'encrypted_hive.dart';
 import 'reader_bookmark_store.dart';
 import 'reader_underline_store.dart';
 import 'read_time_store.dart';
 
 part 'history_trim.dart';
+
+/// 来源是历史身份的一部分。老记录没有 `source`，一律当番茄，保持兼容。
+String historySource(Map<String, dynamic> entry) =>
+    ShelfIdentity.normalizeSource(
+      entry['source']?.toString() ?? ShelfIdentity.fanqie,
+    );
+
+/// 由可传输的内容 id 重建物理 Hive 键。
+///
+/// 番茄书保持历史上的裸键；听书 / 漫画保留 kind 作用域；书旗书用来源前缀，
+/// 免得和同数字 id 的番茄书撞在同一条进度上。
+String historyStorageKeyFor(
+  String contentId,
+  String kind, {
+  String source = ShelfIdentity.fanqie,
+}) {
+  if (kind == 'audio' || kind == 'manga') return '$kind:$contentId';
+  if (ShelfIdentity.normalizeSource(source) == shuqiSourceId &&
+      kind == 'book') {
+    return 'shuqi:$contentId';
+  }
+  return contentId;
+}
 
 abstract interface class ReaderStore {
   Future<Map<String, dynamic>?> historyEntry(String id);
@@ -334,7 +359,7 @@ class LibraryStore implements ReaderStore {
 
   List<Map<String, dynamic>> historySnapshot() {
     historySnapshotBuilds++;
-    final byIdentity = <(String, String), Map<String, dynamic>>{};
+    final byIdentity = <(String, String, String), Map<String, dynamic>>{};
     for (final key in _histBox.keys) {
       final record = _historyRecord(_histBox.get(key), id: key.toString());
       if (record == null) continue;
@@ -400,20 +425,30 @@ class LibraryStore implements ReaderStore {
       for (final entry in history) {
         final kind = entry['kind'] as String;
         final id = entry['id'] as String;
-        final scoped = kind == 'audio' || kind == 'manga';
-        final key = scoped ? '$kind:$id' : id;
+        // 备份里只有裸内容 id，来源必须一并带回来，否则书旗书会被恢复成
+        // 同数字 id 的番茄记录（#377）。
+        final source = historySource(entry);
+        final key = historyStorageKeyFor(id, kind, source: source);
+        final scoped = key != id;
         final existing = _historyRecord(_histBox.get(key), id: key);
         if (existing != null) {
           // Bare video/book keys may also be occupied by another kind. Do not
           // overwrite it or invoke legacy statistics migration during restore.
           if ((existing['kind']?.toString() ?? 'book') != kind) continue;
+          // 同 id 不同来源是两条独立进度，互不覆盖。
+          if (historySource(existing) != source) continue;
           final incomingTime = (entry['time'] as num?)?.toInt() ?? 0;
           final existingTime = (existing['time'] as num?)?.toInt() ?? 0;
           // Same instant keeps the local copy so two devices cannot ping-pong.
           if (incomingTime <= existingTime) continue;
           if (!_advancesProgress(entry, existing)) continue;
         }
-        final stored = {...entry, 'id': key, if (scoped) 'contentId': id};
+        final stored = {
+          ...entry,
+          'id': key,
+          'source': source,
+          if (scoped) 'contentId': id,
+        };
         await _histBox.put(key, stored);
         writtenHistory++;
         // 云端合入的进度同样把另一条线前带：设备 A 听到 50 章、设备 B 还在
@@ -747,7 +782,8 @@ class LibraryStore implements ReaderStore {
       for (final key in _histBox.keys) {
         final record = _historyRecord(_histBox.get(key), id: key.toString());
         if (record == null) continue;
-        if (_historyIdentity(record) == (kind, contentId)) keys.add(key);
+        final identity = _historyIdentity(record);
+        if (identity.$2 == kind && identity.$3 == contentId) keys.add(key);
       }
       if (keys.isEmpty) return false;
       await _histBox.deleteAll(keys);
@@ -760,6 +796,7 @@ class LibraryStore implements ReaderStore {
   Future<int> removeHistoryEntries(
     Iterable<({String contentId, String kind})> targets,
   ) async {
+    // 删除请求只带 (kind, contentId)，不带来源：按后两项匹配，保持旧语义。
     final wanted = targets
         .where((target) => target.contentId.isNotEmpty)
         .map((target) => (target.kind, target.contentId))
@@ -770,7 +807,8 @@ class LibraryStore implements ReaderStore {
       for (final key in _histBox.keys) {
         final record = _historyRecord(_histBox.get(key), id: key.toString());
         if (record == null) continue;
-        if (wanted.contains(_historyIdentity(record))) keys.add(key);
+        final identity = _historyIdentity(record);
+        if (wanted.contains((identity.$2, identity.$3))) keys.add(key);
       }
       if (keys.isEmpty) return 0;
       await _histBox.deleteAll(keys);
@@ -937,7 +975,12 @@ class LibraryStore implements ReaderStore {
     );
   }
 
-  static (String, String) _historyIdentity(Map<String, dynamic> record) => (
+  /// 进度身份是 `(来源, 类型, 内容 id)`：书旗书的 id 与番茄同为纯数字，
+  /// 只按后两项判重会把两本书合成一条（#377）。
+  static (String, String, String) _historyIdentity(
+    Map<String, dynamic> record,
+  ) => (
+    historySource(record),
     record['kind']?.toString() ?? 'book',
     (record['contentId'] ?? record['id']).toString(),
   );

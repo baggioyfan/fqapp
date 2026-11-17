@@ -28,12 +28,14 @@ Future<bool> openRecentBook(
   BookDirectoryLoader? directoryLoader,
 }) async {
   final kind = item.kind;
-  // Shuqi deliberately has no reading history. Never consult a raw book ID:
-  // it may belong to a different Fanqie book with the same numeric ID.
-  if (isShuqiItem(item) || item.id.startsWith('shuqi:')) {
-    return false;
-  }
+  // 书架/历史条目带的是上游 id 与来源，只有缓存与历史的本地查找才用带作用域
+  // 的阅读器 id。带 `shuqi:` 前缀的 id 说明调用方已经作用域化过，不能再用。
+  if (item.id.startsWith('shuqi:')) return false;
   if ((kind != 'book' && kind != 'manga') || item.id.isEmpty) return false;
+  final isShuqi = isShuqiItem(item);
+  // 书旗只有正文阅读，没有漫画缓存。
+  if (isShuqi && kind != 'book') return false;
+  final readerId = isShuqi ? shuqiReaderId(item.id) : item.id;
   final isManga = kind == 'manga';
   final store = cache ?? ChapterCacheStore.instance;
   final baseStore = readerStore ?? LibraryStore.instance;
@@ -45,14 +47,14 @@ Future<bool> openRecentBook(
   CachedBook? book;
   int? index;
   try {
-    final saved = await ReaderHistory(historyStore).load(item.id);
+    final saved = await ReaderHistory(historyStore).load(readerId);
     if (saved == null || (saved['kind'] != null && saved['kind'] != kind)) {
       return false;
     }
     // 漫画没有正文缓存，只能看目录是否存过；小说要求正文还在（下面再判）。
     book = isManga
-        ? await store.savedCatalogue(item.id)
-        : await store.cachedBook(item.id);
+        ? await store.savedCatalogue(readerId)
+        : await store.cachedBook(readerId);
     if (book == null) return false;
     index = resumeEpisodeIndex({
       ...saved,
@@ -62,7 +64,7 @@ Future<bool> openRecentBook(
     if (index == null) return false;
     if (!isManga &&
         !(await store.cachedChapterIds(
-          item.id,
+          readerId,
         )).contains(book.chapters[index].itemId)) {
       return false;
     }
@@ -92,7 +94,7 @@ Future<bool> openRecentBook(
             )
           : _RecentBookReader(
               book: CachedBook(
-                id: item.id,
+                id: readerId,
                 title: title,
                 cover: cover,
                 chapters: cachedBook.chapters,
@@ -103,7 +105,12 @@ Future<bool> openRecentBook(
               item: item,
               // 注入缓存的调用方自带数据，仅显式提供 loader 时联网。
               directoryLoader:
-                  directoryLoader ?? (cache == null ? loadBookDirectory : null),
+                  directoryLoader ??
+                  (cache == null
+                      ? isShuqi
+                            ? (_) => loadShuqiDirectory(item.id)
+                            : loadBookDirectory
+                      : null),
             ),
     ),
   );
@@ -181,6 +188,11 @@ class _RecentBookReaderState extends State<_RecentBookReader>
     chapterCache: widget.cache,
     readerStore: widget.readerStore,
     shelfItem: widget.item,
+    // 书旗只读上游内容：关掉番茄在线能力，正文走书旗自己的加载器。
+    localOnly: isShuqiItem(widget.item),
+    chapterLoader: isShuqiItem(widget.item)
+        ? (chapter) => loadShuqiChapter(widget.item.id, chapter)
+        : null,
   );
 }
 
@@ -208,9 +220,8 @@ Future<bool> openCachedBook(
   if (book.id.startsWith('shuqi:') && shuqiId == null) {
     throw StateError('书旗缓存标识无效，请删除后重新缓存');
   }
-  final historyStore = shuqiId != null
-      ? const ReadOnlyReaderStore()
-      : readerStore ?? LibraryStore.instance;
+  // 书旗缓存同样写本机历史（`shuqi:` 作用域），不再用只读 store 拦截。
+  final historyStore = readerStore ?? LibraryStore.instance;
   final sourceItem = shuqiId == null
       ? shelfItem
       : shelfItem?.copyWith(id: shuqiId, source: shuqiSourceId) ??

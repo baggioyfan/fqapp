@@ -1,4 +1,6 @@
+import '../services/library_store.dart';
 import '../services/media_history_store.dart';
+import 'shuqi_book.dart';
 
 /// Pre-tracking history entries have no measured time; each one counts as a
 /// flat estimate until the book records real reading time.
@@ -115,7 +117,9 @@ Map<String, double> _dayMinutesOf(
   daySeconds.forEach((day, secs) => add(day, secs / 60));
   // Fallback estimates for books without real data yet, so older history
   // still shows up during the transition. Drops out once real data exists.
+  // 书旗是导入的本地内容，不计入番茄的阅读时长统计。
   for (final entry in history) {
+    if (historySource(entry) == shuqiSourceId) continue;
     if (bookSeconds.containsKey(historyStatisticsId(entry))) continue;
     final time = (entry['time'] as num?)?.toInt() ?? 0;
     add(
