@@ -140,7 +140,10 @@ void main() {
         (chipInk.decoration! as ShapeDecoration).color,
         preset.accentColor.withValues(alpha: 0.12),
       );
-      expect((chipInk.decoration! as ShapeDecoration).color, isNot(Colors.black));
+      expect(
+        (chipInk.decoration! as ShapeDecoration).color,
+        isNot(Colors.black),
+      );
       // 分隔线 / 弹出菜单：在当前渲染 context 解析到的子主题即预设色。
       expect(dividerColor, preset.borderColor);
       expect(popupColor, preset.panelColor);
