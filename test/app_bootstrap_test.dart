@@ -11,29 +11,6 @@ import 'package:fqapp/widgets/home/home_skeleton.dart';
 import 'package:hive_ce/hive.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-/// 推进若干帧，直到 [finder] 命中（或轮数用尽）。
-///
-/// 等待态改成本地骨架之后，闸门上不再有转圈动画：`tester.pump()` 只在
-/// **确实有计划中的帧** 时才构建，未来刚完成的那一次 pump 可能什么都没做。
-/// 所以这里循环推进，直到目标出现。
-///
-/// 另外，[AppBootstrap] 的初始化里有真实文件读写（Hive 开箱与迁移），它们
-/// 走真实事件循环，在 widget 测试的 fake-async 里不会自己前进：每轮用
-/// [WidgetTester.runAsync] 回到真实事件循环给它们一次机会，再用假时钟推一帧。
-Future<void> _pumpUntil(
-  WidgetTester tester,
-  Finder finder, {
-  int rounds = 200,
-}) async {
-  for (var i = 0; i < rounds; i++) {
-    await tester.runAsync(
-      () => Future<void>.delayed(const Duration(milliseconds: 5)),
-    );
-    await tester.pump(const Duration(milliseconds: 16));
-    if (finder.evaluate().isNotEmpty) return;
-  }
-}
-
 void main() {
   testWidgets('retrying initialization retains existing Hive history', (
     tester,
@@ -86,11 +63,11 @@ void main() {
         ),
       ),
     );
-    await _pumpUntil(tester, find.text('无法读取本地数据'));
+    await tester.pumpAndSettle();
     expect(find.text('无法读取本地数据'), findsOneWidget);
     expect(history.get('kept'), record);
     await tester.tap(find.text('重试'));
-    await _pumpUntil(tester, find.text('ready'));
+    await tester.pumpAndSettle();
     expect(find.text('ready'), findsOneWidget);
     expect(attempts, 2);
     expect(history.get('kept'), record);
@@ -131,7 +108,7 @@ void main() {
     expect(attempts, 2);
     expect(find.text('ready'), findsNothing);
     retry.complete();
-    await _pumpUntil(tester, find.text('ready'));
+    await tester.pump();
     expect(find.text('ready'), findsOneWidget);
     expect(find.byType(CircularProgressIndicator), findsNothing);
   });
@@ -174,7 +151,7 @@ void main() {
     expect(backendStarted, isTrue);
     expect(find.text('ready'), findsNothing);
     localInit.complete();
-    await _pumpUntil(tester, find.text('ready'));
+    await tester.pump();
     expect(find.text('ready'), findsOneWidget);
   });
 
