@@ -62,6 +62,51 @@ fn reads_the_episode_vertical_flag() {
         })),
         Some(true)
     );
+
+    // 指定集号时只在那一集里找，别的集的标记不算。
+    let target = |body: Value, id: &str| episode_vertical_value(&body, Some(id));
+    assert_eq!(
+        target(
+            json!({
+                "data": { "1004": { "other": { "vertical": true } } }
+            }),
+            "episode",
+        ),
+        None
+    );
+    assert_eq!(
+        target(
+            json!({
+                "data": { "video_info_list_map": {
+                    "other": [{ "vertical": true }]
+                } }
+            }),
+            "episode",
+        ),
+        None
+    );
+    assert_eq!(
+        target(
+            json!({
+                "data": {
+                    "episode": { "video_model": "{}", "vertical": false },
+                    "other": { "video_model": "{}", "vertical": true }
+                }
+            }),
+            "episode",
+        ),
+        Some(false)
+    );
+    // 只有别的集有标记时，不能顺手拿它当这一集的。
+    assert_eq!(
+        target(
+            json!({
+                "data": { "1004": { "other": [{ "vertical": true }] } }
+            }),
+            "episode",
+        ),
+        None
+    );
 }
 
 #[test]

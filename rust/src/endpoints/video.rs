@@ -532,7 +532,7 @@ fn handle_video<'a>(ctx: &'a Ctx, params: &'a Params) -> BoxFuture<'a, ApiResult
         // 这里透传出去，缺字段时为 null（Dart 侧保持旧行为，见 player_page）。
         let vertical = bodies
             .iter()
-            .find_map(|body| episode_vertical_value(&body.parsed.root));
+            .find_map(|body| episode_vertical_value(&body.parsed.root, Some(&video_id)));
 
         if matches!(resolved, VideoSourceResolution::NotFound) {
             if let Some(raw) = bodies
@@ -1293,8 +1293,33 @@ fn extract_video_info_list_map_url(data: &Map<String, Value>) -> VideoSourceReso
 /// (`wp3/o1.java:301-347`, data copied from `EpisodeInfo.vertical` in
 /// `th3/e.java:95`). `None` means the response carried no field at all — the
 /// caller then leaves the client's old behaviour alone.
-fn episode_vertical_value(resp: &Value) -> Option<bool> {
+fn episode_vertical_value(resp: &Value, requested_video_id: Option<&str>) -> Option<bool> {
     let data = resp.get("data")?.as_object()?;
+    // 请求指定了集号时只在那一集里找：合成响应可能同时带回邻近集，若按
+    // 「第一个出现的 vertical」取值，会把别的集的竖屏标记当成这一集的。
+    if let Some(video_id) = requested_video_id.filter(|id| !id.is_empty()) {
+        if let Some(group) = data.get("1004").and_then(Value::as_object) {
+            return group
+                .get(video_id)
+                .and_then(Value::as_object)
+                .and_then(|entry| entry.get("vertical"))
+                .and_then(vertical_flag);
+        }
+        if let Some(entry) = data.get(video_id).and_then(Value::as_object) {
+            return entry.get("vertical").and_then(vertical_flag);
+        }
+        if let Some(entries) = data
+            .get("video_info_list_map")
+            .and_then(Value::as_object)
+            .and_then(|map| map.get(video_id))
+            .and_then(Value::as_array)
+        {
+            return entries
+                .iter()
+                .find_map(|entry| entry.get("vertical").and_then(vertical_flag));
+        }
+        return None;
+    }
     if let Some(found) = data.get("vertical").and_then(vertical_flag) {
         return Some(found);
     }
@@ -1321,7 +1346,7 @@ fn episode_vertical_value(resp: &Value) -> Option<bool> {
 
 #[cfg(test)]
 fn episode_vertical(raw: &[u8]) -> Option<bool> {
-    episode_vertical_value(&serde_json::from_slice::<Value>(raw).ok()?)
+    episode_vertical_value(&serde_json::from_slice::<Value>(raw).ok()?, None)
 }
 
 /// Lenient `vertical` decoding: upstream may send bool, 0/1, or "true"/"1".
