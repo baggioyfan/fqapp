@@ -342,27 +342,26 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('已选择 1 本'), findsOneWidget);
 
+      // 「移出书架」先落盘、清分组、删本地书，最后才弹撤销条；这些是真实
+      // 磁盘 I/O，CI 上远超一个固定延时，而写完成后的续跑落在真实事件循环
+      // 里，普通 pump() 推不动它。所以按帧轮询撤销条本身，每次轮询都开一次
+      // runAsync 让真实事件循环前进。
       await tester.runAsync(() async {
         await tester.tap(find.byKey(const Key('shelf-remove-action')));
-        await Future<void>.delayed(const Duration(milliseconds: 50));
       });
-      // SnackBar 入场只用短 pump 推进：pumpAndSettle 会快进 4s 计时把撤销条冲掉。
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 300));
-      expect(ShelfStore.instance.records(), isEmpty);
       final undo = find.byKey(const Key('shelf-undo-button'));
+      await _pumpUntil(tester, () => undo.evaluate().isNotEmpty);
+      expect(ShelfStore.instance.records(), isEmpty);
       expect(undo, findsOneWidget);
 
       await tester.runAsync(() async {
         await tester.tap(undo);
         await Future<void>.delayed(const Duration(milliseconds: 50));
       });
-      for (var i = 0; i < 50 && ShelfStore.instance.records().isEmpty; i++) {
-        await tester.runAsync(
-          () => Future<void>.delayed(const Duration(milliseconds: 10)),
-        );
-        await tester.pump();
-      }
+      await _pumpUntil(
+        tester,
+        () => ShelfStore.instance.records().isNotEmpty,
+      );
       expect(ShelfStore.instance.records().map((record) => record.item.id), [
         'a',
       ]);
@@ -1214,6 +1213,24 @@ Future<void> _settlePageWrite(
     await tester.pump();
   }
   await tester.pumpAndSettle();
+}
+
+/// 按帧推进，直到 [done] 成立。
+///
+/// 页面写盘完成后要接着跑 UI 回调（比如弹撤销条），那些续跑挂在真实事件
+/// 循环上；testWidgets 的测试体在 fake async 区里，单纯 pump() 不会推进它们。
+/// 这里每帧都开一次 runAsync，让真实 I/O 与它的续跑有机会落地。
+Future<void> _pumpUntil(
+  WidgetTester tester,
+  bool Function() done, {
+  int maxFrames = 200,
+}) async {
+  for (var frame = 0; frame < maxFrames && !done(); frame++) {
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 10)),
+    );
+    await tester.pump();
+  }
 }
 
 /// Opens the view sheet and picks one of the four modes.
