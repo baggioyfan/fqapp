@@ -65,6 +65,7 @@ jobs:
           test/desktop_detail_layout_test.dart test/desktop_platform_test.dart
           test/desktop_video_layout_test.dart test/player_page_test.dart
           test/drama_download_store_test.dart
+          test/player_connectivity_fallback_test.dart
           test/book_open_entry_test.dart
           test/backend_service_test.dart test/network_proxy_preferences_test.dart
           test/local_proxy_discovery_test.dart test/core_proxy_settings_panel_test.dart
