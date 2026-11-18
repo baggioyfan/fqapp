@@ -380,8 +380,15 @@ void main() {
       await tester.pumpAndSettle();
       await tester.runAsync(() async {
         await tester.tap(find.byKey(const Key('shelf-remove-action')));
-        await Future<void>.delayed(const Duration(milliseconds: 50));
       });
+      // 与上一条用例一致：等书架真的空了再断言撤销条。固定延时在慢机器上
+      // 会先于 Hive 写入返回，CI 上曾两次因此报「找不到 shelf-undo-button」。
+      for (var i = 0; i < 50 && ShelfStore.instance.records().isNotEmpty; i++) {
+        await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 10)),
+        );
+        await tester.pump();
+      }
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 300));
       expect(find.byKey(const Key('shelf-undo-button')), findsOneWidget);
