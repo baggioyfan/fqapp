@@ -381,16 +381,19 @@ void main() {
       await tester.runAsync(() async {
         await tester.tap(find.byKey(const Key('shelf-remove-action')));
       });
-      // 与上一条用例一致：等书架真的空了再断言撤销条。固定延时在慢机器上
-      // 会先于 Hive 写入返回，CI 上曾两次因此报「找不到 shelf-undo-button」。
-      for (var i = 0; i < 50 && ShelfStore.instance.records().isNotEmpty; i++) {
+      // 撤销条要等 removeKeys 之后的分组清理、本地书删除都落地才出现，固定
+      // 延时在 CI 上会先于它们返回（曾连续两轮报「找不到 shelf-undo-button」）。
+      // 这里按帧轮询撤销条本身：假时钟总共只推进 960ms，不会提前吃掉 4s 的
+      // SnackBar 存活时间。
+      for (var i = 0; i < 60; i++) {
         await tester.runAsync(
           () => Future<void>.delayed(const Duration(milliseconds: 10)),
         );
-        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 16));
+        if (find.byKey(const Key('shelf-undo-button')).evaluate().isNotEmpty) {
+          break;
+        }
       }
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 300));
       expect(find.byKey(const Key('shelf-undo-button')), findsOneWidget);
 
       await tester.pump(const Duration(seconds: 4));
