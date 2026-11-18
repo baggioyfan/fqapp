@@ -31,6 +31,8 @@ Future<void> _flushMicrotasks() async {
 }
 
 void main() {
+  final videoTabIndex = HomeNotifier.tabs.indexOf('视频');
+
   setUpAll(() async {
     final directory = await Directory.systemTemp.createTemp(
       'fqapp-home-feed-cache-test-',
@@ -89,7 +91,7 @@ void main() {
     await cache.close();
   });
 
-  test('cells round trip through save and load', () async {
+  test('cells round trip and old stream layouts fall back', () async {
     HomeFeedCache.hiveReady = true;
     final cache = HomeFeedCache();
     const rankCell = HomeCell(
@@ -123,8 +125,9 @@ void main() {
     );
     await cache.save(
       4,
-      [_item('a')],
+      [_item('c1'), _item('c2')],
       hasMore: true,
+      lastVid: 'c2',
       cells: [rankCell, gridCell],
     );
 
@@ -147,6 +150,42 @@ void main() {
     expect(restoredGrid.items.map((item) => item.id), ['c1', 'c2']);
     // The card keeps its rendered fields, badge included.
     expect(restoredGrid.items.first.tag?.text, '爆款');
+
+    // v1.0.205 wrote v2 cells before streamLayout existed. Their 385 order may
+    // be corrupted, but the flat items and video position are still valid.
+    final box = await Hive.openBox('home_feed_cache_v1');
+    final raw = Map<String, dynamic>.from(box.get('4') as Map);
+    expect(raw['streamLayout'], 1);
+    raw.remove('streamLayout');
+    await box.put('4', raw);
+    final migrated = cache.load(4)!;
+    expect(migrated.items.map((item) => item.id), ['c1', 'c2']);
+    expect(migrated.lastVid, 'c2');
+    expect(migrated.cells, isEmpty);
+
+    // The migration is scoped to stream layouts: a drama cell and a rank-only
+    // record predate this marker too and must stay usable.
+    final videoCell = HomeCell(
+      showType: 407,
+      name: '视频流',
+      id: 'video-1',
+      style: const {},
+      items: [_item('video')],
+      children: const [],
+    );
+    await cache.save(
+      4,
+      [_item('video')],
+      hasMore: true,
+      cells: [rankCell, videoCell],
+    );
+    final preservedRaw = Map<String, dynamic>.from(box.get('4') as Map);
+    preservedRaw.remove('streamLayout');
+    await box.put('4', preservedRaw);
+    final preserved = cache.load(4)!;
+    expect(preserved.cells.map((cell) => cell.showType), [511, 407]);
+    expect(preserved.cells.first.name, '排行榜');
+    expect(preserved.cells.last.name, '视频流');
     await cache.close();
   });
 
@@ -190,53 +229,55 @@ void main() {
     await cache.close();
   });
 
-  test(
-    'cold start renders the cached feed while the refresh is in flight',
-    () async {
-      HomeFeedCache.hiveReady = true;
-      final cache = HomeFeedCache();
-      await cache.save(0, [
-        _item('cached-1'),
-        _item('cached-2'),
-      ], hasMore: true);
+  test('a 看剧 grid cold start replaces despite playback capability', () async {
+    HomeFeedCache.hiveReady = true;
+    final cache = HomeFeedCache();
+    await cache.save(
+      dramaTabIndex,
+      [_item('cached-1'), _item('cached-2')],
+      hasMore: true,
+      lastVid: 'cached-2',
+    );
 
-      final networkStarted = Completer<void>();
-      final releaseNetwork = Completer<void>();
-      final provider = NotifierProvider<HomeNotifier, HomeState>(
-        () => HomeNotifier(
-          feedCache: cache,
-          homepageLoader:
-              ({int tabType = 2, int offset = 0, String? sessionId}) async {
-                networkStarted.complete();
-                await releaseNetwork.future;
-                return HomepagePage(
-                  items: [_item('fresh-1', kind: 'book')],
-                  nextOffset: 1,
-                  sessionId: null,
-                );
-              },
-          searchLoader: (query, {int page = 1}) async => [],
-        ),
-      );
-      final container = ProviderContainer();
-      addTearDown(container.dispose);
-      final notifier = container.read(provider.notifier);
-      final loading = notifier.load();
+    final networkStarted = Completer<void>();
+    final releaseNetwork = Completer<void>();
+    final provider = NotifierProvider<HomeNotifier, HomeState>(
+      // The drama page opts into playback resume, but 看剧 is tab_type=8 and
+      // renders a grid, so the snapshot must still be replaced.
+      () => HomeNotifier(
+        feedCache: cache,
+        initialTabIndex: dramaTabIndex,
+        usesLocalTabs: true,
+        resumeVideoFeed: true,
+        homepageLoader:
+            ({int tabType = 2, int offset = 0, String? sessionId}) async {
+              networkStarted.complete();
+              await releaseNetwork.future;
+              return HomepagePage(
+                items: [_item('fresh-1')],
+                nextOffset: 1,
+                sessionId: null,
+              );
+            },
+        searchLoader: (query, {int page = 1}) async => [],
+      ),
+    );
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
+    final notifier = container.read(provider.notifier);
+    final loading = notifier.load();
 
-      // Before the network answers, the snapshot is already on screen.
-      expect(container.read(provider).items.map((item) => item.id), [
-        'cached-1',
-        'cached-2',
-      ]);
-      expect(container.read(provider).isLoading, isTrue);
+    // Before the network answers, the snapshot is already on screen.
+    expect(container.read(provider).items.map((item) => item.id), [
+      'cached-1',
+      'cached-2',
+    ]);
+    expect(container.read(provider).isLoading, isTrue);
 
-      releaseNetwork.complete();
-      await loading;
-      expect(container.read(provider).items.map((item) => item.id), [
-        'fresh-1',
-      ]);
-    },
-  );
+    releaseNetwork.complete();
+    await loading;
+    expect(container.read(provider).items.map((item) => item.id), ['fresh-1']);
+  });
 
   test(
     'a failed refresh keeps the cached feed visible with the error',
@@ -273,7 +314,7 @@ void main() {
       HomeFeedCache.hiveReady = true;
       final cache = HomeFeedCache();
       await cache.save(
-        6,
+        videoTabIndex,
         [_item('old-1'), _item('last'), _item('old-3')],
         hasMore: true,
         lastVid: 'last',
@@ -282,7 +323,8 @@ void main() {
       final provider = NotifierProvider<HomeNotifier, HomeState>(
         () => HomeNotifier(
           feedCache: cache,
-          initialTabIndex: 6,
+          initialTabIndex: videoTabIndex,
+          resumeVideoFeed: true,
           homepageLoader:
               ({int tabType = 2, int offset = 0, String? sessionId}) async =>
                   HomepagePage(
@@ -325,7 +367,7 @@ void main() {
     HomeFeedCache.hiveReady = true;
     final cache = HomeFeedCache();
     await cache.save(
-      6,
+      videoTabIndex,
       [_item('last'), _item('old-2')],
       hasMore: true,
       lastVid: 'last',
@@ -334,7 +376,8 @@ void main() {
     final provider = NotifierProvider<HomeNotifier, HomeState>(
       () => HomeNotifier(
         feedCache: cache,
-        initialTabIndex: 6,
+        initialTabIndex: videoTabIndex,
+        resumeVideoFeed: true,
         homepageLoader:
             ({int tabType = 2, int offset = 0, String? sessionId}) async =>
                 HomepagePage(
@@ -362,7 +405,7 @@ void main() {
       HomeFeedCache.hiveReady = true;
       final cache = HomeFeedCache();
       await cache.save(
-        6,
+        videoTabIndex,
         [_item('a'), _item('b')],
         hasMore: true,
         lastVid: 'gone',
@@ -371,7 +414,8 @@ void main() {
       final provider = NotifierProvider<HomeNotifier, HomeState>(
         () => HomeNotifier(
           feedCache: cache,
-          initialTabIndex: 6,
+          initialTabIndex: videoTabIndex,
+          resumeVideoFeed: true,
           homepageLoader:
               ({int tabType = 2, int offset = 0, String? sessionId}) async =>
                   HomepagePage(
@@ -389,18 +433,30 @@ void main() {
       expect(container.read(provider).items.map((item) => item.id), [
         'fresh-1',
       ]);
+      HomeFeedSnapshot? saved;
+      for (var i = 0; i < 80 && saved?.lastVid != 'fresh-1'; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+        saved = cache.load(videoTabIndex);
+      }
+      expect(saved?.lastVid, 'fresh-1');
     },
   );
 
   test('a manual refresh replaces the list instead of resuming', () async {
     HomeFeedCache.hiveReady = true;
     final cache = HomeFeedCache();
-    await cache.save(6, [_item('a'), _item('b')], hasMore: true, lastVid: 'b');
+    await cache.save(
+      videoTabIndex,
+      [_item('a'), _item('b')],
+      hasMore: true,
+      lastVid: 'b',
+    );
 
     final provider = NotifierProvider<HomeNotifier, HomeState>(
       () => HomeNotifier(
         feedCache: cache,
-        initialTabIndex: 6,
+        initialTabIndex: videoTabIndex,
+        resumeVideoFeed: true,
         homepageLoader:
             ({int tabType = 2, int offset = 0, String? sessionId}) async =>
                 HomepagePage(
@@ -419,26 +475,37 @@ void main() {
     expect(container.read(provider).items.map((item) => item.id), ['fresh-1']);
   });
 
-  // 真机冷启动必命中落地缓存，走的是 replace=false 的续播分支。区块此前只在
-  // replace=true 时赋值，于是真机上 feed.cells 永远是空的，首页永远退回旧网格。
-  // 本用例锁死：续播路径也必须拿到这一页的区块。
-  test('a resumed cold start still receives the page blocks', () async {
+  // The book grid has no visible-card reporter. Its saved first id is not a
+  // video-style resume point, so page one must replace the snapshot wholesale.
+  test('a book cold start replaces instead of video-resuming', () async {
     HomeFeedCache.hiveReady = true;
     final cache = HomeFeedCache();
     await cache.save(
       0,
-      [_item('old-1'), _item('last')],
+      [_item('old-1', kind: 'book'), _item('last', kind: 'book')],
       hasMore: true,
       lastVid: 'last',
     );
 
     const rankCell = HomeCell(
       showType: 511,
-      name: '排行榜',
-      id: '',
-      style: {},
+      name: '新排行',
+      id: 'fresh-rank',
+      style: {'cover_size': 2},
       items: [],
-      children: [],
+      children: [
+        HomeCell(
+          showType: 512,
+          name: '新书',
+          id: 'fresh-rank-book',
+          style: {},
+          items: [],
+          children: [],
+        ),
+      ],
+      extra: {
+        'rank_with_category_data': {'boards': 1},
+      },
     );
     final provider = NotifierProvider<HomeNotifier, HomeState>(
       () => HomeNotifier(
@@ -446,8 +513,8 @@ void main() {
         initialTabIndex: 0,
         homepageLoader:
             ({int tabType = 2, int offset = 0, String? sessionId}) async =>
-                const HomepagePage(
-                  items: [],
+                HomepagePage(
+                  items: [_item('fresh-book', kind: 'book')],
                   cells: [rankCell],
                   nextOffset: null,
                   sessionId: null,
@@ -458,7 +525,29 @@ void main() {
     final container = ProviderContainer();
     addTearDown(container.dispose);
     await container.read(provider.notifier).load();
-    expect(container.read(provider).cells.map((cell) => cell.showType), [511]);
+    final state = container.read(provider);
+    expect(state.items.map((item) => item.id), ['fresh-book']);
+    expect(state.cells.map((cell) => cell.showType), [511]);
+    expect(state.cells.single.name, '新排行');
+    expect(state.cells.single.id, 'fresh-rank');
+    expect(state.cells.single.extra['rank_with_category_data'], {'boards': 1});
+
+    HomeFeedSnapshot? saved = cache.load(0);
+    for (
+      var i = 0;
+      i < 80 &&
+          (saved == null ||
+              saved.items.length != 1 ||
+              saved.items.first.id != 'fresh-book');
+      i++
+    ) {
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      saved = cache.load(0);
+    }
+    expect(saved, isNotNull);
+    expect(saved!.items.map((item) => item.id), ['fresh-book']);
+    expect(saved.cells.single.showType, 511);
+    expect(saved.lastVid, isNull);
     await cache.close();
   });
 
@@ -467,28 +556,62 @@ void main() {
     () async {
       HomeFeedCache.hiveReady = true;
       final cache = HomeFeedCache();
+      final requestedTabs = <int>[];
+      final channelStarted = Completer<void>();
+      final releaseChannel = Completer<void>();
       final provider = NotifierProvider<HomeNotifier, HomeState>(
         () => HomeNotifier(
           feedCache: cache,
-          initialTabIndex: 6,
+          initialTabIndex: videoTabIndex,
+          usesLocalTabs: true,
+          resumeVideoFeed: true,
           homepageLoader:
-              ({int tabType = 2, int offset = 0, String? sessionId}) async =>
-                  HomepagePage(
-                    items: [_item('fresh-1'), _item('fresh-2')],
+              ({int tabType = 2, int offset = 0, String? sessionId}) async {
+                requestedTabs.add(tabType);
+                if (tabType == 8) {
+                  channelStarted.complete();
+                  await releaseChannel.future;
+                  return HomepagePage(
+                    items: [_item('drama-1')],
                     nextOffset: 1,
                     sessionId: null,
-                  ),
+                  );
+                }
+                return HomepagePage(
+                  items: [_item('fresh-1'), _item('fresh-2')],
+                  nextOffset: 1,
+                  sessionId: null,
+                );
+              },
           searchLoader: (query, {int page = 1}) async => [],
         ),
       );
       final container = ProviderContainer();
       addTearDown(container.dispose);
       final notifier = container.read(provider.notifier);
-      notifier.noteCurrentVid('fresh-2');
       await notifier.load();
-      // The save is fire-and-forget file IO; give the event loop real time.
-      await Future<void>.delayed(const Duration(milliseconds: 100));
-      expect(cache.load(6)!.lastVid, 'fresh-2');
+      notifier.noteCurrentVid('fresh-2');
+      // Switching to the first 看剧 grid completes another tab's initial load
+      // before the two-second video-position debounce expires. That load must
+      // not cancel the video tab's pending write.
+      notifier.selectTab(dramaTabIndex);
+      await channelStarted.future;
+      releaseChannel.complete();
+      await _flushMicrotasks();
+      final dramaState = container.read(provider);
+      expect(requestedTabs, [16, 8]);
+      expect(dramaState.tabIndex, dramaTabIndex);
+      expect(dramaState.isLoading, isFalse);
+      expect(dramaState.items.map((item) => item.id), ['drama-1']);
+
+      // The original video position eventually lands even though another tab
+      // has since replaced itself and written its own snapshot.
+      HomeFeedSnapshot? saved;
+      for (var i = 0; i < 120 && saved?.lastVid != 'fresh-2'; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+        saved = cache.load(videoTabIndex);
+      }
+      expect(saved?.lastVid, 'fresh-2');
       await cache.close();
     },
   );
