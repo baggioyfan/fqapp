@@ -354,6 +354,11 @@ void main() {
       expect(ShelfStore.instance.records(), isEmpty);
       expect(undo, findsOneWidget);
 
+      // 撤销条是滑入的：入场动画没走完时它的实际命中区和布局位置对不上，
+      // tap 会打在空白处。入场固定 250ms，这里推 300ms 走完；不要用
+      // pumpAndSettle，那样会一路推进 4s 的存活计时把撤销条冲掉。
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.pump();
       await tester.runAsync(() async {
         await tester.tap(undo);
         await Future<void>.delayed(const Duration(milliseconds: 50));
