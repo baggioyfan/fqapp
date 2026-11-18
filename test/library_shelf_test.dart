@@ -396,6 +396,9 @@ void main() {
       }
       expect(find.byKey(const Key('shelf-undo-button')), findsOneWidget);
 
+      // 轮询一命中就退出，入場动画可能还没走完；SnackBar 的 4s 计时要等动画
+      // 结束才启动，所以先 settle，否则下面的 pump(4s) 追不上它。
+      await tester.pumpAndSettle();
       await tester.pump(const Duration(seconds: 4));
       await tester.pumpAndSettle();
       expect(find.byKey(const Key('shelf-undo-button')), findsNothing);
