@@ -17,6 +17,7 @@ use super::sm3::sm3_hash;
 use super::v5_tables::{HASH_TABLE, SBOX};
 
 const APP_ID: i64 = 8662;
+const APP_ID_TEXT: &str = "8662";
 const VERSION_CODE: &str = "74332";
 const VERSION_NAME: &str = "7.4.3.32";
 const CHANNEL: &str = "vivo_8662_64";
@@ -628,6 +629,29 @@ fn encode_component(value: &str) -> String {
     output
 }
 
+/// The player-version query bag shared by the v5 door and the `video_tab`
+/// fallback.
+///
+/// Identity fields stay as placeholders: the request layer substitutes the
+/// pooled device that signs the call, so both doors are always asked under one
+/// identity.
+pub(crate) fn player_query_pairs() -> Vec<(&'static str, &'static str)> {
+    vec![
+        ("aid", APP_ID_TEXT),
+        ("app_name", "novelread"),
+        ("version_code", VERSION_CODE),
+        ("version_name", VERSION_NAME),
+        ("channel", CHANNEL),
+        ("device_platform", "android"),
+        ("device_type", DEVICE_TYPE),
+        ("os_version", OS_VERSION),
+        ("update_version_code", VERSION_CODE),
+        ("iid", "{install_id}"),
+        ("cdid", "{cdid}"),
+        ("device_id", "{device_id}"),
+    ]
+}
+
 fn playback_query(identity: &V5Identity<'_>, ticket: i64, app_id: &str) -> String {
     let pairs = [
         ("aid", app_id),
@@ -643,7 +667,6 @@ fn playback_query(identity: &V5Identity<'_>, ticket: i64, app_id: &str) -> Strin
         ("cdid", identity.cdid),
         ("device_id", identity.device_id),
     ];
-
     let mut query = String::new();
     for (key, value) in pairs {
         if !query.is_empty() {

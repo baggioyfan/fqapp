@@ -53,6 +53,14 @@ pub enum ClientError {
         message: String,
         retry_after: Option<Duration>,
     },
+    /// A successful HTTP 200 whose body carries no bytes at all.
+    ///
+    /// This is the shape the playback gate returns when it refuses a
+    /// request without saying why. It is not a device failure and it is not
+    /// worth repeating on the same identity: the caller switches door or
+    /// rotates identity instead. Generic callers keep accepting empty bodies,
+    /// so only the playback path converts one into this error.
+    EmptyPlaybackBody,
     Http(String),
     Other(String),
 }
@@ -61,6 +69,10 @@ impl ClientError {
     pub fn is_device_failed(&self) -> bool {
         matches!(self, ClientError::DeviceFailed(_))
     }
+
+    pub fn is_empty_playback_body(&self) -> bool {
+        matches!(self, ClientError::EmptyPlaybackBody)
+    }
 }
 
 impl std::fmt::Display for ClientError {
@@ -68,6 +80,7 @@ impl std::fmt::Display for ClientError {
         match self {
             ClientError::DeviceFailed(m) => write!(f, "device failed: {m}"),
             ClientError::Transient { message, .. } => f.write_str(message),
+            ClientError::EmptyPlaybackBody => f.write_str("empty playback response body"),
             ClientError::Http(m) => f.write_str(m),
             ClientError::Other(m) => f.write_str(m),
         }
@@ -424,13 +437,26 @@ impl UpstreamClient {
         )))
     }
 
-    /// Calls the v5 playback door with the exact gzip bytes it signs.
+    /// Calls the v5 playback door with the exact gzip bytes it signs and
+    /// reports which pooled identity answered.
     ///
     /// The v5 signer owns every query/header field and the wire body hash, so
-    /// this path deliberately bypasses generic signing. Transport/429/5xx and
-    /// empty-body retries stay on the same device under the caller's deadline;
-    /// only HTTP 401/403 replace it. A nonempty business payload is not retried.
-    pub async fn v5_playback(&self, base: &str, body: &[u8]) -> Result<Vec<u8>, ClientError> {
+    /// this path deliberately bypasses generic signing. Transport/429/5xx are
+    /// retried on the same device under the caller's deadline and HTTP 401/403
+    /// replace it; an empty 200 body is returned as `Ok((vec![], device))`
+    /// instead of being repeated, because the caller switches door with that
+    /// very identity first. A non-empty business payload is returned untouched
+    /// so the endpoint can judge it.
+    ///
+    /// The identity comes from the pool's least-recently-used slot, which is
+    /// also the slot [Self::rotate_playback_identity] hands out, so a rotation
+    /// followed by another call of this method naturally lands on the
+    /// replacement.
+    pub async fn v5_playback_with_device(
+        &self,
+        base: &str,
+        body: &[u8],
+    ) -> Result<(Vec<u8>, Device), ClientError> {
         let mut last_err = None;
 
         for _ in 0..self.max_retries {
@@ -476,10 +502,30 @@ impl UpstreamClient {
                 },
                 Some(crate::upstream::http::API_BODY_LIMIT_BYTES),
                 true,
-                true,
+                // Empty bodies are the caller's business: repeating them on the
+                // same identity is exactly the loop that never recovers.
+                false,
             );
             match super::playback_trace::with_device(&dev.device_id, request).await {
-                Ok((data, _)) => return Ok(data),
+                Ok((data, _)) if data.is_empty() => {
+                    // The caller switches door or identity; repeating this one
+                    // on the same identity is exactly the loop that never
+                    // recovers, so the body is handed back with its identity.
+                    if let Some(trace) = super::playback_trace::current() {
+                        log::info!(
+                            "v5 playback empty response request={} purpose={} attempt={} device={} in_flight={}",
+                            trace.request_id,
+                            trace.purpose,
+                            trace.attempt,
+                            trace.device_tag,
+                            trace.in_flight,
+                        );
+                    } else {
+                        log::info!("v5 playback empty response");
+                    }
+                    return Ok((Vec::new(), dev));
+                }
+                Ok((data, _)) => return Ok((data, dev)),
                 Err(err) => {
                     last_err = Some(err.clone());
                     if err.is_device_failed() {
@@ -502,6 +548,39 @@ impl UpstreamClient {
             self.max_retries,
             last_err.map(|error| error.to_string()).unwrap_or_default()
         )))
+    }
+
+    /// Body-only wrapper kept for callers that do not need the identity that
+    /// answered (the endpoint orchestrator uses the `_with_device` form).
+    pub async fn v5_playback(&self, base: &str, body: &[u8]) -> Result<Vec<u8>, ClientError> {
+        let (data, _) = self.v5_playback_with_device(base, body).await?;
+        if data.is_empty() {
+            return Err(ClientError::EmptyPlaybackBody);
+        }
+        Ok(data)
+    }
+
+    /// One bounded identity rotation for playback recovery.
+    ///
+    /// A standby device from the pool costs nothing and is preferred; only a
+    /// pool that holds nothing else pays for a fresh registration, which can
+    /// take seconds, so callers wrap this in their own deadline. No device is
+    /// retired on an empty body: [failed] is the identity to step away from,
+    /// not a verdict about it.
+    pub async fn rotate_playback_identity(&self, failed: Option<&str>) -> Result<Device, String> {
+        match failed {
+            Some(failed) => match self.pool.get_excluding(failed).await {
+                Ok(device) => Ok(device),
+                Err(_) => self.pool.replace_failed(failed).await,
+            },
+            None => {
+                let victim = self.pool.get().await?;
+                match self.pool.get_excluding(&victim.device_id).await {
+                    Ok(device) => Ok(device),
+                    Err(_) => self.pool.replace_failed(&victim.device_id).await,
+                }
+            }
+        }
     }
 }
 

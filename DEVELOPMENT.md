@@ -1134,6 +1134,33 @@ stub 与发送体匹配；第三次后按预算停止，没有 fallback、下载
 据此判定空响应根因。实例结束时恢复关闭并移除临时端口转发。安全日志与报告
 保留在仓库外 `%TEMP%\fqapp-direct-api-20261120`。
 
+2026-11-20 播放门兜底(移植 `N3urda/hongguoTV` 的 `streamLadderWithCompatibility`):
+v5 空实体不再在同一身份上重试,改为按播放门顺序切换。`rust/src/upstream/playback_routes.rs`
+维护 4 条门的进程级健康度:v5 玩家门加 3 个 `video_tab` 域名(签名 GET,与 v5 同一
+身份、同一设备 pin,响应按 `data.video_model_data.<id>.video_model` 重写成取流器已
+支持的 `data.<id>.video_model` 形状);空实体停 30 秒,其他失败停 5 秒,成功清零并
+优先。所有门都被空实体停用时,前台请求可做一次身份轮换:先用池内其他已注册设备
+(`get_excluding`),池里只剩失败设备时再走 `replace_failed` 重注册;轮换受 30 秒
+冷却(注册失败 5 秒)、连续 2 轮全空门槛、单请求一次上限约束,剩余预算不足 1.5 秒
+不轮换。预取不探冷却门、不轮换、不注册。单请求最多 6 次尝试。
+
+与参考实现的差异(有意保留):我们的匿名身份来自上限 20 台的共享设备池,不像参考
+实现可以无限重注册,所以「空就换身份」降级为「带冷却的一次轮换」,不让空响应
+啃光设备池;参考实现的单集播放协议 route(不同签名栈、我们从未验证)没有搬;
+`hl`/`lf` 两个域名只在主打空后兜底,失败只计冷却不再重试。诊断沿用不带内容的
+格式,新增 `event=door route=v5|tab-b|tab-hl|tab-lf result=ok|empty|failed`、
+`event=rotate result=ok|unavailable|deadline`、`event=final result=empty attempts=
+empty_rounds= rotations=`,仍不记录地址、查询、正文、签名或真实设备身份。
+
+定向验证:Rust `playback_recovery` 6 项(兜底同身份、非空 v5 不兜底、业务拒绝不算
+可播、全空一次轮换且有界、预取不探冷却门、冷却门下次被跳过),`upstream_retry` 8 项
+(空实体单次返回且带设备身份,503 仍同设备重试),`video_codec_gate` 9 项、
+`mock_upstream_contract` 9 项、`playback_routes` 单元 7 项通过;`flutter analyze` 与
+针对这些目标的 clippy 通过。未跑完整本地套件与 CI,未改版本、FRB 生成、Dart 与
+签名算法。**尚未验证**:现网是否接受我们用通用签名打的 `video_tab` GET、`hl`/`lf`
+域名是否可达、空实体是否真的按身份相关——这三项必须靠设备采样,不能由单元测试
+或本次改动声称解决。
+
 2026-11-15 在 MuMu 6.8.8 / Android 12 / 实例 0 的实际上游路径中，横屏和竖屏
 样本均显示 1080P、720P、540P、480P、360P，Rust 与 Dart 同次请求记录的档位数一致。
 下载上限 720 的文件实际为横屏 1280×720、竖屏 720×1280，重开均从离线文件出首帧；
