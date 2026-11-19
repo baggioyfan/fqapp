@@ -41,9 +41,9 @@ class HomeFeedSnapshot {
 /// Cold start and first visits of a tab render the stored snapshot immediately
 /// while the network refresh runs; a failed refresh keeps the snapshot visible
 /// instead of an empty error page. This is display state only — pagination
-/// cursors are never restored, so a restored tab always refreshes from page
-/// one, exactly like the stale-while-revalidate catalogue cache it borrows
-/// from.
+/// cursors are never restored, so every refresh starts at page one. Grids then
+/// replace the snapshot; playback video feeds may append that page after their
+/// reported current card.
 class HomeFeedCache {
   HomeFeedCache({HiveInterface? hive}) : _hive = hive ?? Hive;
 
@@ -57,9 +57,14 @@ class HomeFeedCache {
   /// feed arrives.
   static const _recordVersion = 2;
 
-  /// Snapshots older than this are not restored. The refresh always replaces
-  /// them, so the bound only stops a long-absent user from being shown an
-  /// ancient feed while the network spins.
+  /// Version of the stream-cell layout written since appended pages moved to
+  /// a single trailing block. Existing v2 records have no marker: their flat
+  /// `items` list is still in chronological order, so loading can discard only
+  /// the affected cells and keep both that data and any video resume point.
+  static const _streamLayoutVersion = 1;
+
+  /// Snapshots older than this are not restored. The bound stops a long-absent
+  /// user from being shown an ancient feed while the network spins.
   static const ttl = Duration(days: 3);
 
   /// Upper bound on stored cards per tab. The feed itself can page far beyond
@@ -147,6 +152,10 @@ class HomeFeedCache {
         }
       }
     }
+    if (raw['streamLayout'] != _streamLayoutVersion &&
+        cells.any(_hasStreamCell)) {
+      cells.clear();
+    }
     return HomeFeedSnapshot(
       items: items,
       cells: cells,
@@ -177,12 +186,20 @@ class HomeFeedCache {
         // layout on the first frame instead of the legacy flat grid. Written
         // only when present: a record without blocks stays readable by the
         // previous format.
-        if (cells.isNotEmpty) 'cells': _boundedCellMaps(cells),
+        if (cells.isNotEmpty) ...{
+          'cells': _boundedCellMaps(cells),
+          'streamLayout': _streamLayoutVersion,
+        },
       });
     } catch (_) {
       // The next successful load overwrites this entry anyway.
     }
   }
+
+  static bool _hasStreamCell(HomeCell cell) =>
+      cell.showType == kHomeCellMixedFeedShowType ||
+      cell.showType == kHomeCellDoubleRowFeedShowType ||
+      cell.children.any(_hasStreamCell);
 
   /// Serializes [cells] under the same card budget the flat [items] list gets.
   ///
