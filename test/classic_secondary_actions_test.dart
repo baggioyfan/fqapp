@@ -207,7 +207,7 @@ void main() {
   });
 
   group('番茄 import real actions', () {
-    testWidgets('Android 历史文件导入并合并到书架和历史', (tester) async {
+    testWidgets('Android 历史文件导入只合并浏览历史', (tester) async {
       debugDefaultTargetPlatformOverride = TargetPlatform.android;
       try {
         const channel = MethodChannel('fqapp/library_backup');
@@ -237,13 +237,14 @@ void main() {
         // Classic keeps the merge action in its fixed bottom bar.
         await tapAndWait(
           tester,
-          find.textContaining('导入 6 本到书架和历史'),
-          find.textContaining('已合并书架'),
+          find.textContaining('导入 6 本到浏览历史'),
+          find.textContaining('已合并历史'),
         );
 
-        expect(find.textContaining('已合并书架'), findsOneWidget);
+        expect(find.textContaining('已合并历史 6 本'), findsOneWidget);
+        expect(ShelfStore.instance.records(), isEmpty);
         expect(
-          ShelfStore.instance.records().map((record) => record.item.id),
+          LibraryStore.instance.historySnapshot().map((record) => record['id']),
           contains('100'),
         );
         expect(tester.takeException(), isNull);
@@ -303,7 +304,7 @@ void main() {
             of: find.byKey(const ValueKey('fanqie-import-scroll')),
             matching: find.byType(Scrollable),
           );
-          final merge = find.textContaining('导入 6 本到书架和历史');
+          final merge = find.textContaining('导入 6 本到浏览历史');
           for (final next in [
             style == AppThemeStyle.classic
                 ? AppThemeStyle.archive
@@ -327,13 +328,9 @@ void main() {
 
           // Classic keeps the merge action in its fixed bar; archive uses the inline action.
           await tester.ensureVisible(merge);
-          await tapAndWait(tester, merge, find.textContaining('已合并书架'));
-          expect(find.textContaining('已合并书架'), findsOneWidget);
-          expect(
-            ShelfStore.instance.records().map((record) => record.item.id),
-            contains('100'),
-          );
-          expect(ShelfStore.instance.records(), hasLength(6));
+          await tapAndWait(tester, merge, find.textContaining('已合并历史'));
+          expect(find.textContaining('已合并历史 6 本'), findsOneWidget);
+          expect(ShelfStore.instance.records(), isEmpty);
           final history = LibraryStore.instance.historySnapshot();
           expect(history, hasLength(6));
           final local = history.singleWhere((record) => record['id'] == '100');
@@ -346,8 +343,8 @@ void main() {
           await tester.scrollUntilVisible(pick, -240, scrollable: scrollable);
           await tapAndWait(tester, pick, find.textContaining('导入预览'));
           await tester.scrollUntilVisible(merge, 200, scrollable: scrollable);
-          await tapAndWait(tester, merge, find.textContaining('已合并书架'));
-          expect(ShelfStore.instance.records(), hasLength(6));
+          await tapAndWait(tester, merge, find.textContaining('已合并历史'));
+          expect(ShelfStore.instance.records(), isEmpty);
           expect(LibraryStore.instance.historySnapshot(), hasLength(6));
           expect(
             LibraryStore.instance.historySnapshot().singleWhere(
@@ -362,6 +359,121 @@ void main() {
         }
       });
     }
+
+    testWidgets('最近采集预览并合并：仅书架小说进入书架，全部小说进入历史', (tester) async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.android;
+      try {
+        final capture = FanqieLibraryCapture({
+          'format': 'fqapp.fanqie-library-capture',
+          'version': 2,
+          'parts': <String>[],
+          'stopReason': '',
+          'sources': <Map<String, dynamic>>[
+            {
+              'resource': 'shelf_list',
+              'status': 'received',
+              'payload': {
+                'code': 0,
+                'data': {
+                  'book_shelf_info_all': [
+                    {'book_id': '201', 'book_type': 0, 'book_name': '书架小说一'},
+                    {'book_id': '202', 'book_type': 0, 'book_name': '书架小说二'},
+                  ],
+                },
+              },
+            },
+            {
+              'resource': 'history',
+              'status': 'received',
+              'payload': {
+                'code': 0,
+                'data': {
+                  'has_more': false,
+                  'next_offset': 0,
+                  'data_list': [
+                    {
+                      'book_id': '201',
+                      'book_type': 0,
+                      'book_name': '书架小说一',
+                      'read_timestamp_ms': 1000,
+                    },
+                    {
+                      'book_id': '202',
+                      'book_type': 0,
+                      'book_name': '书架小说二',
+                      'read_timestamp_ms': 1100,
+                    },
+                    {
+                      'book_id': '301',
+                      'book_type': 0,
+                      'book_name': '浏览历史一',
+                      'read_timestamp_ms': 1200,
+                    },
+                    {
+                      'book_id': '302',
+                      'book_type': 0,
+                      'book_name': '浏览历史二',
+                      'read_timestamp_ms': 1300,
+                    },
+                    {
+                      'book_id': '303',
+                      'book_type': 0,
+                      'book_name': '浏览历史三',
+                      'read_timestamp_ms': 1400,
+                    },
+                  ],
+                },
+              },
+            },
+          ],
+        });
+        const channel = MethodChannel('fqapp/library_backup');
+        tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+          channel,
+          (call) async {
+            if (call.method == 'latestFanqieCapture') return capture.encode();
+            return null;
+          },
+        );
+        addTearDown(
+          () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+            channel,
+            null,
+          ),
+        );
+
+        await pumpStyled(tester, const FanqieHistoryImportPage());
+
+        await tapAndWait(
+          tester,
+          find.byKey(const ValueKey('fanqie-use-capture')),
+          find.textContaining('导入预览'),
+        );
+
+        final merge = find.text('导入书架 2 本、历史 5 本');
+        expect(merge, findsOneWidget);
+        expect(ShelfStore.instance.records(), isEmpty);
+
+        await tapAndWait(
+          tester,
+          merge,
+          find.textContaining('已合并书架 2 本、历史 5 本'),
+        );
+
+        expect(find.textContaining('已合并书架 2 本、历史 5 本'), findsOneWidget);
+        expect(
+          ShelfStore.instance.records().map((r) => r.item.id),
+          unorderedEquals(['201', '202']),
+        );
+        expect(
+          LibraryStore.instance.historySnapshot().map((r) => r['id']),
+          unorderedEquals(['201', '202', '301', '302', '303']),
+        );
+        expect(tester.takeException(), isNull);
+      } finally {
+        debugDefaultTargetPlatformOverride = null;
+      }
+    });
 
     testWidgets('采集显示进度并可取消，取消后不导入', (tester) async {
       debugDefaultTargetPlatformOverride = TargetPlatform.android;

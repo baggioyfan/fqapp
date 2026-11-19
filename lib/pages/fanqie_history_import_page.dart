@@ -214,6 +214,7 @@ class _FanqieHistoryImportPageState extends State<FanqieHistoryImportPage> {
           0,
           0,
           preview.sourceCount - preview.validated.history.length,
+          shelfIds: const {},
         );
       }
     });
@@ -261,12 +262,35 @@ class _FanqieHistoryImportPageState extends State<FanqieHistoryImportPage> {
     if (mounted) {
       setState(() {
         _libraryPreview = null;
-        _message =
-            '已合并书架 ${result.shelf} 本、历史 ${result.history} 本；'
-            '保留较新的本机阅读位置。重复导入不会产生重复书籍。';
+        _message = result.shelf > 0
+            ? '已合并书架 ${result.shelf} 本、历史 ${result.history} 本；'
+                  '保留较新的本机阅读位置。重复导入不会产生重复书籍。'
+            : '已合并历史 ${result.history} 本（未新增书架）；'
+                  '保留较新的本机阅读位置。重复导入不会产生重复书籍。';
       });
     }
   });
+
+  String _previewSummary(FanqieImportPreview parsed) {
+    if (_previewSource == '历史文件') {
+      return '历史文件仅包含阅读记录，将全部 ${parsed.records.length} 本导入浏览历史，'
+          '不加入书架；保留较新的本机阅读位置。';
+    }
+    if (parsed.shelfCount == 0 && parsed.shelfSourceFailed) {
+      return '书架接口未能采集成功，本次仅将 ${parsed.records.length} 本导入浏览历史，'
+          '不写入书架；保留较新的本机阅读位置。';
+    }
+    if (parsed.shelfCount == 0) {
+      return '番茄账号书架中暂无小说，本次仅将 ${parsed.records.length} 本导入浏览历史；'
+          '保留较新的本机阅读位置。';
+    }
+    return '仅将番茄书架中的 ${parsed.shelfCount} 本加入本机书架，'
+        '全部 ${parsed.records.length} 本加入浏览历史，保留较新的本机阅读位置。';
+  }
+
+  String _mergeButtonLabel(FanqieImportPreview parsed) => parsed.shelfCount > 0
+      ? '导入书架 ${parsed.shelfCount} 本、历史 ${parsed.records.length} 本'
+      : '导入 ${parsed.records.length} 本到浏览历史';
 
   Future<void> _loadLatest() async {
     try {
@@ -313,8 +337,8 @@ class _FanqieHistoryImportPageState extends State<FanqieHistoryImportPage> {
           icon: LucideIcons.book_open,
           title: '书架和进度，一起带回来',
           subtitle: isLinuxDesktop
-              ? 'Linux 仅支持导入已保存的番茄历史 JSON，预览后合并到本机书架与历史。'
-              : '从番茄读取小说，加入本机书架与历史。有章节记录的书，可以接着读。',
+              ? 'Linux 仅支持导入已保存的番茄历史 JSON，预览后合并到本机浏览历史。'
+              : '仅将账号书架小说导入本机书架，全部小说加入浏览历史。',
         ),
       ),
       const SizedBox(height: 24),
@@ -438,14 +462,15 @@ class _FanqieHistoryImportPageState extends State<FanqieHistoryImportPage> {
                 children: [
                   SettingsStats(
                     values: {
-                      '小说': parsed.records.length,
+                      '加入书架': parsed.shelfCount,
+                      '加入历史': parsed.records.length,
                       '章节已定位': parsed.matched,
                       '待重试': parsed.unresolved,
                     },
                   ),
                   const SizedBox(height: 14),
                   Text(
-                    '同时加入书架和历史，保留较新的本机阅读位置。',
+                    _previewSummary(parsed),
                     style: muted.copyWith(fontSize: 13),
                   ),
                   const SizedBox(height: 8),
@@ -454,20 +479,27 @@ class _FanqieHistoryImportPageState extends State<FanqieHistoryImportPage> {
                 ],
               ),
             ),
-            for (final record in parsed.records.take(6))
+            for (final record in parsed.previewRecords.take(6))
               // Every preview row carries its data id. The section header
               // above scrolls out of the list's build window while the rows
               // are still on screen, so a header-only anchor cannot restore
               // the viewport position.
               KeyedSubtree(
                 key: _anchor.keyFor('preview-book-${_recordKey(record)}'),
-                child: _recordRow(record, classic: classic, muted: subtle),
+                child: _recordRow(
+                  record,
+                  inShelf: parsed.shelfIds.contains(record['id']),
+                  classic: classic,
+                  muted: subtle,
+                ),
               ),
             if (parsed.records.length > 6)
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
                 child: Text(
-                  '仅展示前 6 本，导入包含全部 ${parsed.records.length} 本小说',
+                  parsed.shelfCount > 0
+                      ? '仅展示前 6 本（书架优先），导入包含书架 ${parsed.shelfCount} 本、历史 ${parsed.records.length} 本'
+                      : '仅展示前 6 本，导入包含全部 ${parsed.records.length} 本浏览历史',
                   style: subtle,
                 ),
               ),
@@ -477,7 +509,7 @@ class _FanqieHistoryImportPageState extends State<FanqieHistoryImportPage> {
                 classicPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
                 child: SettingsAction(
                   key: const ValueKey('fanqie-merge'),
-                  label: '导入 ${parsed.records.length} 本到书架和历史',
+                  label: _mergeButtonLabel(parsed),
                   onPressed: enabled && parsed.records.isNotEmpty
                       ? _mergeLibrary
                       : null,
@@ -565,7 +597,7 @@ class _FanqieHistoryImportPageState extends State<FanqieHistoryImportPage> {
               DataTransferAction(
                 label: parsed == null
                     ? '解析并预览已保存的数据'
-                    : '导入 ${parsed.records.length} 本到书架和历史',
+                    : _mergeButtonLabel(parsed),
                 onPressed:
                     enabled && (parsed == null || parsed.records.isNotEmpty)
                     ? parsed == null
@@ -668,6 +700,7 @@ class _FanqieHistoryImportPageState extends State<FanqieHistoryImportPage> {
   /// 预览里的一本：经典用 ListTile，档案保持自绘行。
   Widget _recordRow(
     Map<String, dynamic> record, {
+    required bool inShelf,
     required bool classic,
     required TextStyle muted,
   }) {
@@ -676,9 +709,10 @@ class _FanqieHistoryImportPageState extends State<FanqieHistoryImportPage> {
     final title = (record['title'] as String).isEmpty
         ? '未注明书名'
         : record['title'] as String;
-    final subtitle =
+    final chapter =
         record['ep'] as String? ??
         (record['chapterId'] == null ? '未取得阅读章节' : '打开时重新匹配章节');
+    final subtitle = '${inShelf ? '书架 + 历史 · ' : '仅历史 · '}$chapter';
     if (classic) {
       return ListTile(
         key: ValueKey('fanqie-record-${_recordKey(record)}'),
