@@ -26,6 +26,7 @@ import '../services/audio_time_point_lookup.dart';
 import '../services/audio_preferences.dart';
 import '../services/backend_transport.dart';
 import '../services/book_updates.dart';
+import '../services/boss_key_service.dart';
 import '../services/chapter_cache_store.dart';
 import '../services/chapter_text_formatter.dart';
 import '../services/fair_memory.dart';
