@@ -1142,6 +1142,47 @@ stream 与整集下载共用这一次模型解析。HTTP 401/403 仍按设备鉴
 
 ### 2. 调试技巧
 
+#### 应用内日志结构
+
+`lib/services/app_log.dart` 保留 `AppLog.d/i/w/e`、捕获安装、内存缓冲及
+`startPersistence/flush` 调用方式。具体职责放在 `lib/services/logging/`：
+
+- `log_models.dart`：条目、级别、来源与筛选条件，不依赖页面或平台 I/O。
+- `log_codec.dart`：捕获、历史回读、核心读取及文本导出的统一脱敏与多行解析。
+- `log_file_store.dart`：UTF-8 文件轮换、启动期间条目排队、串行 flush 与关闭。
+- `log_viewer_controller.dart`：筛选、冻结/跟随、条目身份复用、轮询与生命周期代次。
+- `log_export.dart`：不可变导出快照；区分核心文件不可读与空文件。
+- `rust_log_source.dart`：宿主注入的核心读取；无时区后缀的旧核心时间戳按 UTC
+  解析，显式 `Z`/偏移保持原语义，应用日志仍按本地时间解析。
+
+`LogViewerPage` 负责页面、滚动、弹层和剪贴板/TXT/分享操作，经典与档案主题
+共用状态。日志格式、文件路径和清空当前视图的语义不变，不删除已有日志文件。
+历史回读不重复写入，历史及核心条目在显示/导出前脱敏；不改写旧文件，也不改变
+Rust 日志生产端的格式或平台启用范围。
+
+定向回归：
+
+```bash
+flutter test --no-pub test/app_log_test.dart test/log_file_store_test.dart test/log_codec_test.dart test/log_viewer_controller_test.dart test/log_viewer_page_test.dart test/log_viewer_eink_test.dart
+```
+
+2026-11-19 使用 MuMu 6.8.8.0 / Android 12 实例 `1` 验证 arm64 release，
+x86_64 经 ARM 转译，实际界面为 1600×900 横屏。测试包为原开发工作区的
+`1.0.204+209`（split versionCode `2209`），SHA-256 为
+`ed744748e81b7a138998a87d23e40c2ba8dead688fa3ffc2661414621fed087b`；
+保留数据升级，签名、ABI、ELF/ZIP 16 KiB 对齐及安装后哈希检查通过。
+该设备证据只归属此包，不代表之后从更新的 `master` 整理出的 PR 集成版本已做
+设备验收，也不归属为工作区其他业务修改的验收。
+
+实际观察：来源切换、级别/关键词筛选、详情展开、轮询时保留展开状态、冻结/
+恢复跟随、TXT 筛选/全部/合并导出、后台返回和经典/档案主题均正常。重启前
+94 条应用日志全部回读，无遗漏或重复回写；重启后新增 6 条属于新会话。
+实测发现核心无时区后缀 UTC 被当作本地时间，导致近期筛选误排除新日志；上述
+解析层修正后重建并复测通过。复制仅验证成功回显，未核对外部剪贴板全文；
+分享显示无可处理应用，不计为成功发送。未清空数据，临时主题和系统设置已恢复，
+原始截图、日志和导出文本保留在仓库外。未见应用崩溃或 ANR；模拟器结果不代表
+真机性能、硬件兼容性或 16 KiB 页设备验证，也未覆盖所有敏感日志输入。
+
 沿用 MuMu 工作流中已确认的 `$adb` 和 `$serial`。`run-as` 仅适用于可调试构建，默认 release 包不可据此读取私有日志；可改看应用内诊断及 `logcat`，不要为取日志清空数据或改装调试包。
 
 ```powershell

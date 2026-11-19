@@ -1,53 +1,18 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 import 'package:path_provider/path_provider.dart';
 
-/// 日志级别（从轻到重）。
-enum LogLevel {
-  debug,
-  info,
-  warn,
-  error;
+import 'logging/log_codec.dart';
+import 'logging/log_file_store.dart';
+import 'logging/log_models.dart';
 
-  String get label => switch (this) {
-    LogLevel.debug => '调试',
-    LogLevel.info => '资讯',
-    LogLevel.warn => '警告',
-    LogLevel.error => '错误',
-  };
-
-  String get token => switch (this) {
-    LogLevel.debug => 'D',
-    LogLevel.info => 'I',
-    LogLevel.warn => 'W',
-    LogLevel.error => 'E',
-  };
-}
-
-/// 单条日志。
-///
-/// 隐私纪律沿用 `PlayerLoadSample` 的契约：只记方法/状态/耗时/标签，
-/// **绝不记录 URL 中的参数、秘钥、请求体或任何敏感字段**。
-class LogEntry {
-  final DateTime time;
-  final LogLevel level;
-  final String tag;
-  final String message;
-
-  const LogEntry({
-    required this.time,
-    required this.level,
-    required this.tag,
-    required this.message,
-  });
-
-  String format() =>
-      '[${level.token}] ${time.toIso8601String()} $tag: $message';
-}
+export 'logging/log_codec.dart' show formatLogLines;
+export 'logging/log_file_store.dart' show FileLogWriter;
+export 'logging/log_models.dart';
+export 'logging/rust_log_source.dart';
 
 /// 应用内日志核心：内存环形缓冲 + 捕获框架/未捕获异步异常 + 文件轮换持久化。
 ///
@@ -64,7 +29,7 @@ class AppLog with WidgetsBindingObserver {
 
   static const int defaultCapacity = 1000;
   static const String logDirName = 'logs';
-  static const String logFileName = 'app.log';
+  static const String logFileName = FileLogWriter.fileName;
 
   final List<LogEntry> _entries = <LogEntry>[];
 
@@ -74,16 +39,8 @@ class AppLog with WidgetsBindingObserver {
 
   int _capacity = defaultCapacity;
   LogLevel _minLevel = LogLevel.debug;
-  FileLogWriter? _file;
+  final LogFileStore _files = LogFileStore();
 
-  /// 定时 flush 句柄；只在开启落盘后存在。
-  Timer? _flushTimer;
-
-  /// 自上次 flush 以来是否有新条目（无新条目时定时器不空转写盘）。
-  bool _dirty = false;
-
-  /// 串行化落盘，避免多条日志并发 append 造成交错。
-  Future<void> _pendingWrite = Future<void>.value();
   DebugPrintCallback? _previousDebugPrint;
   FlutterExceptionHandler? _previousOnError;
   bool _observing = false;
@@ -137,7 +94,7 @@ class AppLog with WidgetsBindingObserver {
   /// 生产不需要（进程结束即还原），主要为测试与热重启后的卫生服务。
   void uninstall() {
     _detachLifecycle();
-    _stopFlushTimer();
+    _files.stopFlushing();
     if (!installed) return;
     if (_previousDebugPrint != null) debugPrint = _previousDebugPrint!;
     FlutterError.onError = _previousOnError;
@@ -214,7 +171,7 @@ class AppLog with WidgetsBindingObserver {
     final entry = LogEntry(
       time: DateTime.now(),
       level: level,
-      tag: tag,
+      tag: sanitizeLogText(tag),
       // 捕获层脱敏：消息/错误/堆栈在进缓冲与落盘前统一过一遍
       // [sanitizeLogText]，一行日志里的 URL capability、Bearer、
       // Cookie 与敏感键值不会落进内存、文件或导出。
@@ -223,16 +180,7 @@ class AppLog with WidgetsBindingObserver {
     _entries.add(entry);
     if (_entries.length > _capacity) _entries.removeAt(0);
     revision.value++;
-    // 不 await：落盘失败只丢该条，不影响内存日志；但写入串行，保证文件内不交错。
-    final writer = _file;
-    if (writer != null) {
-      _dirty = true;
-      _pendingWrite = _pendingWrite
-          .then((_) => writer.append(entry.format()))
-          .catchError((Object _) {});
-      // 警告/错误是事后排障最需要的几条，不等定时窗口，立刻落盘。
-      if (level.index >= LogLevel.warn.index) unawaited(flush());
-    }
+    _files.append(entry);
   }
 
   String _compose(String message, Object? error, StackTrace? stack) {
@@ -242,89 +190,9 @@ class AppLog with WidgetsBindingObserver {
     return buf.toString();
   }
 
-  /// Redacts secrets from one log line before it is buffered or written.
-  ///
-  /// Capture-layer filter: every path into [AppLog] — framework errors,
-  /// the debugPrint passthrough, business logs — funnels through [_emit],
-  /// so a stray URL or token in an exception or a debug print cannot land
-  /// in the buffer, the log file, or an export. Deliberately narrow so
-  /// the log viewer stays useful: only the per-launch loopback capability
-  /// path, bearer/authorization/cookie credentials, and values of
-  /// known-secret keys are replaced; routes, ids, timings and ordinary
-  /// text pass through untouched.
-  ///
-  /// A `Cookie:` header value is redacted to end of line: the whole header
-  /// is credential material (`a=b; c=d`), and splitting it would leak the
-  /// tail. Standalone long hex/base64 blobs are *not* redacted — without
-  /// a sensitive key around them they are indistinguishable from ids.
+  /// Compatibility entry point; all sources share the same redaction codec.
   @visibleForTesting
-  static String sanitizeLogText(String input) {
-    var out = input;
-    out = out.replaceAllMapped(
-      _sessionPathPattern,
-      (_) => '/_session/<redacted>',
-    );
-    out = out.replaceAllMapped(_authorizationPattern, (match) {
-      final bearer = match.group(2);
-      return bearer == null
-          ? '${match.group(1)}<redacted>'
-          : '${match.group(1)}Bearer <redacted>';
-    });
-    out = out.replaceAllMapped(
-      _bareBearerPattern,
-      (match) => '${match.group(1)}<redacted>',
-    );
-    out = out.replaceAllMapped(
-      _cookiePattern,
-      (match) => '${match.group(1)}<redacted>',
-    );
-    out = out.replaceAllMapped(
-      _sensitiveQueryPattern,
-      (match) => '${match.group(1)}<redacted>',
-    );
-    out = out.replaceAllMapped(
-      _sensitiveAssignmentPattern,
-      (match) => '${match.group(1)}<redacted>',
-    );
-    return out;
-  }
-
-  /// `/_session/<capability>/…` — the per-launch loopback capability.
-  static final _sessionPathPattern = RegExp(r'''/_session/[^/\s?#'"<>]+''');
-
-  /// `Authorization: [Bearer ]<credential>` (case-insensitive).
-  static final _authorizationPattern = RegExp(
-    r'''([Aa]uthorization\s*[:=]\s*["']?)(Bearer\s+)?[^\s"'\n,;]+''',
-  );
-
-  /// Bare `Bearer <credential>` without an `Authorization:` prefix.
-  static final _bareBearerPattern = RegExp(r'''([Bb]earer\s+)[^\s"'\n,;]+''');
-
-  /// `Cookie: <whole header value>` — redacted to end of line.
-  static final _cookiePattern = RegExp(r'([Cc]ookie\s*[:=]\s*)[^\n]*');
-
-  /// Keys whose values are secret material (query `?key=value` and
-  /// free-text/JSON `key: value` / `key=value` share this set).
-  static const _sensitiveKeys =
-      'token|access_token|refresh_token|id_token|auth|authorization|'
-      'password|passwd|pwd|secret|client_secret|api_key|apikey|key|'
-      'key_hex|secret_key|access_key|capability|session|session_id|'
-      'sessionid|cookie|sign|signature|credential|credentials|'
-      'private_key|spade_a|device_token';
-
-  static final _sensitiveQueryPattern = RegExp(
-    '([?&](?:$_sensitiveKeys)=)[^&\\s"\'#]*',
-    caseSensitive: false,
-  );
-
-  static final _sensitiveAssignmentPattern = RegExp(
-    '((?:^|[\\s{"\'\\(,\\[])(?:$_sensitiveKeys)\\s*["\']?\\s*[:=]\\s*["\']?)'
-    // 不吃 `Bearer …`：`Authorization: Bearer <token>` 由上面的
-    // Authorization/Bearer 轮次处理，这里再匹配会把 `Bearer` 一词
-    // 当成值、留下裸 token（或把已脱敏的占位符再包一层）。
-    '(?!Bearer\\s)[^"\'\\s,}\\]]+',
-    caseSensitive: false,
-  );
+  static String sanitizeLogText(String input) => LogCodec.sanitizeText(input);
 
   /// 清空当前可查看的日志（历史 + 本次会话）；不删除落盘文件。
   void clear() {
@@ -341,142 +209,40 @@ class AppLog with WidgetsBindingObserver {
   Future<void> startPersistence({
     Directory? directory,
     Duration flushInterval = const Duration(seconds: 5),
-  }) async {
-    if (_file != null) return;
-    Directory? dir = directory;
-    if (dir == null) {
+  }) => _files.start(
+    resolveDirectory: () async {
+      if (directory != null) return directory;
       try {
         final support = await getApplicationSupportDirectory();
-        dir = Directory('${support.path}/$logDirName');
+        return Directory('${support.path}/$logDirName');
       } catch (_) {
-        return; // 拿不到私有目录：纯内存模式。
+        return null;
       }
-    }
-    try {
-      final writer = FileLogWriter(dir);
-      await writer.open();
-      // 回读上次会话：文件只追加，但**只有回读**才能让重启/崩溃后在日志页
-      // 看到上一次运行；历史单独存放，不参与下面的写回，避免重复落盘。
-      await _loadHistory(dir);
-      // 把开启前已缓冲的条目先写进去，再从当前尾部续写。
-      for (final entry in List.of(_entries)) {
-        await writer.append(entry.format());
-      }
-      await writer.flush();
-      _file = writer;
-      _startFlushTimer(flushInterval);
-    } catch (_) {
-      _file = null;
-    }
-  }
-
-  /// 回读上次会话落盘日志（含崩溃前没来得及走生命周期回调的那部分）。
-  ///
-  /// 回读失败只意味着看不到历史，不影响本次会话继续落盘。
-  Future<void> _loadHistory(Directory dir) async {
-    final file = File('${dir.path}/$logFileName');
-    if (!file.existsSync()) return;
-    try {
-      final parsed = parseLogLines(await file.readAsLines());
-      if (parsed.isEmpty) return;
+    },
+    bufferedEntries: () => List<LogEntry>.of(_entries),
+    onHistory: (entries) {
       _history
         ..clear()
         ..addAll(
-          parsed.length > _capacity
-              ? parsed.sublist(parsed.length - _capacity)
-              : parsed,
+          entries.length > _capacity
+              ? entries.sublist(entries.length - _capacity)
+              : entries,
         );
-    } catch (_) {
-      // 回读失败只丢历史视图。
-    }
-  }
-
-  /// 解析落盘行：形态是 `[级别] ISO 标签: 消息`。消息可以多行，匹配不上的行
-  /// 按「上一条的续行」处理，多行异常栈回读后仍是同一条。
-  static List<LogEntry> parseLogLines(List<String> lines) {
-    final result = <LogEntry>[];
-    LogLevel? level;
-    DateTime? time;
-    String? tag;
-    final message = StringBuffer();
-
-    void flushEntry() {
-      final l = level;
-      final t = time;
-      final g = tag;
-      if (l == null || t == null || g == null) return;
-      result.add(
-        LogEntry(time: t, level: l, tag: g, message: message.toString()),
-      );
-    }
-
-    for (final line in lines) {
-      final match = _entryPattern.firstMatch(line);
-      if (match == null) {
-        // 续行接到上一条；文件开头的无主续行直接忽略。
-        if (level != null) {
-          if (message.isNotEmpty) message.write('\n');
-          message.write(line);
-        }
-        continue;
-      }
-      flushEntry();
-      level = _levelFromToken(match.group(1)!);
-      time = DateTime.tryParse(match.group(2)!) ?? DateTime.now();
-      tag = match.group(3)!;
-      message
-        ..clear()
-        ..write(match.group(4)!);
-    }
-    flushEntry();
-    return result;
-  }
-
-  static final RegExp _entryPattern = RegExp(
-    r'^\[([DIWE])\] (\S+) ([^:]*): (.*)$',
+      // A viewer can already be mounted while persistence starts asynchronously.
+      if (entries.isNotEmpty) revision.value++;
+    },
+    flushInterval: flushInterval,
   );
 
-  static LogLevel _levelFromToken(String token) => switch (token) {
-    'E' => LogLevel.error,
-    'W' => LogLevel.warn,
-    'I' => LogLevel.info,
-    _ => LogLevel.debug,
-  };
+  /// Parses restored application and core logs using the shared text contract.
+  static List<LogEntry> parseLogLines(List<String> lines) =>
+      LogCodec.parseLines(lines);
 
-  /// 当前落盘日志文件路径（未开启持久化为 null）。
-  String? get filePath => _file?.currentPath;
+  /// Current file path, or null while logging only in memory.
+  String? get filePath => _files.currentPath;
 
-  /// 等待已排队的落盘写入真正落到文件（退出前、导出与测试断言时用）。
-  ///
-  /// flush 本身也排进 `_pendingWrite` 这条串行链：`IOSink.flush()` **不可并发**
-  /// 调用，重叠时会抛 `StateError: StreamSink is bound to a stream`（告警/错误的
-  /// 「立即落盘」与定时 flush 很容易撞上）。
-  Future<void> flush() async {
-    final writer = _file;
-    final step = _pendingWrite
-        .then((_) => writer?.flush())
-        .catchError((Object _) {});
-    _pendingWrite = step;
-    await step;
-    // 本步执行期间若又有新条目排队，保持脏标记让下一轮继续刷。
-    if (identical(step, _pendingWrite)) _dirty = false;
-  }
-
-  /// 定时把缓冲刷到磁盘。
-  ///
-  /// 前台硬崩溃（native crash / OOM / SIGKILL）拿不到生命周期回调，只靠退后台
-  /// flush 会丢掉整段会话日志；定时窗口即最大丢失窗口。
-  void _startFlushTimer(Duration interval) {
-    _stopFlushTimer();
-    _flushTimer = Timer.periodic(interval, (_) {
-      if (_dirty) unawaited(flush());
-    });
-  }
-
-  void _stopFlushTimer() {
-    _flushTimer?.cancel();
-    _flushTimer = null;
-  }
+  /// Drains the serialized write/flush queue before assertions or shutdown.
+  Future<void> flush() => _files.flush();
 
   // ── 导出与分享 ─────────────────────────────────────────────────────────
 
@@ -487,133 +253,11 @@ class AppLog with WidgetsBindingObserver {
   @visibleForTesting
   Future<void> resetForTest() async {
     uninstall();
-    // 先让落盘队列跑完再 close：close 与在途 flush 并发同样会抛 StreamSink 错误。
-    await _pendingWrite.catchError((Object _) {});
-    await _file?.close();
-    _file = null;
-    _pendingWrite = Future<void>.value();
-    _dirty = false;
+    await _files.close();
     _history.clear();
     _entries.clear();
     revision.value++;
     _capacity = defaultCapacity;
     _minLevel = LogLevel.debug;
   }
-}
-
-/// 追加式日志文件写入 + 大小轮换。
-///
-/// 单文件超过 [maxBytes] 时把 `app.log` 改名为 `app.log.1`（保留 [maxBackups]
-/// 份备份），再新建一个空文件继续写。只追加，不覆盖旧内容。
-class FileLogWriter {
-  FileLogWriter(this.dir, {this.maxBytes = 1 << 20, this.maxBackups = 1});
-
-  final Directory dir;
-  final int maxBytes;
-  final int maxBackups;
-
-  File? _current;
-  IOSink? _sink;
-  int _size = 0;
-
-  String get currentPath => _current?.path ?? '';
-
-  Future<void> open() async {
-    if (!dir.existsSync()) {
-      dir.createSync(recursive: true);
-    }
-    final file = File('${dir.path}/${AppLog.logFileName}');
-    _current = file;
-    if (file.existsSync()) _size = file.lengthSync();
-    _sink = file.openWrite(mode: FileMode.append);
-  }
-
-  Future<void> append(String line) async {
-    if (_sink == null) return;
-    // 文件里写的是 UTF-8，字节数必须按 UTF-8 计：`String.length` 是 UTF-16
-    // 码元，一行中文的实际字节约为它的 3 倍，会让轮换点拖到三倍上限。
-    // 编码结果直接交给 sink，避免 write(String) 再编码一次。
-    final encoded = utf8.encode(line);
-    final bytes = encoded.length + 1;
-    if (_size + bytes > maxBytes) {
-      await rotate();
-    }
-    // rotate() 会替换 sink，必须重新取；用进入时捕获的旧 sink 会写到已关闭的流。
-    final sink = _sink;
-    if (sink == null) return;
-    sink.add(encoded);
-    sink.add(const [0x0A]);
-    _size += bytes;
-  }
-
-  /// 把缓冲真正写到磁盘（IOSink 会缓冲，不 flush 时文件里可能还没有内容）。
-  Future<void> flush() => _sink?.flush() ?? Future<void>.value();
-
-  Future<void> rotate() async {
-    await _sink?.flush();
-    await _sink?.close();
-    _sink = null;
-    final files = <File>[
-      File('${dir.path}/${AppLog.logFileName}'),
-      for (var i = 1; i <= maxBackups; i++)
-        File('${dir.path}/${AppLog.logFileName}.$i'),
-    ];
-    // 最旧备份先删。
-    final oldest = files[files.length - 1];
-    if (oldest.existsSync()) oldest.deleteSync();
-    // 备份依次后移。
-    for (var i = maxBackups; i >= 1; i--) {
-      final from = File(
-        '${dir.path}/${AppLog.logFileName}${i == 1 ? '' : '.$i'}',
-      );
-      final to = File('${dir.path}/${AppLog.logFileName}.$i');
-      if (from.existsSync()) from.renameSync(to.path);
-    }
-    _size = 0;
-    final fresh = File('${dir.path}/${AppLog.logFileName}');
-    _current = fresh;
-    _sink = fresh.openWrite(mode: FileMode.write);
-  }
-
-  Future<void> close() async {
-    await _sink?.flush();
-    await _sink?.close();
-    _sink = null;
-  }
-}
-
-/// Rust 核心日志（`core_log` 落盘副本）的读取入口。
-///
-/// Rust 侧只把日志写进 `runtime_dir/rust.log` —— Android 应用读不到自己的 logcat，
-/// 这是真机上唯一的观测面。读取实现由宿主注入（`main()` 接
-/// `BackendService.rustLogFile`），日志页的「Rust」视图据此展示；未注入时视为
-/// 不可用，页面给空态而不是报错。
-class RustLogSource {
-  const RustLogSource._();
-
-  /// 返回文件全文；文件不存在返回 null。
-  static Future<String?> Function()? reader;
-
-  static Future<String?> read() async {
-    final read = reader;
-    if (read == null) return null;
-    try {
-      return await read();
-    } catch (_) {
-      return null;
-    }
-  }
-}
-
-/// 把日志条目渲染成可复制/分享的纯文本。
-///
-/// `maxLines` 只保留最后若干条并标注省略数；日志页对「应用」与「Rust」两个来源
-/// 共用这一个渲染器，避免两处各写一遍截断规则。
-String formatLogLines(List<LogEntry> entries, {int? maxLines}) {
-  final lines = entries.map((e) => e.format()).toList();
-  if (maxLines != null && lines.length > maxLines) {
-    final kept = lines.sublist(lines.length - maxLines);
-    return '... 省略 ${lines.length - maxLines} 条 ...\n${kept.join('\n')}';
-  }
-  return lines.join('\n');
 }
