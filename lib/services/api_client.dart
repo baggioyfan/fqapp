@@ -39,6 +39,23 @@ export '../models/homepage_page.dart';
 part 'reader_video_api.dart';
 part 'ugc_story_api.dart';
 
+/// Why a content fetch was issued. Local-only: [ApiClient] appends it to the
+/// transport URI as `_playback_purpose`, after the [RequestGate] key is formed,
+/// so the Rust core can attribute a "video failed" log to a foreground load or
+/// a speculative prefetch while a demand and a prefetch for the same episode
+/// still coalesce onto one flight. It never reaches an upstream request, body
+/// or signature — the video endpoint signs its own constant-URL request.
+enum PlaybackPurpose {
+  foreground('foreground'),
+  prefetch('prefetch'),
+  other('other');
+
+  const PlaybackPurpose(this.wire);
+
+  /// The allowlisted value the Rust core reads back from the query.
+  final String wire;
+}
+
 /// API client talking to the local Rust core.
 ///
 /// Uses the same `/api/*` bridge the web UI uses, so responses are already
@@ -234,6 +251,7 @@ class ApiClient {
     Duration? timeout,
     String method = 'GET',
     Uint8List? body,
+    PlaybackPurpose? playbackPurpose,
   }) {
     // The transport owns the deadline: cancelling drops the in-flight Rust
     // dispatch (and therefore the upstream request, its retry backoff and any
@@ -243,6 +261,11 @@ class ApiClient {
     // 日志只记方法与路由模板（数值/长十六进制段打码），不记 query、参数与请求体
     // —— 隐私纪律同 PlayerLoadSample：never URLs, keys or API bodies。
     final route = '$method ${_logRoute(url)}';
+    // 用途只进传输 URI(见下方 send 闭包),不进 gate key;日志仅附带
+    // allowlist 枚举值,不记 query 本身。
+    final purposeSuffix = playbackPurpose == null
+        ? ''
+        : ' purpose=${playbackPurpose.wire}';
     final watch = Stopwatch()..start();
     Duration? queueTime;
     final future = _gate.run(
@@ -257,9 +280,12 @@ class ApiClient {
         if (remaining.inMilliseconds <= 0) {
           throw BackendRequestAborted('请求超时', timedOut: true);
         }
+        // 追加本地用途参数发生在 gate key 形成之后:同 URL 的
+        // foreground/prefetch 仍共享一次在飞请求,用途代表实际发起者。
+        final target = _withPlaybackPurpose(url, playbackPurpose);
         final response = await _transport.send(
           method,
-          Uri.parse(url),
+          target,
           body: body,
           timeout: remaining,
           request: request is BackendRequest ? request : null,
@@ -280,7 +306,7 @@ class ApiClient {
         AppLog.d(
           'api',
           '$route ${response.statusCode} ${watch.elapsedMilliseconds}ms '
-              'queue=${queueTime?.inMilliseconds ?? 'shared'}',
+              'queue=${queueTime?.inMilliseconds ?? 'shared'}$purposeSuffix',
         );
       },
       onError: (Object error) {
@@ -290,11 +316,25 @@ class ApiClient {
         AppLog.w(
           'api',
           '$route 失败 ${watch.elapsedMilliseconds}ms (${error.runtimeType}) '
-              'queue=${queueTime?.inMilliseconds ?? 'waiting/shared'}',
+              'queue=${queueTime?.inMilliseconds ?? 'waiting/shared'}'
+              '$purposeSuffix',
         );
       },
     );
     return future;
+  }
+
+  static const String _playbackPurposeParam = '_playback_purpose';
+
+  /// Appends the local-only playback purpose to [url] for the transport hop.
+  /// The existing query is preserved verbatim; exactly one parameter is added.
+  static Uri _withPlaybackPurpose(String url, PlaybackPurpose? purpose) {
+    final target = Uri.parse(url);
+    if (purpose == null) return target;
+    final query = target.query.isEmpty
+        ? '$_playbackPurposeParam=${purpose.wire}'
+        : '${target.query}&$_playbackPurposeParam=${purpose.wire}';
+    return target.replace(query: query);
   }
 
   static final RegExp _hexSegment = RegExp(r'^[0-9a-fA-F]+$');
@@ -503,9 +543,11 @@ class ApiClient {
     String tab = '小说',
     String? toneId,
     String? mode,
+    PlaybackPurpose? purpose,
   }) async {
     final r = await _get(
       _contentUrl(itemId, tab: tab, toneId: toneId, mode: mode),
+      playbackPurpose: (tab == '短剧' || tab == '漫剧') ? purpose : null,
     );
     return _decodeAsync(r);
   }

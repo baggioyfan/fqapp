@@ -11,8 +11,10 @@ void main() {
     () async {
       final result = Completer<EpisodeSource>();
       var requests = 0;
+      final prefetchFlags = <bool>[];
       final cache = EpisodeSourceCache(
-        loader: (_) {
+        loader: (_, {required bool prefetch}) {
+          prefetchFlags.add(prefetch);
           requests++;
           return result.future;
         },
@@ -22,6 +24,7 @@ void main() {
       final selected = cache.request(_chapter('2'));
       expect(selected.origin, EpisodeSourceOrigin.prefetchPending);
       expect(requests, 1);
+      expect(prefetchFlags, [true]);
       result.complete(
         const EpisodeSource('https://example.invalid/2.mp4', '1234'),
       );
@@ -31,6 +34,7 @@ void main() {
       expect(ready.origin, EpisodeSourceOrigin.prefetchHit);
       expect(identical(await selected.future, await ready.future), true);
       expect(requests, 1);
+      expect(prefetchFlags, [true]);
     },
   );
 
@@ -39,10 +43,12 @@ void main() {
     () async {
       var now = Duration.zero;
       var requests = 0;
+      final prefetchFlags = <bool>[];
       final gate = Completer<EpisodeSource>();
       final cache = EpisodeSourceCache(
         now: () => now,
-        loader: (_) {
+        loader: (_, {required bool prefetch}) {
+          prefetchFlags.add(prefetch);
           requests++;
           return requests == 1 ? gate.future : Future.value(_source('fresh'));
         },
@@ -58,6 +64,8 @@ void main() {
       expect(expired.origin, EpisodeSourceOrigin.network);
       expect((await expired.future).url, _source('fresh').url);
       expect(requests, 2);
+      // 需求路径必须显式带 prefetch=false。
+      expect(prefetchFlags, [false, false]);
     },
   );
 
@@ -67,7 +75,7 @@ void main() {
       () async {
         var requests = 0;
         final cache = EpisodeSourceCache(
-          loader: (_) {
+          loader: (_, {required bool prefetch}) {
             if (requests++ == 0) {
               if (synchronous) throw StateError('unavailable');
               return Future.error(StateError('unavailable'));
@@ -93,7 +101,7 @@ void main() {
         final old = Completer<EpisodeSource>();
         var requests = 0;
         final cache = EpisodeSourceCache(
-          loader: (_) {
+          loader: (_, {required bool prefetch}) {
             return requests++ == 0
                 ? old.future
                 : Future.value(_source('fresh'));
@@ -124,7 +132,7 @@ void main() {
     () async {
       var requests = 0;
       final cache = EpisodeSourceCache(
-        loader: (_) async => _source('${++requests}'),
+        loader: (_, {required bool prefetch}) async => _source('${++requests}'),
       );
       addTearDown(cache.dispose);
       await cache.prefetch(_chapter('2'), stillWanted: () => true);
@@ -140,7 +148,7 @@ void main() {
     () async {
       final requests = <String>[];
       final cache = EpisodeSourceCache(
-        loader: (chapter) async {
+        loader: (chapter, {required bool prefetch}) async {
           requests.add(chapter.itemId);
           return _source(chapter.itemId);
         },
@@ -159,7 +167,7 @@ void main() {
       final old = Completer<EpisodeSource>();
       final requests = <String>[];
       final cache = EpisodeSourceCache(
-        loader: (chapter) {
+        loader: (chapter, {required bool prefetch}) {
           requests.add(chapter.itemId);
           return chapter.itemId == '1'
               ? old.future
@@ -188,7 +196,7 @@ void main() {
       final gate = Completer<EpisodeSource>();
       var requests = 0;
       final cache = EpisodeSourceCache(
-        loader: (_) {
+        loader: (_, {required bool prefetch}) {
           requests++;
           return gate.future;
         },
@@ -211,7 +219,7 @@ void main() {
     final gate = Completer<EpisodeSource>();
     final requests = <String>[];
     final cache = EpisodeSourceCache(
-      loader: (chapter) {
+      loader: (chapter, {required bool prefetch}) {
         requests.add(chapter.itemId);
         return chapter.itemId == '2'
             ? gate.future
@@ -239,7 +247,7 @@ void main() {
       final gate = Completer<EpisodeSource>();
       var requests = 0;
       final cache = EpisodeSourceCache(
-        loader: (_) {
+        loader: (_, {required bool prefetch}) {
           requests++;
           return gate.future;
         },

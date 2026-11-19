@@ -137,6 +137,8 @@ fn handle_video<'a>(ctx: &'a Ctx, params: &'a Params) -> BoxFuture<'a, ApiResult
         let stream_mode = params.get_str("mode") == "stream";
         let source_trace_id =
             STREAM_TRACE_SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+        let purpose =
+            crate::upstream::playback_trace::purpose(&params.get_str("_playback_purpose"));
         let work_started = Instant::now();
         let work_budget = crate::upstream::budget::remaining()
             .map(|left| left.saturating_sub(VIDEO_RESPONSE_RESERVE))
@@ -151,9 +153,13 @@ fn handle_video<'a>(ctx: &'a Ctx, params: &'a Params) -> BoxFuture<'a, ApiResult
         let work_deadline = work_started + work_budget;
         let fetch_deadline = work_started + fetch_budget;
         let resolution_deadline = work_started + resolution_budget;
-        let parsed = fetch_parsed_video_response("v5", &video_id, fetch_deadline, async {
-            fetch_v5_video_model(ctx, &video_id).await
-        })
+        let parsed = crate::upstream::playback_trace::within(
+            source_trace_id,
+            purpose,
+            fetch_parsed_video_response("v5", &video_id, fetch_deadline, async {
+                fetch_v5_video_model(ctx, &video_id).await
+            }),
+        )
         .await
         .ok_or_else(|| ApiError::Internal("视频取流失败，请稍后重试".to_string()))?;
         let fallback_bodies = new_fallback_body_cache();
@@ -177,7 +183,7 @@ fn handle_video<'a>(ctx: &'a Ctx, params: &'a Params) -> BoxFuture<'a, ApiResult
             && legacy_raw_response_has_playable_url(&parsed)
         {
             log::info!(
-                "stream trace request={source_trace_id} event=final mode={} selected_source=v5 bodies=1 quality_count=0 result=legacy_raw",
+                "stream trace request={source_trace_id} purpose={purpose} event=final mode={} selected_source=v5 bodies=1 quality_count=0 result=legacy_raw",
                 if stream_mode { "stream" } else { "single" },
             );
             return Ok(parsed.root);
@@ -186,9 +192,15 @@ fn handle_video<'a>(ctx: &'a Ctx, params: &'a Params) -> BoxFuture<'a, ApiResult
         let (video_url, content_key) = match resolved {
             VideoSourceResolution::Found(url, key) => (url, key),
             VideoSourceResolution::CodecRejected => {
+                log::warn!(
+                    "stream trace request={source_trace_id} purpose={purpose} event=final result=codec_rejected"
+                );
                 return Err(ApiError::Internal("该视频暂不支持播放".to_string()));
             }
             VideoSourceResolution::NotFound => {
+                log::warn!(
+                    "stream trace request={source_trace_id} purpose={purpose} event=final result=not_found"
+                );
                 return Err(ApiError::Internal("视频取流失败，请稍后重试".to_string()));
             }
         };
@@ -218,7 +230,7 @@ fn handle_video<'a>(ctx: &'a Ctx, params: &'a Params) -> BoxFuture<'a, ApiResult
             .collect::<Vec<_>>()
             .join(",");
         log::info!(
-            "stream trace request={source_trace_id} event=final mode={} selected_source=v5 bodies=1 fallback_bodies={} quality_count={} qualities=[{quality_trace}] primary_in_variants={primary_in_variants}",
+            "stream trace request={source_trace_id} purpose={purpose} event=final mode={} selected_source=v5 bodies=1 fallback_bodies={} quality_count={} qualities=[{quality_trace}] primary_in_variants={primary_in_variants}",
             if stream_mode { "stream" } else { "single" },
             fallback_bodies
                 .lock()
@@ -308,38 +320,44 @@ async fn fetch_parsed_video_response(
     deadline: Instant,
     request: impl std::future::Future<Output = ApiResult<Vec<u8>>>,
 ) -> Option<ParsedVideoResponse> {
+    let trace = crate::upstream::playback_trace::current();
+    let request_id = trace.as_ref().map_or(0, |trace| trace.request_id);
+    let purpose = trace.as_ref().map_or("other", |trace| trace.purpose);
     let raw = match tokio::time::timeout_at(deadline, request).await {
         Ok(Ok(raw)) => raw,
-        Ok(Err(error)) => {
+        Ok(Err(_)) => {
             log::warn!(
-                "video {video_id}: {source} request failed: {}",
-                error.message()
+                "v5 trace request={request_id} purpose={purpose} source={source} event=fetch error=request"
             );
             return None;
         }
         Err(_) => {
-            log::warn!("video {video_id}: {source} request deadline exceeded");
+            log::warn!(
+                "v5 trace request={request_id} purpose={purpose} source={source} event=fetch error=deadline"
+            );
             return None;
         }
     };
     if raw.is_empty() {
-        log::warn!("video {video_id}: {source} empty response body; body_len=0");
+        log::warn!(
+            "v5 trace request={request_id} purpose={purpose} source={source} event=fetch error=empty body_len=0"
+        );
         return None;
     }
     let parsed = match ParsedVideoResponse::parse(&raw, Some(video_id)) {
         Ok(parsed) => parsed,
-        Err(error) => {
+        Err(_) => {
             log::warn!(
-                "video {video_id}: {source} response unusable: {}",
-                error.message()
+                "v5 trace request={request_id} purpose={purpose} source={source} event=fetch error=json body_len={}",
+                raw.len(),
             );
             return None;
         }
     };
     if upstream_response_is_failure(&parsed.root) {
         log::warn!(
-            "video {video_id}: {source} business rejection: {}",
-            body_envelope(&parsed.root)
+            "v5 trace request={request_id} purpose={purpose} source={source} event=fetch error=business body_len={}",
+            raw.len(),
         );
         return None;
     }
@@ -350,10 +368,15 @@ async fn fetch_parsed_video_response(
             .is_some_and(|data| has_compatible_playable_url(data, 0))
     {
         log::warn!(
-            "video {video_id}: {source} body has no video payload: {}",
-            body_envelope(&parsed.root)
+            "v5 trace request={request_id} purpose={purpose} source={source} event=fetch error=no_model body_len={}",
+            raw.len(),
         );
     }
+    log::info!(
+        "v5 trace request={request_id} purpose={purpose} source={source} event=fetch body_len={} model_count={}",
+        raw.len(),
+        parsed.models.len(),
+    );
     Some(parsed)
 }
 

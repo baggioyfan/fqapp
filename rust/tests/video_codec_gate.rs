@@ -333,7 +333,7 @@ async fn stream_variants_merge_the_fallback_list_so_the_top_tier_survives() {
     .await;
     let dir = TempDir::new("video-variant-merge");
     let server = build_server(&dir, Some(upstream.origin.clone()), &[], &[], &pool_json(5)).await;
-    let (status, body) = request_video(&server, "mode=stream").await;
+    let (status, body) = request_video(&server, "mode=stream&_playback_purpose=prefetch").await;
     assert_eq!(status, 200, "{body}");
     let names: Vec<&str> = body["variants"]
         .as_array()
@@ -358,6 +358,9 @@ async fn stream_variants_merge_the_fallback_list_so_the_top_tier_survives() {
         .filter(|r| r.path == "/novel/player/multi_video_model/player/v1")
         .collect();
     assert_eq!(v5_requests.len(), 2);
+    assert!(v5_requests
+        .iter()
+        .all(|request| !query_map(&request.query).contains_key("_playback_purpose")));
     assert_ne!(v5_requests[0].query, v5_requests[1].query);
     let v5 = v5_requests[1];
     assert_eq!(v5.method, "POST");
@@ -376,6 +379,7 @@ async fn stream_variants_merge_the_fallback_list_so_the_top_tier_survives() {
     assert_eq!(v5.header("x-ss-stub"), Some(expected_stub.as_str()));
     let plain = fqapi_core::crypto::gunzip(&v5.body).expect("gzip V5 body");
     let wire: Value = serde_json::from_slice(&plain).expect("V5 JSON body");
+    assert!(wire.get("_playback_purpose").is_none());
     assert_eq!(wire["mixed_video_id_map"]["1004"], json!(["episode"]));
     assert_eq!(wire["dr_scene"], "player");
 }

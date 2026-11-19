@@ -195,7 +195,13 @@ class EpisodeSourceCache {
   static const timeToLive = Duration(minutes: 2);
   static const capacity = 2;
 
-  final Future<EpisodeSource> Function(Chapter) _loader;
+  /// [prefetch] is true only for speculative work started by [prefetch]; the
+  /// loader forwards it so the fetch can carry an explicit local purpose.
+  final Future<EpisodeSource> Function(
+    Chapter chapter, {
+    required bool prefetch,
+  })
+  _loader;
   final Duration Function() _now;
   final _ready = <String, _SourceEntry>{};
   final _pending = <String, _SourceEntry>{};
@@ -244,7 +250,7 @@ class EpisodeSourceCache {
     }
     final entry = _SourceEntry(_now(), prefetch);
     _pending[id] = entry;
-    entry.future = Future.sync(() => _loader(chapter)).then(
+    entry.future = Future.sync(() => _loader(chapter, prefetch: prefetch)).then(
       (source) {
         if (!_disposed && identical(_pending[id], entry)) {
           _pending.remove(id);

@@ -264,14 +264,18 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     }
     _diagnostics = widget.loadDiagnostics ?? PlayerLoadDiagnostics();
     _sources = EpisodeSourceCache(
-      loader: (episode) async => EpisodeSource.fromResponse(
-        await (widget.contentLoader?.call(episode) ??
-            ApiClient.instance.content(
-              episode.itemId,
-              tab: '短剧',
-              mode: 'stream',
-            )),
-      ),
+      loader: (episode, {required bool prefetch}) async =>
+          EpisodeSource.fromResponse(
+            await (widget.contentLoader?.call(episode) ??
+                ApiClient.instance.content(
+                  episode.itemId,
+                  tab: '短剧',
+                  mode: 'stream',
+                  purpose: prefetch
+                      ? PlaybackPurpose.prefetch
+                      : PlaybackPurpose.foreground,
+                )),
+          ),
     );
     if (widget.eps.isEmpty) {
       _error = PlaybackIssue.empty;

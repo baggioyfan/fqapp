@@ -11,6 +11,7 @@ use fqapi_core::device::DevicePool;
 use fqapi_core::sign::Manager;
 use fqapi_core::upstream::{ClientError, UpstreamClient, UpstreamRequest};
 use serde_json::{json, Value};
+use std::io::Write;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
@@ -138,6 +139,163 @@ async fn a_429_is_retried_and_honours_retry_after() {
         .expect("the retried attempt must answer");
     assert_eq!(upstream.requests().len(), 2);
     assert_eq!(pool.count().await, 5);
+    upstream.shutdown();
+}
+
+fn playback_body() -> Vec<u8> {
+    let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+    encoder
+        .write_all(br#"{"video_id":"fixture-video"}"#)
+        .expect("gzip body");
+    encoder.finish().expect("finish gzip body")
+}
+
+fn assert_same_playback_identity(requests: &[common::Recorded], body: &[u8]) {
+    let ids = device_ids(requests);
+    assert!(!ids.is_empty());
+    assert!(ids.iter().all(|id| id == &ids[0]));
+    assert!(requests.iter().all(|request| {
+        request.method == "POST"
+            && request.path == "/novel/player/multi_video_model/player/v1"
+            && request.body == body
+            && request.header("x-medusa").is_some()
+            && request.header("x-ss-stub").is_some()
+    }));
+}
+
+#[tokio::test]
+async fn v5_empty_body_is_retried_on_the_same_device_with_the_same_gzip_bytes() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let counter = calls.clone();
+    let upstream = MockUpstream::start(move |_| match counter.fetch_add(1, Ordering::SeqCst) {
+        0 => MockReply::status(200),
+        1 => MockReply {
+            status: 200,
+            headers: vec![("content-encoding".to_string(), "gzip".to_string())],
+            body: fqapi_core::crypto::gzip(b""),
+        },
+        _ => MockReply::json(json!({"code": 0, "data": {"fixture": "ready"}})),
+    })
+    .await;
+    let dir = TempDir::new("v5-empty-body");
+    let (pool, client) = client_with_pool(&dir, &upstream.origin).await;
+    let body = playback_body();
+
+    let response = client
+        .v5_playback(
+            &format!(
+                "{}/novel/player/multi_video_model/player/v1",
+                upstream.origin
+            ),
+            &body,
+        )
+        .await
+        .expect("empty transport responses must recover before surfacing");
+    let response: Value = serde_json::from_slice(&response).expect("response json");
+    assert_eq!(response["data"]["fixture"], "ready");
+    let requests = upstream.requests();
+    assert_eq!(requests.len(), TRANSIENT_RETRIES + 1);
+    assert_same_playback_identity(&requests, &body);
+    assert_eq!(
+        pool.count().await,
+        5,
+        "empty HTTP bodies are not an auth rejection"
+    );
+    upstream.shutdown();
+}
+
+#[tokio::test]
+async fn v5_empty_body_retries_are_bounded_without_retiring_the_device() {
+    let upstream = MockUpstream::start(|_| MockReply::status(200)).await;
+    let dir = TempDir::new("v5-empty-exhausted");
+    let (pool, client) = client_with_pool(&dir, &upstream.origin).await;
+    let body = playback_body();
+
+    let error = client
+        .v5_playback(
+            &format!(
+                "{}/novel/player/multi_video_model/player/v1",
+                upstream.origin
+            ),
+            &body,
+        )
+        .await
+        .expect_err("persistently empty playback responses must eventually fail");
+    assert!(matches!(error, ClientError::Transient { .. }));
+    assert!(!error.is_device_failed());
+    let requests = upstream.requests();
+    assert_eq!(requests.len(), TRANSIENT_RETRIES + 1);
+    assert_same_playback_identity(&requests, &body);
+    assert_eq!(pool.count().await, 5);
+    upstream.shutdown();
+}
+
+#[tokio::test]
+async fn v5_empty_and_http_failures_share_one_transient_retry_budget() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let counter = calls.clone();
+    let upstream = MockUpstream::start(move |_| match counter.fetch_add(1, Ordering::SeqCst) {
+        0 => MockReply::status(503),
+        _ => MockReply::status(200),
+    })
+    .await;
+    let dir = TempDir::new("v5-shared-retry-budget");
+    let (pool, client) = client_with_pool(&dir, &upstream.origin).await;
+    let body = playback_body();
+
+    let error = client
+        .v5_playback(
+            &format!(
+                "{}/novel/player/multi_video_model/player/v1",
+                upstream.origin
+            ),
+            &body,
+        )
+        .await
+        .expect_err("mixed transient errors must not multiply request attempts");
+    assert!(matches!(error, ClientError::Transient { .. }));
+    let requests = upstream.requests();
+    assert_eq!(requests.len(), TRANSIENT_RETRIES + 1);
+    assert_same_playback_identity(&requests, &body);
+    assert_eq!(pool.count().await, 5);
+    upstream.shutdown();
+}
+
+#[tokio::test]
+async fn v5_nonempty_business_payloads_are_not_empty_transport_retries() {
+    let payload = json!({"code": 0, "data": {}});
+    let reply = payload.clone();
+    let upstream = MockUpstream::start(move |_| MockReply::json(reply.clone())).await;
+    let dir = TempDir::new("v5-empty-model-not-transport");
+    let (_, client) = client_with_pool(&dir, &upstream.origin).await;
+
+    let response = client
+        .v5_playback(
+            &format!(
+                "{}/novel/player/multi_video_model/player/v1",
+                upstream.origin
+            ),
+            &playback_body(),
+        )
+        .await
+        .expect("business model validation belongs to the endpoint");
+    assert_eq!(serde_json::from_slice::<Value>(&response).unwrap(), payload);
+    assert_eq!(upstream.requests().len(), 1);
+    upstream.shutdown();
+}
+
+#[tokio::test]
+async fn generic_empty_successful_responses_keep_their_existing_contract() {
+    let upstream = MockUpstream::start(|_| MockReply::status(200)).await;
+    let dir = TempDir::new("generic-empty-body");
+    let (_, client) = client_with_pool(&dir, &upstream.origin).await;
+
+    let (response, _) = client
+        .do_with_device_capped(&probe(&upstream.origin), 1024)
+        .await
+        .expect("generic callers may accept an empty successful response");
+    assert!(response.is_empty());
+    assert_eq!(upstream.requests().len(), 1);
     upstream.shutdown();
 }
 

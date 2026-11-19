@@ -3,6 +3,7 @@ import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fqapp/services/api_client.dart';
+import 'package:fqapp/services/app_log.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
@@ -311,6 +312,73 @@ void main() {
     await api.content(special, tab: '短剧', mode: special);
     expect(sent.path, contains('/api/v1/videos/'));
     expect(sent.queryParameters['mode'], special);
+    // 用途参数是本地契约:不给 purpose 时不出现,给出时只追加一个。
+    expect(sent.queryParameters.containsKey('_playback_purpose'), isFalse);
+    await api.content(
+      special,
+      tab: '短剧',
+      mode: special,
+      purpose: PlaybackPurpose.prefetch,
+    );
+    expect(sent.path, contains('/api/v1/videos/'));
+    expect(sent.queryParameters['mode'], special);
+    expect(sent.queryParameters['_playback_purpose'], 'prefetch');
+    // gate key 仍是原始 URL:同 URL 的 foreground/prefetch 合并为一次在飞请求。
+    // 传输 URI 带第一发起者的用途;joiner 不重发,只共享该航班,日志记自己
+    // 请求的用途(queue=shared)。
+    var videoHits = 0;
+    Uri? firstVideoRequest;
+    final flightStarted = Completer<void>();
+    final releaseFlight = Completer<void>();
+    final gatedTransport = MockClient((request) async {
+      videoHits++;
+      firstVideoRequest = request.url;
+      flightStarted.complete();
+      await releaseFlight.future;
+      return http.Response('{"code":200,"data":{}}', 200);
+    });
+    addTearDown(gatedTransport.close);
+    final gatedApi = ApiClient(
+      client: gatedTransport,
+      baseUrl: 'http://localhost:9000',
+    );
+    AppLog.instance.clear();
+    final foreground = gatedApi.content(
+      special,
+      tab: '短剧',
+      mode: 'stream',
+      purpose: PlaybackPurpose.foreground,
+    );
+    // 等第一发起者真正握手后再发 joiner,合并才由 gate key 决定而非时序。
+    await flightStarted.future;
+    final prefetch = gatedApi.content(
+      special,
+      tab: '短剧',
+      mode: 'stream',
+      purpose: PlaybackPurpose.prefetch,
+    );
+    releaseFlight.complete();
+    await Future.wait([foreground, prefetch]);
+    await pumpEventQueue();
+    expect(videoHits, 1);
+    expect(
+      firstVideoRequest!.queryParameters['_playback_purpose'],
+      'foreground',
+    );
+    final apiLogs = AppLog.instance.entries
+        .where((entry) => entry.tag == 'api')
+        .map((entry) => entry.message)
+        .toList();
+    final prefetchLogs = apiLogs
+        .where((message) => message.contains('purpose=prefetch'))
+        .toList();
+    expect(prefetchLogs, hasLength(1));
+    expect(prefetchLogs.single, contains('queue=shared'));
+    final foregroundLogs = apiLogs
+        .where((message) => message.contains('purpose=foreground'))
+        .toList();
+    expect(foregroundLogs, hasLength(1));
+    expect(foregroundLogs.single, isNot(contains('queue=shared')));
     await api.homepageRecommend(tabType: 8, offset: 2, sessionId: special);
     expect(sent.queryParameters, {
       'tab_type': '8',

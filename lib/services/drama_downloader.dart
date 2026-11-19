@@ -861,6 +861,7 @@ class DramaDownloader extends ValueNotifier<List<DramaDownloadTask>> {
       episode.itemId,
       tab: '短剧',
       mode: 'stream',
+      purpose: PlaybackPurpose.other,
     );
     return EpisodeSource.fromResponse(response);
   }
