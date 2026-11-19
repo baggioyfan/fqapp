@@ -1,7 +1,7 @@
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
 
-import '../../services/app_log.dart';
+import '../../services/logging/log_models.dart';
 import '../home/home_design.dart';
 import '../shelf/shelf_design.dart';
 

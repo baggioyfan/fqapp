@@ -340,6 +340,47 @@ void main() {
     expect(entries.last.message, '第二条');
   });
 
+  test('并发开启持久化只写一次，并通知已挂载的日志查看者', () async {
+    final dir = await Directory.systemTemp.createTemp('fqapp-log-concurrent-');
+    cleanupDir(dir);
+    await File(
+      '${dir.path}/app.log',
+    ).writeAsString('[I] 2026-10-02T10:00:00.000 boot: retained-history\n');
+    AppLog.i('boot', 'before-start');
+    final beforeRevision = AppLog.instance.revision.value;
+    final first = AppLog.instance.startPersistence(directory: dir);
+    final second = AppLog.instance.startPersistence(directory: dir);
+    AppLog.i('boot', 'during-start');
+    await Future.wait([first, second]);
+    await AppLog.instance.flush();
+    final content = await File('${dir.path}/app.log').readAsString();
+    for (final text in ['retained-history', 'before-start', 'during-start']) {
+      expect(text.allMatches(content), hasLength(1));
+      expect(
+        AppLog.instance.entries.map((entry) => entry.message),
+        contains(text),
+      );
+    }
+    expect(AppLog.instance.revision.value, beforeRevision + 2);
+  });
+
+  test('回读历史在显示和导出前脱敏，但不改写已有日志文件', () async {
+    final dir = await Directory.systemTemp.createTemp('fqapp-log-redacted-');
+    cleanupDir(dir);
+    const original =
+        '[I] 2026-10-02T10:00:00.000 core: '
+        'token=synthetic-old-value\n';
+    final file = File('${dir.path}/app.log');
+    await file.writeAsString(original);
+    await AppLog.instance.startPersistence(directory: dir);
+    expect(AppLog.instance.entries.single.message, 'token=<redacted>');
+    expect(
+      AppLog.instance.exportText(),
+      isNot(contains('synthetic-old-value')),
+    );
+    expect(await file.readAsString(), original);
+  });
+
   test('clear 同时清掉回读历史与本次会话缓冲', () async {
     final dir = await Directory.systemTemp.createTemp('fqapp-log-clear-');
     cleanupDir(dir);

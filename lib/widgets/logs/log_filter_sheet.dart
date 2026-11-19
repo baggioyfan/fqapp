@@ -1,15 +1,10 @@
 import 'package:material_ui/material_ui.dart';
 
-import '../../services/app_log.dart';
+import '../../services/logging/log_models.dart';
 import '../home/home_chip.dart';
 import '../home/home_design.dart';
 
-class LogFilterSelection {
-  const LogFilterSelection({this.level, this.timeWindow});
-
-  final LogLevel? level;
-  final Duration? timeWindow;
-}
+export '../../services/logging/log_models.dart' show LogFilterSelection;
 
 String logTimeWindowLabel(Duration? window) {
   if (window == null) return '不限时间';
