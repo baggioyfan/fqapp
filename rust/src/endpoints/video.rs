@@ -349,36 +349,20 @@ struct PlaybackAttempt {
     device_id: Option<String>,
 }
 
-/// The `video_tab` query bag: the official app's snake_case `GetVideoModelRequest`
-/// fields plus the shared player-version identity bag.
-///
-/// The identity values are placeholders the request layer substitutes from the
-/// pooled device that signs the call, so the fallback door is always asked
-/// under the same identity as the v5 attempt.
-fn video_tab_spec(host: &str, video_id: &str, pin_device: &str) -> UpstreamRequestSpec {
-    let mut params: Vec<(String, String)> = vec![
-        ("video_id".to_string(), video_id.to_string()),
-        ("video_id_type".to_string(), "0".to_string()),
-        ("device_level".to_string(), "1".to_string()),
-        ("need_all_video_definition".to_string(), "1".to_string()),
-        ("need_mp4_align".to_string(), "0".to_string()),
-        ("use_os_player".to_string(), "0".to_string()),
-        ("video_platform".to_string(), "1024".to_string()),
-        ("source".to_string(), "0".to_string()),
-        ("from_video_id".to_string(), String::new()),
-    ];
-    for (key, value) in crate::sign::v5::player_query_pairs() {
-        params.push((key.to_string(), value.to_string()));
-    }
-    UpstreamRequestSpec {
-        mode: UpstreamMode::DeviceSigned,
-        method: Some("GET".to_string()),
-        host: host.to_string(),
-        path: VIDEO_TAB_PLAYER_PATH.to_string(),
-        params,
-        pin_device: pin_device.to_string(),
-        ..Default::default()
-    }
+/// The `video_tab` door's own query fields: the official app's snake_case
+/// `GetVideoModelRequest` parameters.
+fn video_tab_query(video_id: &str) -> Vec<(&str, &str)> {
+    vec![
+        ("video_id", video_id),
+        ("video_id_type", "0"),
+        ("device_level", "1"),
+        ("need_all_video_definition", "1"),
+        ("need_mp4_align", "0"),
+        ("use_os_player", "0"),
+        ("video_platform", "1024"),
+        ("source", "0"),
+        ("from_video_id", ""),
+    ]
 }
 
 /// Rewrites a `video_tab` response into the player response shape the existing
@@ -440,10 +424,11 @@ async fn attempt_playback_route(
             },
         },
         Door::VideoTab => {
-            let spec = video_tab_spec(route.host(), video_id, pin.unwrap_or(""));
-            let upstream = Upstream::new(ctx.up.clone());
-            let request = upstream.raw_with_device(&spec);
-            match tokio::time::timeout_at(deadline, request).await {
+            let base = format!("{}{}", route.host(), VIDEO_TAB_PLAYER_PATH);
+            let extra = video_tab_query(video_id);
+            match tokio::time::timeout_at(deadline, ctx.up.v5_get_with_device(&base, &extra, pin))
+                .await
+            {
                 Err(_) => PlaybackAttempt {
                     outcome: DoorOutcome::Deadline,
                     device_id: None,

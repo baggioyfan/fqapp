@@ -29,12 +29,11 @@ pub(crate) const EMPTY_ROTATE_ROUNDS: u32 = 2;
 
 /// The v5 signed player door (single host, the one the app ships).
 pub(crate) const V5_PLAYER_HOST: &str = "https://api5-normal-sinfonlinea.fqnovel.com";
-/// The signed `GET video_tab` fallback doors, in preference order.
-pub(crate) const VIDEO_TAB_HOSTS: [&str; 3] = [
-    "https://api5-normal-sinfonlineb.fqnovel.com",
-    "https://api5-normal-hl.fqnovel.com",
-    "https://api5-normal-lf.fqnovel.com",
-];
+/// The signed `GET video_tab` fallback door.
+///
+/// The `hl`/`lf` hosts were dropped: on-device sampling showed every host
+/// answering `HTTP 200` with zero bytes, so the extra hosts only added latency.
+pub(crate) const VIDEO_TAB_HOSTS: [&str; 1] = ["https://api5-normal-sinfonlineb.fqnovel.com"];
 
 /// Which upstream door a route addresses.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -69,11 +68,7 @@ impl Route {
     pub fn tag(self) -> &'static str {
         match self.door {
             Door::V5Player => "v5",
-            Door::VideoTab => match self.host_index {
-                0 => "tab-b",
-                1 => "tab-hl",
-                _ => "tab-lf",
-            },
+            Door::VideoTab => "tab-b",
         }
     }
 }
@@ -282,13 +277,13 @@ mod tests {
     #[test]
     fn non_empty_failures_only_park_a_door_briefly() {
         let mut state = PlaybackRouteState::default();
-        let hl = Route {
+        let tab = Route {
             door: Door::VideoTab,
-            host_index: 1,
+            host_index: 0,
         };
-        state.failed(hl, 10_000, false);
-        assert!(!state.plan(10_000, false).contains(&hl));
-        assert!(state.plan(10_000 + ms(ERROR_COOLDOWN), false).contains(&hl));
+        state.failed(tab, 10_000, false);
+        assert!(!state.plan(10_000, false).contains(&tab));
+        assert!(state.plan(10_000 + ms(ERROR_COOLDOWN), false).contains(&tab));
         // A briefly-parked door is not "exhausted": only empty bodies are.
         assert!(!state.exhausted(10_000));
     }
@@ -376,7 +371,7 @@ mod tests {
     #[test]
     fn route_tags_stay_short_and_address_free() {
         let tags: Vec<&str> = routes().iter().map(|route| route.tag()).collect();
-        assert_eq!(tags, vec!["v5", "tab-b", "tab-hl", "tab-lf"]);
+        assert_eq!(tags, vec!["v5", "tab-b"]);
         assert!(tags.iter().all(|tag| !tag.contains("fqnovel")));
         assert!(routes()
             .iter()

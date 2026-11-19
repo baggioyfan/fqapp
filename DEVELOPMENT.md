@@ -1172,8 +1172,13 @@ empty_rounds= rotations=`,仍不记录地址、查询、正文、签名或真实
 门被主动探测时不再重探,避免把一次探测变成两次。定向回归新增同门重探成功(两次
 请求、同一身份、不换门)、后台空实体不重探、预取零请求与冷却期不二次轮换。
 
-仍需解决:`video_tab` 需要改成播放器族签名(medusa/helios 的 GET 形态)才能验证,
-届时才能在“同门重探也没用”的窗口里看到它是否真是一扇能用的门。
+据此把 `video_tab` 门改成播放器族签名的 GET 形态:与 v5 同一套 Medusa/Helios/Khronos
+信封(`sign/v5.rs::sign_playback_v5_get`),同一身份包(aid 8662 / novelread / 74332),
+空 body 的摘要参与分支选择,不带 `Content-Type`/`Content-Encoding`/`x-ss-stub` ——
+带 body 头却没有 body 正是通用签名那版被判 200+0 的形态。`hl`/`lf` 两个域名一并删除
+(采样里毫无收益,只增加延迟),兜底门只剩 `api5-normal-sinfonlineb` 一个域名,
+诊断代号统一为 `tab-b`。该门是否真的可用仍需下一轮设备采样验证:只有出现
+`event=door route=tab-b result=ok` 才算这扇门成立。
 
 2026-11-15 在 MuMu 6.8.8 / Android 12 / 实例 0 的实际上游路径中，横屏和竖屏
 样本均显示 1080P、720P、540P、480P、360P，Rust 与 Dart 同次请求记录的档位数一致。

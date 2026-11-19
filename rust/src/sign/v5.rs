@@ -17,7 +17,6 @@ use super::sm3::sm3_hash;
 use super::v5_tables::{HASH_TABLE, SBOX};
 
 const APP_ID: i64 = 8662;
-const APP_ID_TEXT: &str = "8662";
 const VERSION_CODE: &str = "74332";
 const VERSION_NAME: &str = "7.4.3.32";
 const CHANNEL: &str = "vivo_8662_64";
@@ -635,24 +634,13 @@ fn encode_component(value: &str) -> String {
 /// Identity fields stay as placeholders: the request layer substitutes the
 /// pooled device that signs the call, so both doors are always asked under one
 /// identity.
-pub(crate) fn player_query_pairs() -> Vec<(&'static str, &'static str)> {
-    vec![
-        ("aid", APP_ID_TEXT),
-        ("app_name", "novelread"),
-        ("version_code", VERSION_CODE),
-        ("version_name", VERSION_NAME),
-        ("channel", CHANNEL),
-        ("device_platform", "android"),
-        ("device_type", DEVICE_TYPE),
-        ("os_version", OS_VERSION),
-        ("update_version_code", VERSION_CODE),
-        ("iid", "{install_id}"),
-        ("cdid", "{cdid}"),
-        ("device_id", "{device_id}"),
-    ]
-}
-
-fn playback_query(identity: &V5Identity<'_>, ticket: i64, app_id: &str) -> String {
+/// The player-version identity bag every playback door starts from.
+fn playback_query(
+    identity: &V5Identity<'_>,
+    ticket: i64,
+    app_id: &str,
+    extra: &[(&str, &str)],
+) -> String {
     let pairs = [
         ("aid", app_id),
         ("app_name", "novelread"),
@@ -676,6 +664,14 @@ fn playback_query(identity: &V5Identity<'_>, ticket: i64, app_id: &str) -> Strin
         query.push('=');
         query.push_str(&encode_component(value));
     }
+    // Door-specific parameters sit between the identity bag and the ticket, so a
+    // POST keeps the original byte order and a GET only appends its own fields.
+    for (key, value) in extra {
+        query.push('&');
+        query.push_str(&encode_component(key));
+        query.push('=');
+        query.push_str(&encode_component(value));
+    }
     query.push_str("&_rticket=");
     query.push_str(&ticket.to_string());
     query
@@ -688,6 +684,30 @@ fn playback_query(identity: &V5Identity<'_>, ticket: i64, app_id: &str) -> Strin
 pub fn sign_playback_v5(
     base: &str,
     compressed_body: &[u8],
+    identity: &V5Identity<'_>,
+) -> Result<V5Request, String> {
+    sign_v5_request(base, &[], Some(compressed_body), identity)
+}
+
+/// Signs a `GET` for a door of the same family, e.g. the `video_tab` model door.
+///
+/// `extra` carries the door's own query fields. A `GET` carries no body, so the
+/// digest that selects the branch is the digest of zero bytes and the
+/// body-describing headers (`Content-Type`, `Content-Encoding`, `x-ss-stub`)
+/// are omitted: sending them without a body is what made the generic-signature
+/// attempt answer `HTTP 200` with zero bytes in 72-139 ms.
+pub fn sign_playback_v5_get(
+    base: &str,
+    extra: &[(&str, &str)],
+    identity: &V5Identity<'_>,
+) -> Result<V5Request, String> {
+    sign_v5_request(base, extra, None, identity)
+}
+
+fn sign_v5_request(
+    base: &str,
+    extra: &[(&str, &str)],
+    body: Option<&[u8]>,
     identity: &V5Identity<'_>,
 ) -> Result<V5Request, String> {
     if base.is_empty() {
@@ -703,7 +723,7 @@ pub fn sign_playback_v5(
     let now_ms = crate::timeutil::now_millis();
     let ts = u32::try_from(now_ms / 1000)
         .map_err(|_| "V5 playback timestamp is outside the protocol range".to_string())?;
-    let body_md5 = md5_bytes(compressed_body);
+    let body_md5 = md5_bytes(body.unwrap_or(&[]));
     let state = process_state(now_ms);
     let app_id = APP_ID.to_string();
 
@@ -711,7 +731,7 @@ pub fn sign_playback_v5(
         let ticket = now_ms
             .checked_add(offset)
             .ok_or_else(|| "V5 playback request ticket overflow".to_string())?;
-        let query = playback_query(identity, ticket, &app_id);
+        let query = playback_query(identity, ticket, &app_id, extra);
         let query_hash = sm3_hash(query.as_bytes());
         if branch_iv(&query_hash, &body_md5, ts) & 15 != 12 {
             continue;
@@ -720,19 +740,21 @@ pub fn sign_playback_v5(
         let entropy = entropy();
         let medusa = medusa(&query_hash, &body_md5, ts, identity, state, entropy)?;
         let url = format!("{base}?{query}");
-        let headers = vec![
+        let mut headers = vec![
             ("x-khronos".to_string(), ts.to_string()),
             ("x-helios".to_string(), helios(ts, entropy.helios)),
             ("x-medusa".to_string(), medusa),
             ("User-Agent".to_string(), USER_AGENT.to_string()),
             ("Accept".to_string(), "application/json".to_string()),
-            (
+        ];
+        if body.is_some() {
+            headers.push((
                 "Content-Type".to_string(),
                 "application/json; charset=utf-8".to_string(),
-            ),
-            ("Content-Encoding".to_string(), "gzip".to_string()),
-            ("x-ss-stub".to_string(), hex::encode_upper(body_md5)),
-        ];
+            ));
+            headers.push(("Content-Encoding".to_string(), "gzip".to_string()));
+            headers.push(("x-ss-stub".to_string(), hex::encode_upper(body_md5)));
+        }
         return Ok(V5Request { url, headers });
     }
 

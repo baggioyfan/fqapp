@@ -157,9 +157,15 @@ async fn an_empty_v5_body_falls_back_to_the_signed_video_tab_door_on_the_same_id
         device_of(&requests[2]),
         "the fallback door must be asked under the same identity"
     );
+    for header in ["x-medusa", "x-helios", "x-khronos"] {
+        assert!(
+            requests[2].header(header).is_some(),
+            "the fallback door must carry the player signature header {header}"
+        );
+    }
     assert!(
-        requests[2].header("x-ss-req-ticket").is_some(),
-        "the fallback door is signed, not anonymous"
+        requests[2].header("x-ss-stub").is_none(),
+        "a body-less GET must not claim a body digest"
     );
 
     let query = query_map(&requests[2].query);

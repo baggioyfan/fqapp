@@ -460,23 +460,7 @@ impl UpstreamClient {
         let mut last_err = None;
 
         for _ in 0..self.max_retries {
-            // A pin keeps a retry of the same door on the identity that just
-            // answered; without one the least-recently-used slot is used.
-            let dev = match pin {
-                Some(device_id) => match self.pool.get_by_id(device_id).await {
-                    Ok(device) => device,
-                    Err(_) => self
-                        .pool
-                        .get()
-                        .await
-                        .map_err(|e| ClientError::Other(format!("get device: {e}")))?,
-                },
-                None => self
-                    .pool
-                    .get()
-                    .await
-                    .map_err(|e| ClientError::Other(format!("get device: {e}")))?,
-            };
+            let dev = self.pinned_or_next_device(pin).await?;
 
             let cdid = if dev.cdid.is_empty() {
                 dev.openudid.as_str()
@@ -560,6 +544,90 @@ impl UpstreamClient {
             self.max_retries,
             last_err.map(|error| error.to_string()).unwrap_or_default()
         )))
+    }
+
+    /// Signs and sends one `GET` on a door of the v5 player family.
+    ///
+    /// The `video_tab` fallback belongs to the same player family as the v5
+    /// door, so it is signed with the same Medusa/Helios/Khronos envelope in
+    /// `GET` form instead of the generic argus/ladon profile. The identity is
+    /// [pin] when given (the door that just refused), otherwise the pool's
+    /// least-recently-used slot. An empty body is returned as `Ok((vec![], _))`
+    /// and the caller owns the recovery decision.
+    pub async fn v5_get_with_device(
+        &self,
+        base: &str,
+        extra: &[(&str, &str)],
+        pin: Option<&str>,
+    ) -> Result<(Vec<u8>, Device), ClientError> {
+        let mut last_err = None;
+
+        for _ in 0..self.max_retries {
+            let dev = self.pinned_or_next_device(pin).await?;
+            let cdid = if dev.cdid.is_empty() {
+                dev.openudid.as_str()
+            } else {
+                dev.cdid.as_str()
+            };
+            let identity = crate::sign::v5::V5Identity {
+                device_id: &dev.device_id,
+                install_id: &dev.install_id,
+                cdid,
+            };
+            let signed = crate::sign::v5::sign_playback_v5_get(base, extra, &identity)
+                .map_err(ClientError::Other)?;
+            let request = UpstreamRequest {
+                method: Some("GET".to_string()),
+                url: signed.url,
+                body: None,
+                headers: signed.headers,
+                no_sign: true,
+                pin: None,
+            };
+            let send = self.do_resp_with_transient_retry(
+                || Ok(request.clone()),
+                Some(crate::upstream::http::API_BODY_LIMIT_BYTES),
+                true,
+                false,
+            );
+            match super::playback_trace::with_device(&dev.device_id, send).await {
+                Ok((data, _)) => return Ok((data, dev)),
+                Err(err) => {
+                    last_err = Some(err.clone());
+                    if err.is_device_failed() {
+                        if super::budget::remaining().is_some_and(|left| left.is_zero()) {
+                            return Err(err);
+                        }
+                        let _ = self.pool.replace_failed(&dev.device_id).await;
+                        if !super::budget::retry_pause(Duration::from_millis(100)).await {
+                            return Err(err);
+                        }
+                        continue;
+                    }
+                    return Err(err);
+                }
+            }
+        }
+
+        Err(ClientError::Other(format!(
+            "v5 fallback door failed after {} device attempts: {}",
+            self.max_retries,
+            last_err.map(|error| error.to_string()).unwrap_or_default()
+        )))
+    }
+
+    /// Reuses [pin] when the pool still holds it, otherwise draws the
+    /// least-recently-used device.
+    async fn pinned_or_next_device(&self, pin: Option<&str>) -> Result<Device, ClientError> {
+        if let Some(device_id) = pin {
+            if let Ok(device) = self.pool.get_by_id(device_id).await {
+                return Ok(device);
+            }
+        }
+        self.pool
+            .get()
+            .await
+            .map_err(|e| ClientError::Other(format!("get device: {e}")))
     }
 
     /// Body-only wrapper kept for callers that do not need the identity that
