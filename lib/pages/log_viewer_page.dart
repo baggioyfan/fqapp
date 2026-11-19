@@ -12,7 +12,6 @@
 // frozen-list/follow behaviour are unchanged.
 
 import 'dart:async';
-import 'dart:collection';
 
 import 'package:cupertino_ui/cupertino_ui.dart';
 import 'package:material_ui/material_ui.dart';
@@ -21,6 +20,8 @@ import 'package:flutter/services.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
 
 import '../services/app_log.dart';
+import '../services/logging/log_export.dart';
+import '../services/logging/log_viewer_controller.dart';
 import '../services/book_txt_export.dart';
 import '../services/playlet_share.dart';
 import '../widgets/app_ui/app_ui_scope.dart';
@@ -35,8 +36,6 @@ import '../widgets/settings/settings_widgets.dart';
 import '../widgets/wenku/wenku_ui.dart';
 
 enum _LogAction { copy, exportVisible, exportAll, exportBoth, share, clear }
-
-typedef _EntrySignature = (DateTime, LogLevel, String, String);
 
 // Note: 查看历史时冻结列表，导出复用 TXT 通道；见本地
 // .agents/notes/implemented/feature/2026-10-12-log-viewer-redesign.md。
@@ -54,38 +53,26 @@ class _LogViewerPageState extends State<LogViewerPage>
     with WidgetsBindingObserver {
   final _scrollController = ScrollController();
   final _searchController = TextEditingController();
-  final _pendingEntries = HashSet<LogEntry>.identity();
-  LogSource _source = LogSource.app;
-  LogFilterSelection _filters = const LogFilterSelection();
-  String _query = '';
-  bool _playerOnly = false;
-  bool _following = true;
-  bool _active = true;
+  late final LogViewerController _logs;
   bool _exporting = false;
-  bool _rustLoading = false;
-  int _sourceGeneration = 0;
-  List<LogEntry> _entries = const [];
-  List<LogEntry> _displayEntries = const [];
-  List<LogEntry> _rustEntries = const [];
-  String? _rustText;
-  Timer? _rustTimer;
-  Timer? _expiryTimer;
 
   @override
   void initState() {
     super.initState();
+    _logs = LogViewerController(rustRefresh: LogViewerPage.rustRefresh);
+    _logs.addListener(_onLogsChanged);
     WidgetsBinding.instance.addObserver(this);
-    AppLog.instance.revision.addListener(_onAppChanged);
-    _entries = AppLog.instance.entries;
-    _displayEntries = _entries;
+  }
+
+  void _onLogsChanged() {
+    if (mounted) setState(() {});
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
-    AppLog.instance.revision.removeListener(_onAppChanged);
-    _rustTimer?.cancel();
-    _expiryTimer?.cancel();
+    _logs.removeListener(_onLogsChanged);
+    _logs.dispose();
     _searchController.dispose();
     _scrollController.dispose();
     super.dispose();
@@ -93,162 +80,19 @@ class _LogViewerPageState extends State<LogViewerPage>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    _active = state == AppLifecycleState.resumed;
-    _updateRustPolling();
-    if (_active) {
-      _onAppChanged();
-      _scheduleExpiry();
-    } else {
-      _expiryTimer?.cancel();
-    }
-  }
-
-  bool _matches(LogEntry entry) {
-    if (_filters.level != null && entry.level != _filters.level) return false;
-    if (_playerOnly && entry.tag != 'player-load') return false;
-    final window = _filters.timeWindow;
-    if (window != null &&
-        !entry.time.isAfter(DateTime.now().subtract(window))) {
-      return false;
-    }
-    final query = _query.trim().toLowerCase();
-    return query.isEmpty ||
-        entry.tag.toLowerCase().contains(query) ||
-        entry.message.toLowerCase().contains(query);
-  }
-
-  void _onAppChanged() {
-    if (_active && _source == LogSource.app) {
-      _acceptEntries(AppLog.instance.entries);
-    }
-  }
-
-  void _acceptEntries(List<LogEntry> next) {
-    final previous = HashSet<LogEntry>.identity()..addAll(_entries);
-    setState(() {
-      if (!_following) {
-        // Length alone misses new entries when the ring buffer is already full.
-        _pendingEntries.retainAll(next);
-        _pendingEntries.removeWhere((entry) => !_matches(entry));
-        _pendingEntries.addAll(
-          next.where((entry) => !previous.contains(entry) && _matches(entry)),
-        );
-      }
-      _entries = next;
-      if (_following) _refreshDisplay();
-    });
-  }
-
-  void _refreshDisplay() {
-    _displayEntries = _entries.where(_matches).toList();
-    _pendingEntries.clear();
-    _scheduleExpiry();
-  }
-
-  void _scheduleExpiry() {
-    _expiryTimer?.cancel();
-    final window = _filters.timeWindow;
-    if (!_active || !_following || window == null || _displayEntries.isEmpty) {
-      return;
-    }
-    final oldest = _displayEntries
-        .map((entry) => entry.time)
-        .reduce((a, b) => a.isBefore(b) ? a : b);
-    final delay = oldest.add(window).difference(DateTime.now());
-    _expiryTimer = Timer(
-      delay.isNegative
-          ? Duration.zero
-          : delay + const Duration(milliseconds: 1),
-      () {
-        if (mounted) setState(_refreshDisplay);
-      },
-    );
-  }
-
-  void _changeFilters(VoidCallback change) {
-    setState(() {
-      change();
-      _refreshDisplay();
-    });
-    _jumpToLatest();
+    _logs.setActive(state == AppLifecycleState.resumed);
   }
 
   void _selectSource(LogSource source) {
-    if (_source == source) return;
-    ++_sourceGeneration;
-    setState(() {
-      _source = source;
-      if (source == LogSource.rust) _playerOnly = false;
-      _entries = source == LogSource.app
-          ? AppLog.instance.entries
-          : _rustEntries;
-      _following = true;
-      _refreshDisplay();
-    });
-    _updateRustPolling();
+    if (_logs.source == source) return;
+    _logs.selectSource(source);
     _jumpToLatest();
   }
 
-  void _updateRustPolling() {
-    _rustTimer?.cancel();
-    _rustTimer = null;
-    if (!_active || _source != LogSource.rust) return;
-    unawaited(_loadRust());
-    _rustTimer = Timer.periodic(
-      LogViewerPage.rustRefresh,
-      (_) => unawaited(_loadRust()),
-    );
-  }
-
-  Future<void> _loadRust() async {
-    if (_rustLoading) return;
-    final generation = _sourceGeneration;
-    _rustLoading = true;
-    try {
-      final text = await RustLogSource.read();
-      if (!mounted || !_active || generation != _sourceGeneration) return;
-      if (text == _rustText) return;
-      _rustText = text;
-      final lines = text?.split('\n') ?? <String>[];
-      // A file terminator is not a stack-trace continuation. Keeping it would
-      // change the last entry's identity when the next line arrives.
-      while (lines.isNotEmpty && lines.last.isEmpty) {
-        lines.removeLast();
-      }
-      final parsed = AppLog.parseLogLines(lines);
-      // Reuse unchanged entries so polling preserves expanded rows and does not
-      // report the whole file as new. Queues distinguish identical log lines.
-      final previous = <_EntrySignature, Queue<LogEntry>>{};
-      _EntrySignature signature(LogEntry e) =>
-          (e.time, e.level, e.tag, e.message);
-      for (final entry in _rustEntries) {
-        previous.putIfAbsent(signature(entry), Queue.new).add(entry);
-      }
-      _rustEntries = [
-        for (final entry in parsed)
-          if (previous[signature(entry)] case final queue?
-              when queue.isNotEmpty)
-            queue.removeFirst()
-          else
-            entry,
-      ];
-      _acceptEntries(_rustEntries);
-    } finally {
-      _rustLoading = false;
-    }
-  }
-
-  void _pauseFollowing() {
-    if (!_following) return;
-    setState(() => _following = false);
-    _expiryTimer?.cancel();
-  }
+  void _pauseFollowing() => _logs.pauseFollowing();
 
   void _followLatest() {
-    setState(() {
-      _following = true;
-      _refreshDisplay();
-    });
+    _logs.followLatest();
     _jumpToLatest();
   }
 
@@ -298,19 +142,20 @@ class _LogViewerPageState extends State<LogViewerPage>
     required bool all,
   }) async {
     if (_exporting || entries.isEmpty) return;
+    final snapshot = LogExportSnapshot(
+      source: source,
+      entries: entries,
+      time: DateTime.now(),
+    );
     setState(() => _exporting = true);
-    final now = DateTime.now();
     try {
       final target = await widget.exportSink.saveText(
-        fileName: 'fqapp-${source.name}-logs-${now.microsecondsSinceEpoch}.txt',
-        text:
-            'fqapp ${source.label}日志\n'
-            '导出时间：${now.toIso8601String()}\n'
-            '范围：${all ? '当前来源全部可用日志' : '当前筛选结果'}\n'
-            '共 ${entries.length} 条\n\n${formatLogLines(entries)}',
+        fileName: snapshot.fileName,
+        text: snapshot.text(all: all),
       );
       _message(
-        '已导出 ${entries.length} 条${target.isPublic ? '' : '到应用目录'}：${target.path}',
+        '已导出 ${snapshot.entries.length} 条'
+        '${target.isPublic ? '' : '到应用目录'}：${target.path}',
       );
     } on ExportWriteException catch (error) {
       _message('导出失败：${error.message}');
@@ -321,50 +166,30 @@ class _LogViewerPageState extends State<LogViewerPage>
     }
   }
 
-  Future<List<LogEntry>?> _readRustForExport() async {
-    final text = await RustLogSource.read();
-    if (text == null) return null;
-    final lines = text.split('\n');
-    while (lines.isNotEmpty && lines.last.isEmpty) {
-      lines.removeLast();
-    }
-    return AppLog.parseLogLines(lines);
-  }
-
   Future<void> _exportBoth(List<LogEntry> appEntries) async {
     if (_exporting) return;
     setState(() => _exporting = true);
     final now = DateTime.now();
     try {
-      // Read the core file at export time: the page may be showing the
-      // application source, so the polling cache may not be warm.
-      final rustEntries = await _readRustForExport();
+      final rustEntries = await RustLogSource.readEntries();
       if (!mounted) return;
-      if (appEntries.isEmpty && (rustEntries == null || rustEntries.isEmpty)) {
+      final snapshot = CombinedLogExportSnapshot(
+        appEntries: appEntries,
+        rustEntries: rustEntries,
+        time: now,
+      );
+      if (snapshot.isEmpty) {
         _message(
           rustEntries == null ? '应用暂无日志，核心日志未获取（文件不存在或读取失败）' : '暂无可导出的应用或核心日志',
         );
         return;
       }
-      final coreSummary = rustEntries == null
-          ? '未获取（文件不存在或读取失败）'
-          : '${rustEntries.length} 条';
-      final text =
-          'fqapp 应用 + 核心日志\n'
-          '导出时间：${now.toIso8601String()}\n'
-          '范围：应用与核心全部可用日志，不受筛选影响\n'
-          '应用日志：${appEntries.length} 条\n'
-          '核心日志：$coreSummary\n\n'
-          '===== 应用日志 =====\n'
-          '${formatLogLines(appEntries)}\n\n'
-          '===== 核心日志 =====\n'
-          '${rustEntries == null ? coreSummary : formatLogLines(rustEntries)}\n';
       final target = await widget.exportSink.saveText(
-        fileName: 'fqapp-all-logs-${now.microsecondsSinceEpoch}.txt',
-        text: text,
+        fileName: snapshot.fileName,
+        text: snapshot.text,
       );
       _message(
-        '已导出应用 ${appEntries.length} 条 + 核心 $coreSummary'
+        '已导出应用 ${snapshot.appEntries.length} 条 + 核心 ${snapshot.coreSummary}'
         '${target.isPublic ? '' : '到应用目录'}：${target.path}',
       );
     } on ExportWriteException catch (error) {
@@ -394,10 +219,10 @@ class _LogViewerPageState extends State<LogViewerPage>
     FocusManager.instance.primaryFocus?.unfocus();
     // Freeze both the count and payload when opening the menu, so incoming logs
     // cannot silently change what the user chose to copy/export.
-    final visible = List<LogEntry>.of(_displayEntries);
-    final all = List<LogEntry>.of(_entries);
+    final visible = List<LogEntry>.of(_logs.displayEntries);
+    final all = List<LogEntry>.of(_logs.entries);
     final appAll = List<LogEntry>.of(AppLog.instance.entries);
-    final source = _source;
+    final source = _logs.source;
     final action = await showHomeSheet<_LogAction>(
       context: context,
       title: '${source.label}日志',
@@ -510,9 +335,7 @@ class _LogViewerPageState extends State<LogViewerPage>
       ),
     );
     if (confirmed != true || !mounted) return;
-    AppLog.instance.clear();
-    // Clearing is explicit even while the list is paused.
-    setState(_refreshDisplay);
+    _logs.clearAppView();
   }
 
   Future<void> _pickFilters() async {
@@ -520,31 +343,40 @@ class _LogViewerPageState extends State<LogViewerPage>
     final result = await showHomeSheet<LogFilterSelection>(
       context: context,
       title: '筛选日志',
-      children: [LogFilterSheet(initial: _filters)],
+      children: [LogFilterSheet(initial: _logs.filters)],
     );
     if (!mounted || result == null) return;
-    _changeFilters(() => _filters = result);
+    _logs.setFilters(result);
+    _jumpToLatest();
   }
 
   void _togglePlayerOnly(bool selected) {
-    if (selected) _selectSource(LogSource.app);
-    _changeFilters(() => _playerOnly = selected);
+    _logs.setPlayerOnly(selected);
+    _jumpToLatest();
   }
 
-  void _clearLevel() => _changeFilters(
-    () => _filters = LogFilterSelection(timeWindow: _filters.timeWindow),
-  );
+  void _clearLevel() {
+    _logs.setFilters(LogFilterSelection(timeWindow: _logs.filters.timeWindow));
+    _jumpToLatest();
+  }
 
-  void _clearTimeWindow() => _changeFilters(
-    () => _filters = LogFilterSelection(level: _filters.level),
-  );
+  void _clearTimeWindow() {
+    _logs.setFilters(LogFilterSelection(level: _logs.filters.level));
+    _jumpToLatest();
+  }
+
+  void _changeQuery(String value) {
+    _logs.setQuery(value);
+    _jumpToLatest();
+  }
 
   @override
   Widget build(BuildContext context) {
     final palette = HomePalette.of(context);
+    final displayEntries = _logs.displayEntries;
     final indices = <Key, int>{
-      for (var i = 0; i < _displayEntries.length; i++)
-        ObjectKey(_displayEntries[i]): _displayEntries.length - 1 - i,
+      for (var i = 0; i < displayEntries.length; i++)
+        ObjectKey(displayEntries[i]): displayEntries.length - 1 - i,
     };
     final classic = AppUiScope.isClassic(context);
     return SettingsArchivePage(
@@ -576,11 +408,11 @@ class _LogViewerPageState extends State<LogViewerPage>
             children: [
               LogToolbar(
                 controller: _searchController,
-                query: _query,
-                source: _source,
-                playerOnly: _playerOnly,
-                filters: _filters,
-                onQueryChanged: (value) => _changeFilters(() => _query = value),
+                query: _logs.query,
+                source: _logs.source,
+                playerOnly: _logs.playerOnly,
+                filters: _logs.filters,
+                onQueryChanged: _changeQuery,
                 onPickFilters: _pickFilters,
                 onSelectSource: _selectSource,
                 onTogglePlayerOnly: _togglePlayerOnly,
@@ -594,7 +426,7 @@ class _LogViewerPageState extends State<LogViewerPage>
                   backgroundColor: palette.line,
                 ),
               Expanded(
-                child: _displayEntries.isEmpty
+                child: displayEntries.isEmpty
                     ? _buildEmpty()
                     : NotificationListener<ScrollNotification>(
                         onNotification: _onScroll,
@@ -603,11 +435,11 @@ class _LogViewerPageState extends State<LogViewerPage>
                           controller: _scrollController,
                           reverse: true,
                           padding: const EdgeInsets.symmetric(vertical: 8),
-                          itemCount: _displayEntries.length,
+                          itemCount: displayEntries.length,
                           findChildIndexCallback: (key) => indices[key],
                           itemBuilder: (context, index) {
                             final entry =
-                                _displayEntries[_displayEntries.length -
+                                displayEntries[displayEntries.length -
                                     1 -
                                     index];
                             return LogEntryCard(
@@ -620,10 +452,10 @@ class _LogViewerPageState extends State<LogViewerPage>
                       ),
               ),
               LogFollowBar(
-                count: _displayEntries.length,
-                following: _following,
-                pendingCount: _pendingEntries.length,
-                onToggle: _following ? _pauseFollowing : _followLatest,
+                count: displayEntries.length,
+                following: _logs.following,
+                pendingCount: _logs.pendingCount,
+                onToggle: _logs.following ? _pauseFollowing : _followLatest,
               ),
             ],
           ),
@@ -633,17 +465,13 @@ class _LogViewerPageState extends State<LogViewerPage>
   }
 
   Widget _buildEmpty() {
-    final filtered =
-        _query.trim().isNotEmpty ||
-        _playerOnly ||
-        _filters.level != null ||
-        _filters.timeWindow != null;
+    final filtered = _logs.hasFilters;
     return SettingsNotice(
       icon: filtered ? CupertinoIcons.search : CupertinoIcons.doc_plaintext,
       classicIcon: filtered ? LucideIcons.search : LucideIcons.file_text,
       title: filtered
           ? '没有匹配的日志'
-          : _source == LogSource.app
+          : _logs.source == LogSource.app
           ? '暂无日志'
           : '暂无核心日志',
       message: filtered ? '试试其他关键词，或调整筛选条件' : '运行应用后，日志会显示在这里',

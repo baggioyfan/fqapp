@@ -1,18 +1,12 @@
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
 
+import '../../services/logging/log_models.dart';
 import '../home/home_chip.dart';
 import '../home/home_design.dart';
 import 'log_filter_sheet.dart';
 
-/// 日志来源：应用内环形缓冲，或核心落盘文件。
-enum LogSource {
-  app('应用'),
-  rust('核心');
-
-  const LogSource(this.label);
-  final String label;
-}
+export '../../services/logging/log_models.dart' show LogSource;
 
 /// 日志页顶部工具栏：搜索框 + 筛选入口 + 来源 / 播放诊断 / 生效筛选胶囊。
 class LogToolbar extends StatelessWidget {

@@ -113,7 +113,7 @@ class _TabFeed {
 
   /// 追加页的书：区块管线渲染 `cells`，而分页响应不再带区块结构，新拉的
   /// 书若只进 [items] 就永远进不了网格。这里按去重顺序攒着，发布 state
-  /// 时拼进流区块（见 [_streamCellsFor]）。
+  /// 时在全部原始区块之后形成一个唯一的流区块（见 [cellsForView]）。
   final List<MediaItem> appendedStreamItems = [];
 
   /// 服务端下发的顶栏分类，跟区块一起按整页替换（分页响应里只有第一页
@@ -137,14 +137,14 @@ class _TabFeed {
   /// 快照在 await 之前就铺了 items，取消时 `loaded` 仍是假但 items 非空。
   bool stale = false;
 
-  /// The card the user is currently on, reported by the page as it renders
-  /// feeds. Persisted with the snapshot so the next cold start can resume from
-  /// it (officially the landing cache keeps one video plus its position,
+  /// The video card the user is currently on, reported by the video page as it
+  /// renders. Persisted so the next cold start can resume from it (officially
+  /// the landing cache keeps one video plus its position,
   /// `recordNextVideoData`, and consumes it once on the first response).
   String? lastVid;
 
-  /// Set when a load seeded its list from the snapshot's resume point; the
-  /// first network response then appends instead of replacing (official
+  /// Set when a video load seeded its list from the snapshot's resume point;
+  /// the first network response then appends instead of replacing (official
   /// `onMoreDataLoaded` path, `Te` → `uf`), and is cleared right after.
   String? resumedVid;
 
@@ -171,11 +171,12 @@ class _TabFeed {
     resumedVid = null;
   }
 
-  /// 发布给 UI 的区块：流区块（384/385 家族）的卡片后面接上追加页的书。
+  /// 发布给 UI 的区块：追加页作为唯一的尾部卡片流。
   ///
-  /// 只补「无限流」那一个区块——追加页的书本来就是它的续页；其他区块
-  /// （排行榜等）保持上游原样。快照缓存存的也是这份拼好的（恢复后网格
-  /// 与滚动位置所见一致）。
+  /// 上游的 339 书卡位于 385 的 children 里，而 flatten 会先返回 items。
+  /// 若把追加卡写进原 385.items，它们会排到所有旧 children 前面；有多个
+  /// 385 时还会把同一批卡复制到每个区块。独立的尾部 385 保持原始区块
+  /// 不变，并让页面去重后的卡片顺序严格成为「原卡片 → 追加卡片」。
   ///
   /// 结果按需缓存：切回一个分类时 `selectTab` 会再读一次，若每次都拼一份
   /// 新列表，页面那边「数据没变就复用 body」的判据永远不成立，切一次就
@@ -187,34 +188,15 @@ class _TabFeed {
     final cached = _viewCache;
     if (cached != null) return cached;
     return _viewCache = [
-      for (final cell in cells)
-        switch (cell.showType) {
-          384 => HomeCell(
-            showType: cell.showType,
-            name: cell.name,
-            id: cell.id,
-            style: cell.style,
-            items: cell.items,
-            children: [
-              for (final child in cell.children)
-                child.showType == 385
-                    ? HomeCell(
-                        showType: child.showType,
-                        name: child.name,
-                        id: child.id,
-                        style: child.style,
-                        items: [...child.items, ...appendedStreamItems],
-                        children: child.children,
-                        url: child.url,
-                        extra: child.extra,
-                      )
-                    : child,
-            ],
-            url: cell.url,
-            extra: cell.extra,
-          ),
-          _ => cell,
-        },
+      ...cells,
+      HomeCell(
+        showType: kHomeCellDoubleRowFeedShowType,
+        name: '',
+        id: '',
+        style: const {},
+        items: List<MediaItem>.unmodifiable(appendedStreamItems),
+        children: const [],
+      ),
     ];
   }
 }
@@ -373,6 +355,13 @@ class HomeNotifier extends Notifier<HomeState> {
     );
   }
 
+  bool _supportsVideoResume(int tabIndex) {
+    final identity = identityOf(tabIndex);
+    return resumeVideoFeed &&
+        identity.kind == 'video' &&
+        identity.tabType == 16;
+  }
+
   final HomepageLoaderWithIndex _indexedHomepageLoader;
   final SearchTabsLoader _searchLoader;
   final CategorySearchLoader _audioSearchLoader;
@@ -419,6 +408,11 @@ class HomeNotifier extends Notifier<HomeState> {
   /// 固定走本地表，不能靠 `state.tabs` 空不空来猜。
   final bool usesLocalTabs;
 
+  /// Whether this feed has a playable video surface that reports the visible
+  /// card through [noteCurrentVid]. A `video` kind alone is not enough: only
+  /// `tab_type=16` plays inline; the 8/4 video categories render grids.
+  final bool resumeVideoFeed;
+
   HomeNotifier({
     /// 只关心 `tabType` 的加载器（测试注入点）。给了它就不再看下标，所以
     /// 这里在构造期直接把它适配成带下标的形状。
@@ -433,6 +427,7 @@ class HomeNotifier extends Notifier<HomeState> {
     HomeFeedCache? feedCache,
     this.initialTabIndex = 0,
     this.usesLocalTabs = false,
+    this.resumeVideoFeed = false,
   }) : _feedCache = feedCache ?? HomeFeedCache.instance,
        // 注入的 loader 只认 `tabType`；生产路径要额外带上顶栏下标，所以
        // 缺省时直接用带下标的那个（见 [HomepageLoaderWithIndex]）；注入的
@@ -539,11 +534,11 @@ class HomeNotifier extends Notifier<HomeState> {
   /// Reloads the selected tab from page one.
   ///
   /// A manual refresh (pull-to-refresh, error retry) always replaces the list
-  /// (official `SaasClientReqType.Refresh` path). A background first load may
-  /// resume from the snapshot's last viewed card: the list is trimmed to start
-  /// at that card and the network response is appended after it, so the video
-  /// on screen never flips to a different one (official landing-cache flow,
-  /// `Se` → `sf(listOf(cache))` + `Te` → `uf` append).
+  /// (official `SaasClientReqType.Refresh` path). A background first load of a
+  /// playback video feed may resume from the snapshot's last viewed card: the
+  /// list is trimmed to start there and the network response is appended, so
+  /// the video on screen never flips (official landing-cache flow, `Se` →
+  /// `sf(listOf(cache))` + `Te` → `uf` append). Any other feed replaces.
   Future<void> load({bool manualRefresh = false}) async {
     final tabIndex = state.tabIndex;
     // The independent UGC provider owns short-story data and pagination.
@@ -551,11 +546,15 @@ class HomeNotifier extends Notifier<HomeState> {
     FrameStats.mark('load start tab=$tabIndex');
     final generation = ++_generation;
     final feed = _feedFor(tabIndex)..reset();
+    // Only a feed with an actual playable surface reports the card the user was
+    // watching. Other feeds, including video-kind grids, replace page one.
+    final canResume = _supportsVideoResume(tabIndex);
     // Stale-while-revalidate: show the last rendered cards while the network
-    // refresh runs. The cursors stay reset, so the response replaces page one.
+    // refresh runs. Cursors stay reset; grids replace page one, while videos
+    // may append it after the resumed card.
     final snapshot = manualRefresh ? null : _feedCache?.load(tabIndex);
     if (snapshot != null) {
-      final resumeIndex = snapshot.lastVid == null
+      final resumeIndex = !canResume || snapshot.lastVid == null
           ? -1
           : snapshot.items.indexWhere((item) => item.id == snapshot.lastVid);
       if (resumeIndex > 0) {
@@ -620,10 +619,10 @@ class HomeNotifier extends Notifier<HomeState> {
         return;
       }
       final resume = feed.resumedVid != null;
-      feed.resumedVid = null;
       feed.stale = false;
       FrameStats.mark('load apply tab=$tabIndex');
       _applyFetched(feed, fetched, replace: !resume);
+      feed.resumedVid = null;
       state = state.copyWith(
         items: feed.items,
         cells: feed.cellsForView(),
@@ -633,11 +632,13 @@ class HomeNotifier extends Notifier<HomeState> {
         isLoadMore: false,
         hasMore: feed.hasMore,
       );
-      // 上报只在翻页时发生：看第一张卡没滑动就没有 lastVid——兜底用
-      // 当前列表首卡（它就是本次会话实际展示的第一张），让续接链在
-      // 下一次冷启动成立。整页替换立即落盘，并清掉翻页留下的待写防抖。
-      _saveDebounce?.cancel();
-      _dirtySaveTabs.clear();
+      // 播放视频页在滑动前可能还没有上报 lastVid，保存时用首卡兜底；其他
+      // 网格不写续播点。当前页立即落盘，但不能取消其他 tab 的待保存位置。
+      _dirtySaveTabs.remove(tabIndex);
+      if (_dirtySaveTabs.isEmpty) {
+        _saveDebounce?.cancel();
+        _saveDebounce = null;
+      }
       _writeSnapshot(tabIndex);
       AppLog.d(
         'home',
@@ -794,13 +795,19 @@ class HomeNotifier extends Notifier<HomeState> {
 
   /// Writes one tab's current feed to the snapshot store, fire-and-forget.
   ///
-  /// 上报只在翻页时发生：看第一张卡没滑动就没有 lastVid——兜底用当前列表
-  /// 首卡（它就是本次会话实际展示的第一张），让续接链在下一次冷启动成立。
+  /// 有播放 surface 的视频页滑动前可能还没有上报 lastVid，因此保存时用当前
+  /// 列表首卡兜底；上报值已不在列表中时也回退到首卡。其他页面不写续播点。
   void _writeSnapshot(int tabIndex) {
     final feed = _feeds[tabIndex];
     final cache = _feedCache;
     if (feed == null || cache == null || feed.items.isEmpty) return;
-    final savedVid = feed.lastVid ?? feed.items.first.id;
+    String? savedVid;
+    if (_supportsVideoResume(tabIndex)) {
+      final lastVid = feed.lastVid;
+      savedVid = lastVid != null && feed.items.any((item) => item.id == lastVid)
+          ? lastVid
+          : feed.items.first.id;
+    }
     FrameStats.mark('snapshot tab=$tabIndex items=${feed.items.length}');
     unawaited(
       cache.save(
@@ -813,7 +820,7 @@ class HomeNotifier extends Notifier<HomeState> {
     );
   }
 
-  /// Debounced [_writeSnapshot] for pagination.
+  /// Debounced [_writeSnapshot] for pagination and reported resume positions.
   ///
   /// A snapshot write encodes up to [HomeFeedCache.maxItems] cards plus the
   /// whole block tree on the UI isolate; firing one per appended page lands
@@ -835,11 +842,15 @@ class HomeNotifier extends Notifier<HomeState> {
     });
   }
 
-  /// Records the card currently on screen so the next snapshot save can store
-  /// the resume point. The page reports this as the user swipes.
+  /// Records the card currently on screen. The page reports this as the user
+  /// swipes, so a changed position is persisted without another page load.
   void noteCurrentVid(String vid) {
-    if (vid.isEmpty) return;
-    _feedFor(state.tabIndex).lastVid = vid;
+    final tabIndex = state.tabIndex;
+    if (vid.isEmpty || !_supportsVideoResume(tabIndex)) return;
+    final feed = _feedFor(tabIndex);
+    if (feed.lastVid == vid) return;
+    feed.lastVid = vid;
+    _scheduleSave(tabIndex);
   }
 
   Future<_FetchedFeed> _loadInitial(int tabIndex) async {
@@ -1348,11 +1359,15 @@ class HomeNotifier extends Notifier<HomeState> {
       // 赋值，首页就永远拿不到区块，只能退回旧网格。真机冷启动必命中落地
       // 缓存，所以这条路径就是「真机上区块一个都不出现」的根因。
       ..cells = (replace || feed.cells.isEmpty) ? fetched.cells : feed.cells
-      // 追加页的书拼进流区块（见 cellsForView）——续播路径的第一页例外：
-      // 它本来就是整页区块，只是 items 保留了缓存，别把首页书重复拼一遍。
+      // 追加页由 cellsForView 放到所有原始区块之后。视频续播的第一页
+      // 例外：resumedVid 在本方法返回后才清空，因此不会把首页书重复拼一遍。
       ..appendedStreamItems.addAll(
         (!replace &&
-                feed.cells.where((c) => c.showType == 384).isNotEmpty &&
+                feed.cells.any(
+                  (cell) =>
+                      cell.showType == kHomeCellMixedFeedShowType ||
+                      cell.showType == kHomeCellDoubleRowFeedShowType,
+                ) &&
                 feed.resumedVid == null)
             ? fresh
             : const <MediaItem>[],
@@ -1541,5 +1556,9 @@ final dramaTabIndex = HomeNotifier.tabs.indexOf('短剧');
 /// [homeProvider]: two tabs watching one provider would move together, so
 /// switching the home page to 听书 would replace the 短剧 tab's feed as well.
 final dramaProvider = NotifierProvider<HomeNotifier, HomeState>(
-  () => HomeNotifier(initialTabIndex: dramaTabIndex, usesLocalTabs: true),
+  () => HomeNotifier(
+    initialTabIndex: dramaTabIndex,
+    usesLocalTabs: true,
+    resumeVideoFeed: true,
+  ),
 );

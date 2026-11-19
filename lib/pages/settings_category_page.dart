@@ -91,6 +91,7 @@ String settingsCategoryCode(String title) => switch (title) {
   '阅读' => 'SYSTEM / READING',
   '听书' => 'SYSTEM / LISTENING',
   '短剧' => 'SYSTEM / DRAMA',
+  '老板键' => 'SYSTEM / BOSS KEY',
   '数据' => 'SYSTEM / STORAGE',
   '服务' => 'SYSTEM / SERVICE',
   '关于' => 'SYSTEM / ABOUT',
@@ -197,6 +198,7 @@ abstract final class SettingsCategoryIcons {
   static const reading = CupertinoIcons.book;
   static const listening = CupertinoIcons.waveform;
   static const drama = CupertinoIcons.play_rectangle;
+  static const bossKey = CupertinoIcons.eye_slash;
   static const data = CupertinoIcons.folder;
   static const service = CupertinoIcons.wifi;
   static const about = CupertinoIcons.info;

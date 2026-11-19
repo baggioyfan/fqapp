@@ -44,6 +44,8 @@ import 'services/audio_preferences.dart';
 import 'services/player_preferences.dart';
 import 'services/player_layout_preferences.dart';
 import 'services/backend_service.dart';
+import 'services/boss_key_preferences.dart';
+import 'services/boss_key_service.dart';
 import 'services/network_proxy_preferences.dart';
 import 'services/digg_store.dart';
 import 'services/drama_channel_preferences.dart';
@@ -134,6 +136,11 @@ Future<void> _prepareRuntime() async {
   if (isWindowsDesktop || isLinuxDesktop) {
     DesktopPlatform.instance.beforeClose = LinuxPlatform.beforeClose =
         () async {
+          try {
+            await BossKeyService.instance.shutdown();
+          } catch (error, stack) {
+            AppLog.w('exit', '退出前注销老板键失败', error: error, stack: stack);
+          }
           DramaDownloader.instance.pauseAll();
           AudioDownloader.instance.pauseAll();
           await FairMemoryService.instance.flushForExit();
@@ -253,6 +260,15 @@ Future<void> _loadLocalData() async {
   unawaited(DramaCachePreferences.instance.load());
   // 短剧切后台悬浮窗开关（#24）：异步读取，失败退化为默认关闭。
   unawaited(PlayerPreferences.loadFloatingWindow());
+  // 桌面端老板键偏好与全局热键监听：可选能力，失败只退化为未启用。
+  if (isMediaDesktop) {
+    unawaited(
+      optional(() async {
+        await BossKeyPreferences.instance.load();
+        await BossKeyService.instance.initialize();
+      }),
+    );
+  }
   // 离线缓存的网络门（官方 onNetChangeCheck）：断网/只剩计费链路时
   // 自动暂停下载队列，半成品保留。监听失败只退化为「无自动暂停」。
   try {

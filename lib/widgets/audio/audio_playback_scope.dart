@@ -126,6 +126,7 @@ class _AudioPlaybackScopeState extends State<AudioPlaybackScope> {
   bool _rebuildPending = false;
   _AudioPlaybackController? _openingAudio;
   late final Future<void> Function(NativePlayer) _playGate = _beforePlay;
+  late final Future<void> Function() _bossKeyPause = _pauseAllForBossKey;
 
   /// Rebuilds the capsule, which lives in the Navigator's Overlay instead of
   /// under this widget.
@@ -147,6 +148,7 @@ class _AudioPlaybackScopeState extends State<AudioPlaybackScope> {
   void initState() {
     super.initState();
     NativePlayer.beforePlay = _playGate;
+    BossKeyService.pauseAudioScope = _bossKeyPause;
     unawaited(_loadRecent());
   }
 
@@ -182,6 +184,17 @@ class _AudioPlaybackScopeState extends State<AudioPlaybackScope> {
     if (identical(player, session._player)) {
       await NativePlayer.pauseOthers(player);
     } else {
+      await session._pauseForOtherMedia();
+    }
+  }
+
+  Future<void> _pauseAllForBossKey() async {
+    final tts = _tts;
+    if (tts != null && !tts.closed && (tts.wantPlay || tts.loading)) {
+      await tts.pause();
+    }
+    final session = _session;
+    if (session != null && !session._closed) {
       await session._pauseForOtherMedia();
     }
   }
@@ -575,6 +588,9 @@ class _AudioPlaybackScopeState extends State<AudioPlaybackScope> {
   void dispose() {
     if (identical(NativePlayer.beforePlay, _playGate)) {
       NativePlayer.beforePlay = null;
+    }
+    if (identical(BossKeyService.pauseAudioScope, _bossKeyPause)) {
+      BossKeyService.pauseAudioScope = null;
     }
     final session = _session;
     _session = null;

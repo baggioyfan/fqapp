@@ -640,9 +640,9 @@ void main() {
     expect(state.items.map((i) => i.id), ['first-1']);
   });
 
-  test('追加页的书拼进流区块，网格真的无限', () async {
-    // 区块管线只渲染 cells；分页响应不带区块，若新书只进 items，网格永远
-    // 停在首页那批卡。追加页必须合入 385 流区块（cellsForView）。
+  test('连续追加页在全部旧流之后形成唯一尾块，不复制也不前置', () async {
+    // 真实 385 把书卡放在 339 children 里；flatten 先取 items。若追加页写进
+    // 原 385.items，新书会跑到旧书前，多流时还会被复制到每一段。
     var page = 0;
     final provider = NotifierProvider<HomeNotifier, HomeState>(
       () => HomeNotifier(
@@ -651,22 +651,69 @@ void main() {
               page += 1;
               if (page == 1) {
                 return HomepagePage(
-                  items: [_item('first-1'), _item('first-2')],
-                  cells: const [
+                  items: [
+                    _item('first-a1'),
+                    _item('first-a2'),
+                    _item('first-b1'),
+                    _item('first-b2'),
+                  ],
+                  cells: [
                     HomeCell(
                       showType: 384,
-                      name: '猜你喜欢',
+                      name: '流 A',
                       id: '',
-                      style: {},
+                      style: const {},
                       items: [],
                       children: [
                         HomeCell(
                           showType: 385,
                           name: '',
                           id: '',
-                          style: {},
+                          style: const {},
                           items: [],
-                          children: [],
+                          children: [
+                            HomeCell(
+                              showType: 339,
+                              name: '',
+                              id: '',
+                              style: const {},
+                              items: [_item('first-a1')],
+                              children: const [],
+                            ),
+                            HomeCell(
+                              showType: 339,
+                              name: '',
+                              id: '',
+                              style: const {},
+                              items: [_item('first-a2')],
+                              children: const [],
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                    HomeCell(
+                      showType: 385,
+                      name: '流 B',
+                      id: '',
+                      style: const {},
+                      items: [],
+                      children: [
+                        HomeCell(
+                          showType: 339,
+                          name: '',
+                          id: '',
+                          style: const {},
+                          items: [_item('first-b1')],
+                          children: const [],
+                        ),
+                        HomeCell(
+                          showType: 339,
+                          name: '',
+                          id: '',
+                          style: const {},
+                          items: [_item('first-b2')],
+                          children: const [],
                         ),
                       ],
                     ),
@@ -676,8 +723,15 @@ void main() {
                 );
               }
               // 续页：只有 items，没有 cells。
+              if (page == 2) {
+                return HomepagePage(
+                  items: [_item('next-1'), _item('next-2')],
+                  nextOffset: 20,
+                  sessionId: null,
+                );
+              }
               return HomepagePage(
-                items: [_item('next-1'), _item('next-2')],
+                items: [_item('next-3'), _item('next-4')],
                 nextOffset: null,
                 sessionId: null,
               );
@@ -690,23 +744,57 @@ void main() {
     await container.read(provider.notifier).load();
 
     final firstCells = container.read(provider).cells;
-    expect(firstCells.single.showType, 384);
-    expect(firstCells.single.children.single.items.map((i) => i.id), isEmpty);
+    expect(firstCells.expand((cell) => cell.flatten()).map((item) => item.id), [
+      'first-a1',
+      'first-a2',
+      'first-b1',
+      'first-b2',
+    ]);
 
     await container.read(provider.notifier).loadMore();
+    await container.read(provider.notifier).loadMore();
 
-    // 追加页的书出现在流区块的渲染列表里。
+    // 原始两段保持原样，连续追加页只在末尾出现一次。
     final merged = container.read(provider).cells;
-    expect(merged.single.children.single.items.map((i) => i.id), [
+    expect(merged.map((cell) => cell.showType), [384, 385, 385]);
+    expect(merged.expand((cell) => cell.flatten()).map((item) => item.id), [
+      'first-a1',
+      'first-a2',
+      'first-b1',
+      'first-b2',
       'next-1',
       'next-2',
+      'next-3',
+      'next-4',
+    ]);
+    expect(
+      merged[0].children.single.children
+          .expand((cell) => cell.flatten())
+          .map((item) => item.id),
+      ['first-a1', 'first-a2'],
+    );
+    expect(
+      merged[1].children
+          .expand((cell) => cell.flatten())
+          .map((item) => item.id),
+      ['first-b1', 'first-b2'],
+    );
+    expect(merged.last.items.map((item) => item.id), [
+      'next-1',
+      'next-2',
+      'next-3',
+      'next-4',
     ]);
     // items 也照常追加（旧管线/去重语义不变）。
     expect(container.read(provider).items.map((i) => i.id), [
-      'first-1',
-      'first-2',
+      'first-a1',
+      'first-a2',
+      'first-b1',
+      'first-b2',
       'next-1',
       'next-2',
+      'next-3',
+      'next-4',
     ]);
   });
 

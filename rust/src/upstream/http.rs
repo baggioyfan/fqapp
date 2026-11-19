@@ -250,6 +250,12 @@ impl HttpTransport {
                 return Err(TransportError::Network(format!("bad method {method}")));
             }
         };
+        // Seed the observation with the method this exchange actually sends, so
+        // an un-redirected `GET` is not reported as the old fixed `POST`. The
+        // redirect policy rewrites it again only when a hop changes it.
+        if let Some(context) = trace.as_ref() {
+            context.record_method(m.as_str());
+        }
         let mut builder = self.client.request(m, url).timeout(timeout);
         if !headers.is_empty() {
             let mut map = reqwest::header::HeaderMap::new();
@@ -420,12 +426,13 @@ fn observing_redirect_policy() -> reqwest::redirect::Policy {
         let previous_len = attempt.previous().len();
         if previous_len <= 10 {
             if let Some(context) = super::playback_trace::current() {
-                // `tower_http::follow_redirect` rewrites a POST to GET for
-                // 301/302/303 and keeps it for 307/308.
+                // `tower_http::follow_redirect` rewrites any method other than
+                // GET or HEAD to GET for 301/302/303 and keeps it for 307/308.
                 if matches!(attempt.status().as_u16(), 301..=303) {
                     if let Ok(mut method) = context.redirect_method.lock() {
-                        if *method == "POST" {
-                            *method = "GET";
+                        if !matches!(method.as_str(), "GET" | "HEAD") {
+                            method.clear();
+                            method.push_str("GET");
                         }
                     }
                 }
@@ -508,11 +515,7 @@ fn log_http_trace(
     let in_flight = context.in_flight;
     let result = metrics.result;
     let hops = context.redirect_hops.load(Ordering::Relaxed);
-    let final_method = context
-        .redirect_method
-        .lock()
-        .map(|method| *method)
-        .unwrap_or("-");
+    let final_method = context.recorded_method();
     let status = metrics
         .response
         .map_or_else(|| "-".to_string(), |r| r.status.to_string());
@@ -706,5 +709,100 @@ mod account_transport_tests {
             std::sync::Arc::ptr_eq(&first, &second),
             "account requests must reuse the cached no-redirect transport"
         );
+    }
+}
+
+#[cfg(test)]
+mod trace_method_tests {
+    use super::*;
+    use crate::upstream::playback_trace;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+
+    /// Serves one scripted response per accepted connection, in order, so a
+    /// redirect chain can be followed to its end. `{base}` is expanded to the
+    /// listener's own origin, which keeps the Location header local.
+    fn serve_script(script: &[&str]) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        let base = format!("http://{addr}");
+        let bodies: Vec<String> = script
+            .iter()
+            .map(|response| response.replace("{base}", &base))
+            .collect();
+        std::thread::spawn(move || {
+            for body in bodies {
+                if let Ok((mut stream, _)) = listener.accept() {
+                    let mut buf = [0u8; 8192];
+                    let _ = stream.read(&mut buf);
+                    let _ = stream.write_all(body.as_bytes());
+                    let _ = stream.flush();
+                }
+            }
+        });
+        format!("{base}/api/x")
+    }
+
+    const OK: &str = "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{}";
+    const SEE_OTHER: &str = "HTTP/1.1 303 See Other\r\nLocation: {base}/api/y\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+
+    fn run<F: std::future::Future>(work: F) -> F::Output {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("runtime")
+            .block_on(work)
+    }
+
+    /// Sends one exchange inside a playback scope and reports the method the
+    /// tracker holds afterwards, plus the hop count it recorded.
+    fn traced(
+        transport: &HttpTransport,
+        method: &str,
+        url: &str,
+        body: Option<Vec<u8>>,
+    ) -> (String, usize) {
+        run(playback_trace::within(7, "foreground", async {
+            transport
+                .request_with_limit(method, url, &[], body, None, Some(4096))
+                .await
+                .expect("exchange succeeds");
+            let context = playback_trace::current().expect("scope");
+            (
+                context.recorded_method(),
+                context.redirect_hops.load(Ordering::Relaxed),
+            )
+        }))
+    }
+
+    // The defect: a fallback door sends GET, nothing redirects, and the log
+    // still claimed `final_method=POST`.
+    #[test]
+    fn a_non_redirected_get_reports_the_method_actually_sent() {
+        let url = serve_script(&[OK]);
+        let transport = HttpTransport::new(5).expect("transport");
+        let (method, hops) = traced(&transport, "GET", &url, None);
+        assert_eq!(hops, 0, "no hop may be recorded for a direct response");
+        assert_eq!(method, "GET");
+    }
+
+    // A `POST` that a 303 rewrites to `GET` must still report the rewrite.
+    #[test]
+    fn a_rewriting_redirect_still_updates_the_method() {
+        let url = serve_script(&[SEE_OTHER, OK]);
+        let transport = HttpTransport::new(5).expect("transport");
+        let (method, hops) = traced(&transport, "POST", &url, Some(b"{}".to_vec()));
+        assert_eq!(hops, 1, "the followed hop is recorded");
+        assert_eq!(method, "GET");
+    }
+
+    // `HEAD` survives a 303 unchanged, so the seed must not be flattened to GET.
+    #[test]
+    fn a_see_other_keeps_a_head_method() {
+        let url = serve_script(&[SEE_OTHER, OK]);
+        let transport = HttpTransport::new(5).expect("transport");
+        let (method, hops) = traced(&transport, "HEAD", &url, None);
+        assert_eq!(hops, 1);
+        assert_eq!(method, "HEAD");
     }
 }

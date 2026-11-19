@@ -164,74 +164,7 @@ fn assert_same_playback_identity(requests: &[common::Recorded], body: &[u8]) {
 }
 
 #[tokio::test]
-async fn v5_empty_body_is_retried_on_the_same_device_with_the_same_gzip_bytes() {
-    let calls = Arc::new(AtomicUsize::new(0));
-    let counter = calls.clone();
-    let upstream = MockUpstream::start(move |_| match counter.fetch_add(1, Ordering::SeqCst) {
-        0 => MockReply::status(200),
-        1 => MockReply {
-            status: 200,
-            headers: vec![("content-encoding".to_string(), "gzip".to_string())],
-            body: fqapi_core::crypto::gzip(b""),
-        },
-        _ => MockReply::json(json!({"code": 0, "data": {"fixture": "ready"}})),
-    })
-    .await;
-    let dir = TempDir::new("v5-empty-body");
-    let (pool, client) = client_with_pool(&dir, &upstream.origin).await;
-    let body = playback_body();
-
-    let response = client
-        .v5_playback(
-            &format!(
-                "{}/novel/player/multi_video_model/player/v1",
-                upstream.origin
-            ),
-            &body,
-        )
-        .await
-        .expect("empty transport responses must recover before surfacing");
-    let response: Value = serde_json::from_slice(&response).expect("response json");
-    assert_eq!(response["data"]["fixture"], "ready");
-    let requests = upstream.requests();
-    assert_eq!(requests.len(), TRANSIENT_RETRIES + 1);
-    assert_same_playback_identity(&requests, &body);
-    assert_eq!(
-        pool.count().await,
-        5,
-        "empty HTTP bodies are not an auth rejection"
-    );
-    upstream.shutdown();
-}
-
-#[tokio::test]
-async fn v5_empty_body_retries_are_bounded_without_retiring_the_device() {
-    let upstream = MockUpstream::start(|_| MockReply::status(200)).await;
-    let dir = TempDir::new("v5-empty-exhausted");
-    let (pool, client) = client_with_pool(&dir, &upstream.origin).await;
-    let body = playback_body();
-
-    let error = client
-        .v5_playback(
-            &format!(
-                "{}/novel/player/multi_video_model/player/v1",
-                upstream.origin
-            ),
-            &body,
-        )
-        .await
-        .expect_err("persistently empty playback responses must eventually fail");
-    assert!(matches!(error, ClientError::Transient { .. }));
-    assert!(!error.is_device_failed());
-    let requests = upstream.requests();
-    assert_eq!(requests.len(), TRANSIENT_RETRIES + 1);
-    assert_same_playback_identity(&requests, &body);
-    assert_eq!(pool.count().await, 5);
-    upstream.shutdown();
-}
-
-#[tokio::test]
-async fn v5_empty_and_http_failures_share_one_transient_retry_budget() {
+async fn v5_empty_after_a_transient_failure_stops_at_the_first_empty_body() {
     let calls = Arc::new(AtomicUsize::new(0));
     let counter = calls.clone();
     let upstream = MockUpstream::start(move |_| match counter.fetch_add(1, Ordering::SeqCst) {
@@ -252,11 +185,41 @@ async fn v5_empty_and_http_failures_share_one_transient_retry_budget() {
             &body,
         )
         .await
-        .expect_err("mixed transient errors must not multiply request attempts");
-    assert!(matches!(error, ClientError::Transient { .. }));
+        .expect_err("an empty body after a transient failure still fails");
+    assert!(
+        error.is_empty_playback_body(),
+        "the 503 is retried, the empty body is not: {error}"
+    );
     let requests = upstream.requests();
-    assert_eq!(requests.len(), TRANSIENT_RETRIES + 1);
+    assert_eq!(requests.len(), 2, "one 503 retry, then one empty answer");
     assert_same_playback_identity(&requests, &body);
+    assert_eq!(pool.count().await, 5);
+    upstream.shutdown();
+}
+
+#[tokio::test]
+async fn v5_empty_body_still_reports_the_identity_that_must_carry_the_fallback() {
+    let upstream = MockUpstream::start(|_| MockReply::status(200)).await;
+    let dir = TempDir::new("v5-empty-identity");
+    let (pool, client) = client_with_pool(&dir, &upstream.origin).await;
+    let url = format!(
+        "{}/novel/player/multi_video_model/player/v1",
+        upstream.origin
+    );
+
+    let (body, device) = client
+        .v5_playback_with_device(&url, &playback_body(), None)
+        .await
+        .expect("an empty body is not a transport failure");
+    assert!(body.is_empty());
+    assert!(!device.device_id.is_empty());
+    let requests = upstream.requests();
+    assert_eq!(requests.len(), 1, "the empty body is never repeated");
+    assert_eq!(
+        query_map(&requests[0].query).get("device_id"),
+        Some(&device.device_id),
+        "the reported identity is the one that answered"
+    );
     assert_eq!(pool.count().await, 5);
     upstream.shutdown();
 }

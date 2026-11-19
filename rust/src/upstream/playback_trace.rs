@@ -9,6 +9,11 @@ use std::sync::{Arc, Mutex, OnceLock};
 static IN_FLIGHT: AtomicUsize = AtomicUsize::new(0);
 static DEVICE_TAG_HASHER: OnceLock<RandomState> = OnceLock::new();
 
+/// Marker for "no exchange has been sent under this scope yet", matching the
+/// unknown marker the observation line already prints. Nothing here guesses a
+/// method: the transport records the one it resolves before sending.
+pub(crate) const METHOD_UNKNOWN: &str = "-";
+
 #[derive(Clone)]
 pub(crate) struct PlaybackTraceContext {
     pub request_id: u64,
@@ -17,7 +22,26 @@ pub(crate) struct PlaybackTraceContext {
     pub device_tag: u64,
     pub in_flight: usize,
     pub redirect_hops: Arc<AtomicUsize>,
-    pub redirect_method: Arc<Mutex<&'static str>>,
+    pub redirect_method: Arc<Mutex<String>>,
+}
+
+impl PlaybackTraceContext {
+    /// Records the method the transport is actually sending for this exchange.
+    /// A redirect that rewrites the method still updates it afterwards, so the
+    /// log reports what went on the wire rather than a fixed literal.
+    pub(crate) fn record_method(&self, method: &str) {
+        if let Ok(mut recorded) = self.redirect_method.lock() {
+            recorded.clear();
+            recorded.push_str(method);
+        }
+    }
+
+    /// The method currently on record for this exchange.
+    pub(crate) fn recorded_method(&self) -> String {
+        self.redirect_method
+            .lock()
+            .map_or_else(|_| METHOD_UNKNOWN.to_string(), |method| method.clone())
+    }
 }
 
 tokio::task_local! {
@@ -59,7 +83,7 @@ pub(crate) async fn within<F: Future>(
         device_tag: 0,
         in_flight,
         redirect_hops: Arc::new(AtomicUsize::new(0)),
-        redirect_method: Arc::new(Mutex::new("POST")),
+        redirect_method: Arc::new(Mutex::new(METHOD_UNKNOWN.to_string())),
     };
     log::info!("v5 trace request={request_id} purpose={purpose} event=start in_flight={in_flight}");
     TRACE.scope(trace, work).await
@@ -84,6 +108,52 @@ pub(crate) async fn with_attempt<F: Future>(attempt: usize, work: F) -> F::Outpu
     trace.attempt = attempt;
     trace.in_flight = IN_FLIGHT.load(Ordering::Relaxed);
     trace.redirect_hops = Arc::new(AtomicUsize::new(0));
-    trace.redirect_method = Arc::new(Mutex::new("POST"));
+    // A retry re-sends the request, so this attempt learns its own method.
+    trace.redirect_method = Arc::new(Mutex::new(METHOD_UNKNOWN.to_string()));
     TRACE.scope(trace, work).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn run<F: Future>(work: F) -> F::Output {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("runtime")
+            .block_on(work)
+    }
+
+    fn recorded() -> String {
+        current().expect("scope").recorded_method()
+    }
+
+    // A request that is never redirected must report the method it actually
+    // sent. The scope starts unknown, so a GET can no longer come out as POST.
+    #[test]
+    fn a_non_redirected_request_reports_the_recorded_method() {
+        let method = run(within(1, "foreground", async {
+            assert_eq!(recorded(), METHOD_UNKNOWN);
+            current().expect("scope").record_method("GET");
+            recorded()
+        }));
+        assert_eq!(method, "GET");
+    }
+
+    // Each attempt re-sends the request, so it inherits no method from the one
+    // before it and reports its own once the transport records it.
+    #[test]
+    fn a_new_attempt_starts_without_a_method() {
+        let method = run(within(1, "foreground", async {
+            current().expect("scope").record_method("GET");
+            with_attempt(1, async {
+                assert_eq!(recorded(), METHOD_UNKNOWN);
+                current().expect("scope").record_method("POST");
+                recorded()
+            })
+            .await
+        }));
+        assert_eq!(method, "POST");
+    }
 }
