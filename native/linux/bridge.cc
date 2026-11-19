@@ -1,11 +1,27 @@
 #include "common.h"
 #include <cmath>
+#include <cstdlib>
+#include <cstring>
 #include <unistd.h>
+#if defined(GDK_WINDOWING_X11) && defined(FQAPP_HAS_X11)
+#include <X11/Xlib.h>
+#include <gdk/gdkx.h>
+#endif
 using namespace fqapp;
 static void connect_buses(FqappLinuxBridge *);
+#if defined(GDK_WINDOWING_X11) && defined(FQAPP_HAS_X11)
+static int g_x11_grab_error = 0;
+static int boss_key_x11_error_handler(Display *, XErrorEvent *event) {
+  g_x11_grab_error = event ? event->error_code : BadAccess;
+  return 0;
+}
+static GdkFilterReturn boss_key_x11_filter(GdkXEvent *gdk_xevent, GdkEvent *,
+                                           gpointer data);
+#endif
 struct FqappLinuxBridge {
   GtkWindow *window;
-  FlMethodChannel *tts_channel, *session_channel, *player_channel;
+  FlMethodChannel *tts_channel, *session_channel, *player_channel,
+      *boss_key_channel;
   FlEventChannel *tts_events, *session_events;
 
   std::shared_ptr<bool> alive = std::make_shared<bool>(true);
@@ -24,6 +40,13 @@ struct FqappLinuxBridge {
   gint64 updated = 0;
   unsigned track = 0;
   GDBusNodeInfo *info = nullptr;
+#if defined(GDK_WINDOWING_X11) && defined(FQAPP_HAS_X11)
+  bool boss_key_registered = false;
+  bool boss_key_filter_installed = false;
+  GdkWindow *boss_key_root_window = nullptr;
+  int boss_key_keycode = 0;
+  unsigned int boss_key_mods = 0;
+#endif
   void event(const char *type, bool value) {
     g_autoptr(FlValue) v = fl_value_new_map();
     put(v, "type", fl_value_new_string(type));
@@ -243,7 +266,203 @@ struct FqappLinuxBridge {
                                     g_variant_new("(x)", position()), nullptr);
     reply(c);
   }
+#if defined(GDK_WINDOWING_X11) && defined(FQAPP_HAS_X11)
+  Display *x11_display() const {
+    GdkDisplay *display =
+        window ? gtk_widget_get_display(GTK_WIDGET(window))
+               : gdk_display_get_default();
+    if (!display || !GDK_IS_X11_DISPLAY(display))
+      return nullptr;
+    return GDK_DISPLAY_XDISPLAY(display);
+  }
+  void ungrab_raw(Display *dpy, int keycode, unsigned int mods) const {
+    if (!dpy || keycode <= 0)
+      return;
+    const Window root = DefaultRootWindow(dpy);
+    const unsigned int locks[4] = {0, LockMask, Mod2Mask, LockMask | Mod2Mask};
+    for (unsigned int mask : locks)
+      XUngrabKey(dpy, keycode, mods | mask, root);
+    XFlush(dpy);
+  }
+  bool grab_raw(Display *dpy, int keycode, unsigned int mods,
+                int *error_code) const {
+    const Window root = DefaultRootWindow(dpy);
+    const unsigned int locks[4] = {0, LockMask, Mod2Mask, LockMask | Mod2Mask};
+    g_x11_grab_error = 0;
+    XErrorHandler previous = XSetErrorHandler(boss_key_x11_error_handler);
+    for (unsigned int mask : locks)
+      XGrabKey(dpy, keycode, mods | mask, root, False, GrabModeAsync,
+               GrabModeAsync);
+    XSync(dpy, False);
+    XSetErrorHandler(previous);
+    if (g_x11_grab_error != 0) {
+      ungrab_raw(dpy, keycode, mods);
+      XSync(dpy, False);
+      if (error_code)
+        *error_code = g_x11_grab_error;
+      return false;
+    }
+    return true;
+  }
+  void ungrab_boss_key() {
+    if (!boss_key_registered)
+      return;
+    if (Display *dpy = x11_display())
+      ungrab_raw(dpy, boss_key_keycode, boss_key_mods);
+    boss_key_registered = false;
+    boss_key_keycode = 0;
+    boss_key_mods = 0;
+  }
+  void cleanup_boss_key() {
+    ungrab_boss_key();
+    if (boss_key_filter_installed && boss_key_root_window) {
+      gdk_window_remove_filter(boss_key_root_window, boss_key_x11_filter, this);
+      boss_key_filter_installed = false;
+      boss_key_root_window = nullptr;
+    }
+  }
+#else
+  void cleanup_boss_key() {}
+#endif
+  void boss_key(FlMethodCall *c) {
+    std::string method = fl_method_call_get_name(c);
+    if (method == "capabilities") {
+      g_autoptr(FlValue) v = fl_value_new_map();
+#if defined(GDK_WINDOWING_X11) && defined(FQAPP_HAS_X11)
+      if (x11_display() != nullptr) {
+        put(v, "globalHotkey", fl_value_new_bool(true));
+        put(v, "backend", fl_value_new_string("x11"));
+        reply(c, v);
+        return;
+      }
+#endif
+      const char *wayland = std::getenv("WAYLAND_DISPLAY");
+      const char *session = std::getenv("XDG_SESSION_TYPE");
+      const bool is_wayland =
+          (wayland && wayland[0] != '\0') ||
+          (session && std::strcmp(session, "wayland") == 0);
+      put(v, "globalHotkey", fl_value_new_bool(false));
+      put(v, "backend",
+          fl_value_new_string(is_wayland ? "wayland" : "unknown"));
+      reply(c, v);
+      return;
+    }
+    if (method == "unregister") {
+#if defined(GDK_WINDOWING_X11) && defined(FQAPP_HAS_X11)
+      ungrab_boss_key();
+#endif
+      g_autoptr(FlValue) ok = fl_value_new_bool(true);
+      reply(c, ok);
+      return;
+    }
+    if (method == "register") {
+#if defined(GDK_WINDOWING_X11) && defined(FQAPP_HAS_X11)
+      Display *dpy = x11_display();
+      if (!dpy) {
+        fail(c, "UNSUPPORTED_DISPLAY",
+             "当前 Wayland 会话暂不支持全局老板键，请切换到 X11 会话或设置 "
+             "GDK_BACKEND=x11");
+        return;
+      }
+      auto *args = fl_method_call_get_args(c);
+      if (!args || fl_value_get_type(args) != FL_VALUE_TYPE_MAP) {
+        fail(c, "INVALID_ARGUMENT", "缺少快捷键参数");
+        return;
+      }
+      auto *sym_val = field(args, "x11KeySym");
+      if (!sym_val || fl_value_get_type(sym_val) != FL_VALUE_TYPE_INT) {
+        fail(c, "INVALID_ARGUMENT", "不支持的按键编码");
+        return;
+      }
+      const int64_t keysym = fl_value_get_int(sym_val);
+      if (keysym <= 0) {
+        fail(c, "INVALID_ARGUMENT", "不支持的按键编码");
+        return;
+      }
+      const KeyCode keycode =
+          XKeysymToKeycode(dpy, static_cast<KeySym>(keysym));
+      if (keycode == 0) {
+        fail(c, "INVALID_ARGUMENT", "当前键盘布局不支持该按键");
+        return;
+      }
+      unsigned int mods = 0;
+      if (flag(field(args, "ctrl")))
+        mods |= ControlMask;
+      if (flag(field(args, "alt")))
+        mods |= Mod1Mask;
+      if (flag(field(args, "shift")))
+        mods |= ShiftMask;
+      if (flag(field(args, "meta")))
+        mods |= Mod4Mask;
+
+      if (boss_key_registered &&
+          boss_key_keycode == static_cast<int>(keycode) &&
+          boss_key_mods == mods) {
+        g_autoptr(FlValue) ok = fl_value_new_bool(true);
+        reply(c, ok);
+        return;
+      }
+
+      int error_code = 0;
+      if (!grab_raw(dpy, static_cast<int>(keycode), mods, &error_code)) {
+        if (error_code == BadAccess) {
+          fail(c, "HOTKEY_CONFLICT", "该快捷键已被其他应用占用");
+        } else {
+          fail(c, "REGISTER_FAILED", "注册全局快捷键失败");
+        }
+        return;
+      }
+
+      if (boss_key_registered)
+        ungrab_raw(dpy, boss_key_keycode, boss_key_mods);
+
+      boss_key_registered = true;
+      boss_key_keycode = static_cast<int>(keycode);
+      boss_key_mods = mods;
+
+      if (!boss_key_filter_installed) {
+        GdkDisplay *gdk_display = gtk_widget_get_display(GTK_WIDGET(window));
+        GdkScreen *screen =
+            gdk_display ? gdk_display_get_default_screen(gdk_display) : nullptr;
+        GdkWindow *root =
+            screen ? gdk_screen_get_root_window(screen) : nullptr;
+        if (root) {
+          gdk_window_add_filter(root, boss_key_x11_filter, this);
+          boss_key_root_window = root;
+          boss_key_filter_installed = true;
+        }
+      }
+      g_autoptr(FlValue) ok = fl_value_new_bool(true);
+      reply(c, ok);
+      return;
+#else
+      fail(c, "UNSUPPORTED_DISPLAY", "当前构建未启用 X11 全局快捷键支持");
+      return;
+#endif
+    }
+    fl_method_call_respond_not_implemented(c, nullptr);
+  }
 };
+#if defined(GDK_WINDOWING_X11) && defined(FQAPP_HAS_X11)
+static GdkFilterReturn boss_key_x11_filter(GdkXEvent *gdk_xevent, GdkEvent *,
+                                           gpointer data) {
+  auto *b = static_cast<FqappLinuxBridge *>(data);
+  if (!b || !b->boss_key_registered || !gdk_xevent)
+    return GDK_FILTER_CONTINUE;
+  auto *xev = static_cast<XEvent *>(gdk_xevent);
+  if (xev->type == KeyPress &&
+      xev->xkey.keycode == static_cast<unsigned int>(b->boss_key_keycode)) {
+    const unsigned int state =
+        xev->xkey.state & (ControlMask | Mod1Mask | ShiftMask | Mod4Mask);
+    if (state == b->boss_key_mods && b->boss_key_channel) {
+      fl_method_channel_invoke_method(b->boss_key_channel, "onTriggered",
+                                      nullptr, nullptr, nullptr, nullptr);
+      return GDK_FILTER_REMOVE;
+    }
+  }
+  return GDK_FILTER_CONTINUE;
+}
+#endif
 static const char *xml = R"(<node>
 <interface name="org.mpris.MediaPlayer2">
 <method name="Raise"/><method name="Quit"/>
@@ -569,6 +788,11 @@ FqappLinuxBridge *fqapp_linux_bridge_new(FlBinaryMessenger *m, GtkWindow *w) {
               [](FlMethodChannel *, FlMethodCall *c, gpointer d) {
                 static_cast<FqappLinuxBridge *>(d)->player(c);
               });
+  b->boss_key_channel =
+      channel(m, "fqapp/boss_key", b,
+              [](FlMethodChannel *, FlMethodCall *c, gpointer d) {
+                static_cast<FqappLinuxBridge *>(d)->boss_key(c);
+              });
   b->info = g_dbus_node_info_new_for_xml(xml, nullptr);
   connect_buses(b);
   b->reconnect_timer = g_timeout_add_seconds(
@@ -585,8 +809,10 @@ void fqapp_linux_bridge_free(FqappLinuxBridge *b) {
   if (!b)
     return;
   *b->alive = false;
-  for (auto *c : {b->tts_channel, b->session_channel, b->player_channel})
+  for (auto *c : {b->tts_channel, b->session_channel, b->player_channel,
+                  b->boss_key_channel})
     fl_method_channel_set_method_call_handler(c, nullptr, nullptr, nullptr);
+  b->cleanup_boss_key();
   if (b->reconnect_timer)
     g_source_remove(b->reconnect_timer);
   if (b->logind_watch)
@@ -610,7 +836,8 @@ void fqapp_linux_bridge_free(FqappLinuxBridge *b) {
   g_clear_object(&b->bus);
   g_clear_object(&b->system_bus);
   g_dbus_node_info_unref(b->info);
-  for (auto *c : {b->tts_channel, b->session_channel, b->player_channel})
+  for (auto *c : {b->tts_channel, b->session_channel, b->player_channel,
+                  b->boss_key_channel})
     g_object_unref(c);
   g_object_unref(b->tts_events);
   g_object_unref(b->session_events);
