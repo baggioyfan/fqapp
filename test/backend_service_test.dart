@@ -21,10 +21,19 @@ void main() {
   late Directory directory;
   BackendService? created;
 
+  /// Wall-clock budgets for the happy-path tests.
+  ///
+  /// These are not assertions: a passing start here only has to *finish*
+  /// before the budget lapses, and deployment plus the loopback health gate
+  /// does real file and socket work on a loaded CI runner. The old 2 s startup
+  /// budget made an unrelated PR's Windows job fail with
+  /// `Bad state: backend failed to start (startup timeout)` while the same test
+  /// passed locally. The timeout *semantics* are pinned elsewhere by the two
+  /// fake-async tests, which pass their own explicit budget and elapse it.
   BackendService createBackend({
     AssetBundle? assets,
-    Duration timeout = const Duration(seconds: 2),
-    Duration shutdownTimeout = const Duration(seconds: 3),
+    Duration timeout = const Duration(seconds: 10),
+    Duration shutdownTimeout = const Duration(seconds: 10),
     BackendTransport? transport,
   }) {
     final backend = BackendService(
