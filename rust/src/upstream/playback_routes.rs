@@ -283,7 +283,9 @@ mod tests {
         };
         state.failed(tab, 10_000, false);
         assert!(!state.plan(10_000, false).contains(&tab));
-        assert!(state.plan(10_000 + ms(ERROR_COOLDOWN), false).contains(&tab));
+        assert!(state
+            .plan(10_000 + ms(ERROR_COOLDOWN), false)
+            .contains(&tab));
         // A briefly-parked door is not "exhausted": only empty bodies are.
         assert!(!state.exhausted(10_000));
     }
