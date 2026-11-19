@@ -229,7 +229,7 @@ fn handle_video<'a>(ctx: &'a Ctx, params: &'a Params) -> BoxFuture<'a, ApiResult
             }
         };
         let variant_deadline = (Instant::now() + variant_budget).min(work_deadline);
-        let variants = extract_stream_variants(
+        let (variants, variant_counts) = extract_stream_variants(
             ctx,
             &video_id,
             &parsed,
@@ -239,6 +239,11 @@ fn handle_video<'a>(ctx: &'a Ctx, params: &'a Params) -> BoxFuture<'a, ApiResult
             variant_deadline,
         )
         .await;
+        debug_assert_eq!(
+            variants.len(),
+            variant_counts.kept,
+            "kept must stay the same number the panel shows"
+        );
         let primary_in_variants = variants
             .iter()
             .any(|variant| variant.get("url").and_then(Value::as_str) == Some(video_url.as_str()));
@@ -254,13 +259,16 @@ fn handle_video<'a>(ctx: &'a Ctx, params: &'a Params) -> BoxFuture<'a, ApiResult
             .collect::<Vec<_>>()
             .join(",");
         log::info!(
-            "stream trace request={source_trace_id} purpose={purpose} event=final mode={} selected_source=v5 bodies=1 fallback_bodies={} quality_count={} qualities=[{quality_trace}] primary_in_variants={primary_in_variants}",
+            "stream trace request={source_trace_id} purpose={purpose} event=final mode={} selected_source=v5 bodies=1 fallback_bodies={} quality_count={} raw_entries={} kept={} dropped=[{}] qualities=[{quality_trace}] primary_in_variants={primary_in_variants}",
             if stream_mode { "stream" } else { "single" },
             fallback_bodies
                 .lock()
                 .unwrap_or_else(|error| error.into_inner())
                 .len(),
             variants.len(),
+            variant_counts.raw_entries,
+            variant_counts.kept,
+            variant_counts.dropped.summary(),
         );
 
         let source = json!({
@@ -1228,7 +1236,9 @@ fn variant_display_name(height: i64) -> String {
 ///
 /// The model's own `video_list` and `fallback_api` list are merged. Returns
 /// `[]` when neither yields a playable variant; the client then hides the
-/// quality row (official `oi3/k.P()` gate).
+/// quality row (official `oi3/k.P()` gate). The counters ride alongside so a
+/// log line can say whether upstream sent one entry or sent five and our gates
+/// kept one (`quality_count` alone has no denominator).
 async fn extract_stream_variants(
     ctx: &Ctx,
     video_id: &str,
@@ -1237,18 +1247,19 @@ async fn extract_stream_variants(
     primary_url: &str,
     source_trace_id: u64,
     deadline: Instant,
-) -> Vec<Value> {
+) -> (Vec<Value>, VariantCounts) {
     let trace_started = Instant::now();
     let mut scored = Vec::new();
+    let mut batches: Vec<VariantCounts> = Vec::new();
     let mut fallback_requests = Vec::new();
     let mut seen_fallback_urls = HashSet::new();
     let mut local_tiers = 0;
     let mut fallback_models = 0;
     for (model_id, model) in parsed.models.iter().enumerate() {
         // NOTE: 不用 video_model_encrypted() 做前置——它只认数组形状的
-        // video_list；实测漫剧（series 7686494169098898456）的 video_list 是
-        // object 且未标 encrypt，但每档照常带 spade_a/kid，选流门照常适用。
-        let rows = variant_rows_scored_any(
+        // video_list;实测漫剧(series 7686494169098898456)的 video_list 是
+        // object 且未标 encrypt,但每档照常带 spade_a/kid,选流门照常适用。
+        let batch = variant_rows_scored_any(
             model.get("video_list"),
             model
                 .get("key_seed")
@@ -1256,17 +1267,18 @@ async fn extract_stream_variants(
                 .filter(|s| !s.is_empty())
                 .and_then(|s| audio_b64_decode(s).ok()),
         );
-        local_tiers += playable_variant_tier_count(&rows);
-        scored.extend(rows);
+        local_tiers += playable_variant_tier_count(&batch.rows);
+        batches.push(batch.counts);
+        scored.extend(batch.rows);
         let fallback_url = fallback_api_url(model);
         if !fallback_url.is_empty() && seen_fallback_urls.insert(fallback_url) {
             fallback_models += 1;
             let fallback_cache = fallback_bodies.clone();
             fallback_requests.push(Box::pin(async move {
-                let (rows, from_cache) =
+                let (batch, from_cache) =
                     fallback_variant_rows(ctx, video_id, "v5", model, &fallback_cache, deadline)
                         .await;
-                (model_id, from_cache, rows)
+                (model_id, from_cache, batch)
             }));
         }
     }
@@ -1274,16 +1286,17 @@ async fn extract_stream_variants(
         "stream trace request={source_trace_id} source=v5 event=variants_body elapsed_ms={} playable_tiers={local_tiers} fallback_models={fallback_models}",
         trace_started.elapsed().as_millis(),
     );
-    for (model_id, from_cache, rows) in futures::future::join_all(fallback_requests).await {
+    for (model_id, from_cache, batch) in futures::future::join_all(fallback_requests).await {
         log::info!(
             "stream trace request={source_trace_id} source=v5 model={model_id} event=variants_fallback elapsed_ms={} from_cache={from_cache} playable_tiers={}",
             trace_started.elapsed().as_millis(),
-            playable_variant_tier_count(&rows),
+            playable_variant_tier_count(&batch.rows),
         );
-        scored.extend(rows);
+        batches.push(batch.counts);
+        scored.extend(batch.rows);
     }
     prioritize_primary_variant(&mut scored, primary_url);
-    merge_variant_rows(scored)
+    tally_variants(scored, &batches)
 }
 
 /// The model's `fallback_api` list as scored rows; empty when the model has no
@@ -1295,11 +1308,11 @@ async fn fallback_variant_rows(
     model: &Map<String, Value>,
     cache: &FallbackBodyCache,
     deadline: Instant,
-) -> (Vec<(i64, Value)>, bool) {
+) -> (VariantBatch, bool) {
     let fallback_url = fallback_api_url(model);
     if fallback_url.is_empty() {
-        // 多数模型本来就没有这一条，不是异常。
-        return (Vec::new(), false);
+        // 多数模型本来就没有这一条,不是异常。
+        return (VariantBatch::default(), false);
     }
     let cached = {
         let cache = cache.lock().unwrap_or_else(|error| error.into_inner());
@@ -1309,31 +1322,31 @@ async fn fallback_variant_rows(
         return (fallback_rows_from_body(fallback_data.as_ref()), true);
     }
     if Instant::now() >= deadline {
-        return (Vec::new(), false);
+        return (VariantBatch::default(), false);
     }
     let fallback_data =
         match fetch_fallback_video_info(ctx, video_id, source, &fallback_url, deadline).await {
             Ok(fallback_data) => fallback_data,
             Err(_) => {
-                // 有地址却拉不到，是这一档列表整片消失的另一种静默路径。
+                // 有地址却拉不到,是这一档列表整片消失的另一种静默路径。
                 log::warn!(
                     "video {video_id}: {source} fallback_api fetch failed (quality tiers lost)"
                 );
-                return (Vec::new(), false);
+                return (VariantBatch::default(), false);
             }
         };
     let fallback_data = Arc::new(fallback_data);
-    let rows = fallback_rows_from_body(fallback_data.as_ref());
-    if playable_variant_tier_count(&rows) > 0 {
+    let batch = fallback_rows_from_body(fallback_data.as_ref());
+    if playable_variant_tier_count(&batch.rows) > 0 {
         let mut cache = cache.lock().unwrap_or_else(|error| error.into_inner());
         cache
             .entry(fallback_url)
             .or_insert_with(|| fallback_data.clone());
     }
-    (rows, false)
+    (batch, false)
 }
 
-fn fallback_rows_from_body(fallback_data: &Map<String, Value>) -> Vec<(i64, Value)> {
+fn fallback_rows_from_body(fallback_data: &Map<String, Value>) -> VariantBatch {
     let list = fallback_data
         .get("video_info")
         .and_then(|v| v.get("data"))
@@ -1345,6 +1358,84 @@ fn fallback_rows_from_body(fallback_data: &Map<String, Value>) -> Vec<(i64, Valu
         .and_then(|s| audio_b64_decode(s).ok());
     let list = list.and_then(|d| d.get("video_list"));
     variant_rows_scored_any(list, key_seed)
+}
+
+/// Why an entry in an upstream variant list never became a playable tier.
+/// Counts only: this rides in a log line that gets pasted around, so it must
+/// never carry a url, a body, a signature, a key or a device identifier.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+struct VariantDropCounts {
+    /// `video_quality_score` returned `None`; bytevc2 is the only such codec
+    /// (`CRIT-004`: no decoder on the playback path).
+    bytevc2: usize,
+    /// `decrypt_variant_entry` found no playable url in any url field.
+    no_url: usize,
+    /// No usable width/height pair, so no quality name exists to show.
+    no_meta: usize,
+    /// Folded away by the merge: the resolution name or the url was already
+    /// claimed by an earlier row.
+    duplicate: usize,
+}
+
+impl VariantDropCounts {
+    fn total(&self) -> usize {
+        self.bytevc2 + self.no_url + self.no_meta + self.duplicate
+    }
+
+    /// Compact `bytevc2:3,no_url:0,no_meta:0,dup:1` for the trace line.
+    fn summary(&self) -> String {
+        format!(
+            "bytevc2:{},no_url:{},no_meta:{},dup:{}",
+            self.bytevc2, self.no_url, self.no_meta, self.duplicate
+        )
+    }
+}
+
+/// What the variant extraction did with a request's entries. `kept + dropped`
+/// must equal `raw_entries`, which is the denominator `quality_count` lacked:
+/// without it a log cannot tell "upstream sent one entry" from "upstream sent
+/// five and our codec/metadata gates kept one".
+///
+/// For a single list batch `kept` is pre-merge; `tally_variants` recomputes it
+/// for the whole request, so a batch's `kept` is informational only.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+struct VariantCounts {
+    raw_entries: usize,
+    kept: usize,
+    dropped: VariantDropCounts,
+}
+
+/// One upstream `video_list` / `fallback_api` list: the rows it yielded plus
+/// the counters that explain every entry it was handed.
+#[derive(Debug, Default)]
+struct VariantBatch {
+    rows: Vec<(i64, Value)>,
+    counts: VariantCounts,
+}
+
+/// Folds the per-list counters into one request-level tally and returns the
+/// final rows. Pure: no network, no `Ctx`, so the async path only reports what
+/// this returns and a test can drive the same code with fixtures.
+fn tally_variants(
+    scored: Vec<(i64, Value)>,
+    batches: &[VariantCounts],
+) -> (Vec<Value>, VariantCounts) {
+    let mut counts = VariantCounts::default();
+    for batch in batches {
+        counts.raw_entries += batch.raw_entries;
+        counts.dropped.bytevc2 += batch.dropped.bytevc2;
+        counts.dropped.no_url += batch.dropped.no_url;
+        counts.dropped.no_meta += batch.dropped.no_meta;
+    }
+    let (rows, duplicates) = merge_variant_rows_counted(scored);
+    counts.dropped.duplicate = duplicates;
+    counts.kept = rows.len();
+    debug_assert_eq!(
+        counts.kept + counts.dropped.total(),
+        counts.raw_entries,
+        "every upstream variant entry must be kept or explained: {counts:?}"
+    );
+    (rows, counts)
 }
 
 fn playable_variant_tier_count(rows: &[(i64, Value)]) -> usize {
@@ -1372,16 +1463,35 @@ fn prioritize_primary_variant(scored: &mut Vec<(i64, Value)>, primary_url: &str)
 /// passes both checks claims both keys; rejected aliases must not consume a key
 /// needed by a later real stream. The panel matches the current tier by URL, so
 /// duplicate URLs would highlight multiple rows.
+/// Test-facing face of the counted merge. The production path needs the
+/// duplicate count, so only the tests keep the bare-row form.
+#[cfg(test)]
 fn merge_variant_rows(scored: Vec<(i64, Value)>) -> Vec<Value> {
+    merge_variant_rows_counted(scored).0
+}
+
+/// Ranks rows best-first and keeps one row per resolution and URL. A row that
+/// passes both checks claims both keys; rejected aliases must not consume a key
+/// needed by a later real stream. The panel matches the current tier by URL, so
+/// duplicate URLs would highlight multiple rows.
+///
+/// Also reports how many rows it folded away so the trace can account for every
+/// entry. Every fold-away is counted as a duplicate, which keeps
+/// `kept + dropped == raw_entries` exact: `variant_rows_from_entries` already
+/// drops nameless and url-less entries, so a row that cannot claim both keys can
+/// only be a repeat of an earlier one.
+fn merge_variant_rows_counted(scored: Vec<(i64, Value)>) -> (Vec<Value>, usize) {
     let mut seen_names: HashSet<String> = HashSet::new();
     let mut seen_urls: HashSet<String> = HashSet::new();
     let mut out: Vec<(i64, Value)> = Vec::with_capacity(scored.len());
+    let mut duplicates = 0;
     for (score, row) in scored {
         let Some(name) = row
             .get("name")
             .and_then(Value::as_str)
             .filter(|name| !name.is_empty())
         else {
+            duplicates += 1;
             continue;
         };
         let Some(url) = row
@@ -1389,11 +1499,13 @@ fn merge_variant_rows(scored: Vec<(i64, Value)>) -> Vec<Value> {
             .and_then(Value::as_str)
             .filter(|url| !url.is_empty())
         else {
+            duplicates += 1;
             continue;
         };
         let name = name.to_string();
         let url = url.to_string();
         if seen_names.contains(&name) || seen_urls.contains(&url) {
+            duplicates += 1;
             continue;
         }
         seen_names.insert(name);
@@ -1401,7 +1513,7 @@ fn merge_variant_rows(scored: Vec<(i64, Value)>) -> Vec<Value> {
         out.push((score, row));
     }
     out.sort_by_key(|(score, _)| std::cmp::Reverse(*score));
-    out.into_iter().map(|(_, row)| row).collect()
+    (out.into_iter().map(|(_, row)| row).collect(), duplicates)
 }
 
 /// 把一份响应的**外壳**压成一行：顶层键名、`data` 的类型、`code`/`Code`、
@@ -1469,6 +1581,16 @@ fn variant_rows_scored(
     video_list: Option<&Map<String, Value>>,
     key_seed: Option<Vec<u8>>,
 ) -> Vec<(i64, Value)> {
+    variant_rows_scored_with_counts(video_list, key_seed).rows
+}
+
+/// Counting face of [`variant_rows_scored`]: same rows, plus the counters that
+/// explain every entry the list handed us.
+#[cfg(test)]
+fn variant_rows_scored_with_counts(
+    video_list: Option<&Map<String, Value>>,
+    key_seed: Option<Vec<u8>>,
+) -> VariantBatch {
     let entries: Vec<(String, &Map<String, Value>)> = video_list
         .into_iter()
         .flat_map(|list| {
@@ -1479,10 +1601,7 @@ fn variant_rows_scored(
     variant_rows_from_entries(entries, key_seed)
 }
 
-fn variant_rows_scored_any(
-    video_list: Option<&Value>,
-    key_seed: Option<Vec<u8>>,
-) -> Vec<(i64, Value)> {
+fn variant_rows_scored_any(video_list: Option<&Value>, key_seed: Option<Vec<u8>>) -> VariantBatch {
     let entries: Vec<(String, &Map<String, Value>)> = match video_list {
         Some(Value::Object(list)) => list
             .iter()
@@ -1493,7 +1612,7 @@ fn variant_rows_scored_any(
             .enumerate()
             .filter_map(|(index, value)| value.as_object().map(|info| (index.to_string(), info)))
             .collect(),
-        _ => return Vec::new(),
+        _ => return VariantBatch::default(),
     };
     variant_rows_from_entries(entries, key_seed)
 }
@@ -1501,42 +1620,52 @@ fn variant_rows_scored_any(
 fn variant_rows_from_entries(
     entries: Vec<(String, &Map<String, Value>)>,
     key_seed: Option<Vec<u8>>,
-) -> Vec<(i64, Value)> {
-    if entries.is_empty() {
-        return Vec::new();
+) -> VariantBatch {
+    let mut counts = VariantCounts {
+        raw_entries: entries.len(),
+        ..Default::default()
+    };
+    let mut rows: Vec<(i64, Value)> = Vec::with_capacity(entries.len());
+    for (slot, info) in entries {
+        let w = video_quality_metric(info, &["vwidth"]);
+        let h = video_quality_metric(info, &["vheight"]);
+        // 档位语义按**短边**:竖屏剧 1280×720 是 720P 而非 2K
+        // (官方 Resolution 枚举同样以短边为准)。缺任一边时不能宣称画质。
+        let short_edge = if w > 0 && h > 0 { w.min(h) } else { 0 };
+        let name = variant_display_name(short_edge);
+        // 编码门丢 bytevc2 是**预期行为**(`CRIT-004`:该编码没有解码器),不打点。
+        let Some(score) = video_quality_score(info) else {
+            counts.dropped.bytevc2 += 1;
+            continue;
+        };
+        let Some((url, key)) = decrypt_variant_entry(info, key_seed.as_deref()) else {
+            // 地址解不出来是静默丢**整档**的一类——`4e85437` 修过同款缺陷,且
+            // 实测夹具的 `main_url` 形态一向比线上少,缺陷容易被盖住,所以留告警。
+            log::warn!("variant {slot} dropped, url undecodable ({w}x{h} {name})");
+            counts.dropped.no_url += 1;
+            continue;
+        };
+        if short_edge == 0 {
+            // 缺任一边就拼不出画质名,`merge_variant_rows` 只会把它当无名行丢掉。
+            // 在入口就归类,`kept + dropped == raw_entries` 才对得上。
+            counts.dropped.no_meta += 1;
+            continue;
+        }
+        rows.push((
+            score,
+            json!({
+                "name": name,
+                "width": w,
+                "height": h,
+                "quality_height": short_edge,
+                "url": url,
+                "key_hex": hex::encode(&key),
+            }),
+        ));
     }
-    let mut rows: Vec<(i64, Value)> = entries
-        .into_iter()
-        .filter_map(|(slot, info)| {
-            let w = video_quality_metric(info, &["vwidth"]);
-            let h = video_quality_metric(info, &["vheight"]);
-            // 档位语义按**短边**：竖屏剧 1280×720 是 720P 而非 2K
-            // （官方 Resolution 枚举同样以短边为准）。缺任一边时不能宣称画质。
-            let short_edge = if w > 0 && h > 0 { w.min(h) } else { 0 };
-            let name = variant_display_name(short_edge);
-            // 编码门丢 bytevc2 是**预期行为**（`CRIT-004`：该编码没有解码器），不打点。
-            let score = video_quality_score(info)?;
-            let Some((url, key)) = decrypt_variant_entry(info, key_seed.as_deref()) else {
-                // 地址解不出来是静默丢**整档**的一类——`4e85437` 修过同款缺陷，且
-                // 实测夹具的 `main_url` 形态一向比线上少，缺陷容易被盖住，所以留告警。
-                log::warn!("variant {slot} dropped, url undecodable ({w}x{h} {name})");
-                return None;
-            };
-            Some((
-                score,
-                json!({
-                    "name": name,
-                    "width": w,
-                    "height": h,
-                    "quality_height": short_edge,
-                    "url": url,
-                    "key_hex": hex::encode(&key),
-                }),
-            ))
-        })
-        .collect();
     rows.sort_by_key(|(score, _)| std::cmp::Reverse(*score));
-    rows
+    counts.kept = rows.len();
+    VariantBatch { rows, counts }
 }
 
 pub(crate) fn decode_video_model_str(s: &str) -> Option<Map<String, Value>> {
