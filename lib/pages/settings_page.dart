@@ -34,6 +34,7 @@ import '../services/native_player.dart';
 import '../services/player_layout_preferences.dart';
 import '../services/player_preferences.dart';
 import '../services/book_open_preferences.dart';
+import '../services/boss_key_preferences.dart';
 import '../services/drama_mute_preferences.dart';
 import '../services/library_store.dart';
 import '../widgets/desktop_settings_body.dart';
@@ -43,6 +44,7 @@ import '../widgets/settings/classic_settings_icons.dart';
 import '../widgets/wenku/wenku_ui.dart';
 import 'about_page.dart';
 import 'api_service_page.dart';
+import 'boss_key_settings_page.dart';
 import 'cached_books_page.dart';
 import 'cached_dramas_page.dart';
 import 'library_backup_page.dart';
@@ -61,7 +63,23 @@ class SettingsPage extends StatelessWidget {
   Widget build(BuildContext context) {
     // 开关读的是 ValueNotifier：先把持久化的值读出来，读到后自动重绘。
     unawaited(BookOpenPreferences.instance.load());
+    if (!isMediaDesktop) return _buildContent(context);
+    unawaited(BossKeyPreferences.instance.load());
+    return ListenableBuilder(
+      listenable: Listenable.merge([
+        BossKeyPreferences.instance.enabled,
+        BossKeyPreferences.instance.shortcut,
+      ]),
+      builder: (context, _) => _buildContent(context),
+    );
+  }
+
+  Widget _buildContent(BuildContext context) {
     final style = AppStyleTokens.of(context);
+    final bossKeyPrefs = BossKeyPreferences.instance;
+    final bossKeyValue = bossKeyPrefs.enabled.value
+        ? bossKeyPrefs.shortcut.value.formatLabel()
+        : '已关闭';
     final categories = <SettingsCategory>[
       SettingsCategory(
         icon: SettingsCategoryIcons.appearance,
@@ -134,6 +152,15 @@ class SettingsPage extends StatelessWidget {
           if (!isDesktopHost) _videoDecoderItem(),
         ],
       ),
+      if (isMediaDesktop)
+        SettingsCategory(
+          icon: SettingsCategoryIcons.bossKey,
+          title: '老板键',
+          subtitle: '全局快捷键隐藏窗口并暂停播放',
+          value: bossKeyValue,
+          pageBuilder: (_) => const BossKeySettingsPage(),
+          items: const [],
+        ),
       SettingsCategory(
         icon: SettingsCategoryIcons.data,
         title: '数据',

@@ -2,7 +2,9 @@
 #define RUNNER_FLUTTER_WINDOW_H_
 
 #include <flutter/dart_project.h>
+#include <flutter/encodable_value.h>
 #include <flutter/flutter_view_controller.h>
+#include <flutter/method_channel.h>
 
 #include <memory>
 
@@ -23,11 +25,20 @@ class FlutterWindow : public Win32Window {
                          LPARAM const lparam) noexcept override;
 
  private:
+  void RegisterBossKeyChannel();
+  void UnregisterBossKey();
+
   // The project to run.
   flutter::DartProject project_;
 
   // The Flutter instance hosted by this window.
   std::unique_ptr<flutter::FlutterViewController> flutter_controller_;
+  std::unique_ptr<flutter::MethodChannel<flutter::EncodableValue>>
+      boss_key_channel_;
+  bool boss_key_registered_ = false;
+  int boss_key_id_ = 0x4651;
+  UINT boss_key_modifiers_ = 0;
+  UINT boss_key_vk_ = 0;
   // Destroying the Flutter child sends synchronous messages to the parent.
   // Its view has already gone away by then, so do not forward those messages.
   bool destroying_controller_ = false;

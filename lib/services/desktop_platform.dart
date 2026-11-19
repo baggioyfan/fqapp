@@ -26,6 +26,14 @@ import 'platform_channel.dart';
 bool get isWindowsDesktop =>
     !kIsWeb && defaultTargetPlatform == TargetPlatform.windows;
 
+/// Windows / Linux desktops: the two hosts that can hide their own window and
+/// grab a global hotkey. macOS stays out — the boss key needs a Win32 / X11
+/// hook, and its own `beforeClose` path predates this split.
+bool get isMediaDesktop =>
+    !kIsWeb &&
+    (defaultTargetPlatform == TargetPlatform.windows ||
+        defaultTargetPlatform == TargetPlatform.linux);
+
 bool get isMacDesktop =>
     !kIsWeb && defaultTargetPlatform == TargetPlatform.macOS;
 
