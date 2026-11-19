@@ -48,6 +48,7 @@ Future<void> main(List<String> args) async {
     }
   }
   final records = parser.records;
+  final shelfIds = parser.shelfIds;
   var matched = 0;
   if (args.length == 3) {
     for (final record in records) {
@@ -65,7 +66,9 @@ Future<void> main(List<String> args) async {
       'version': 1,
       'createdAt': DateTime.now().millisecondsSinceEpoch,
       'shelf': [
-        for (final record in records) {...record, 'addedAt': record['time']},
+        for (final record in records)
+          if (shelfIds.contains(record['id']))
+            {...record, 'addedAt': record['time']},
       ],
       'history': records,
       'watched': [],
@@ -74,6 +77,7 @@ Future<void> main(List<String> args) async {
   stdout.writeln(
     jsonEncode({
       'novels': records.length,
+      'shelfNovels': shelfIds.length,
       'withCover': records
           .where((r) => (r['cover'] as String).isNotEmpty)
           .length,

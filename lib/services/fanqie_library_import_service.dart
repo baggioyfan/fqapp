@@ -16,12 +16,33 @@ class FanqieImportPreview {
   final int matched;
   final int unresolved;
   final int skipped;
+  final Set<String> shelfIds;
+  final bool hasShelfSource;
+  final bool shelfSourceFailed;
+
   const FanqieImportPreview(
     this.records,
     this.matched,
     this.unresolved,
-    this.skipped,
-  );
+    this.skipped, {
+    this.shelfIds = const {},
+    this.hasShelfSource = false,
+    this.shelfSourceFailed = false,
+  });
+
+  List<Map<String, dynamic>> get shelfRecords => [
+    for (final record in records)
+      if (shelfIds.contains(record['id'])) record,
+  ];
+
+  int get shelfCount => shelfRecords.length;
+
+  List<Map<String, dynamic>> get previewRecords => [
+    for (final record in records)
+      if (shelfIds.contains(record['id'])) record,
+    for (final record in records)
+      if (!shelfIds.contains(record['id'])) record,
+  ];
 }
 
 class FanqieLibraryImportService {
@@ -119,29 +140,44 @@ class FanqieLibraryImportService {
       }
     });
     checkCancelled();
-    return FanqieImportPreview(records, matched, unresolved, parser.skipped);
+    return FanqieImportPreview(
+      records,
+      matched,
+      unresolved,
+      parser.skipped,
+      shelfIds: parser.shelfIds,
+      hasShelfSource: parser.hasShelfSource,
+      shelfSourceFailed: parser.shelfSourceFailed,
+    );
   }
 
   Future<({int shelf, int history})> merge(FanqieImportPreview preview) async {
-    if (!ShelfStore.instance.isReady) throw StateError('书架尚未初始化');
+    final shelfRecords = preview.shelfRecords;
+    if (shelfRecords.isNotEmpty && !ShelfStore.instance.isReady) {
+      throw StateError('书架尚未初始化');
+    }
     final history = await LibraryStore.instance.mergeFanqie(preview.records);
-    final shelf = await ShelfStore.instance.mergeFanqie([
-      for (final record in preview.records)
-        ShelfRecord(
-          item: MediaItem(
-            id: record['id'] as String,
-            title: (record['title'] as String).isEmpty
-                ? '未知作品'
-                : record['title'] as String,
-            cover: record['cover'] as String,
-            author: record['author'] as String,
-            ep: record['ep'] as String? ?? '',
-            kind: 'book',
-            badge: '',
-          ),
-          addedAt: DateTime.fromMillisecondsSinceEpoch(record['time'] as int),
-        ),
-    ]);
+    final shelf = shelfRecords.isEmpty
+        ? 0
+        : await ShelfStore.instance.mergeFanqie([
+            for (final record in shelfRecords)
+              ShelfRecord(
+                item: MediaItem(
+                  id: record['id'] as String,
+                  title: (record['title'] as String).isEmpty
+                      ? '未知作品'
+                      : record['title'] as String,
+                  cover: record['cover'] as String,
+                  author: record['author'] as String,
+                  ep: record['ep'] as String? ?? '',
+                  kind: 'book',
+                  badge: '',
+                ),
+                addedAt: DateTime.fromMillisecondsSinceEpoch(
+                  record['time'] as int,
+                ),
+              ),
+          ]);
     return (shelf: shelf, history: history);
   }
 }

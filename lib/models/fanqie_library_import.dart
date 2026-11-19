@@ -18,19 +18,35 @@ bool resolveFanqieChapter(Map<String, dynamic> record, List<Chapter> chapters) {
 class FanqieLibraryImport {
   final Map<String, Map<String, dynamic>> _books = {};
   final Map<String, Map<String, dynamic>> _positions = {};
+  final Set<String> _shelfIds = {};
+  final Set<String> _deletedShelfIds = {};
+  bool _hasShelfSource = false;
+  bool _shelfSourceFailed = false;
   int received = 0;
   int failed = 0;
   int skipped = 0;
 
+  static bool _isShelfResource(Object? resource) =>
+      resource == 'shelf_list' ||
+      resource == 'shelf_info' ||
+      resource == 'folder_detail';
+
+  static bool _isDeleted(Map raw) =>
+      raw['is_delete'] == true || raw['is_delete'] == 1;
+
   void addSource(Map<String, dynamic> source) {
+    final resource = source['resource'];
     if (source['status'] != 'received') {
       failed++;
+      if (_isShelfResource(resource)) _shelfSourceFailed = true;
       return;
     }
     received++;
     final payload = source['payload'];
-    if (payload is! Map || !const [0, '0'].contains(payload['code'])) return;
-    final resource = source['resource'];
+    if (payload is! Map || !const [0, '0'].contains(payload['code'])) {
+      if (_isShelfResource(resource)) _shelfSourceFailed = true;
+      return;
+    }
     final data = payload['data'];
     if (resource == 'book_detail') {
       if (data is Map) _metadata(data);
@@ -39,7 +55,7 @@ class FanqieLibraryImport {
     if (resource == 'history' && data is Map) {
       for (final raw in data['data_list'] as List? ?? const []) {
         if (raw is! Map) continue;
-        if (!_novel(raw) || raw['is_delete'] == true || raw['is_delete'] == 1) {
+        if (!_novel(raw) || _isDeleted(raw)) {
           skipped++;
           continue;
         }
@@ -48,24 +64,47 @@ class FanqieLibraryImport {
         final time = _time(raw);
         if (time > (record['time'] as int)) record['time'] = time;
       }
-    } else if (resource == 'shelf_list' ||
-        resource == 'shelf_info' ||
-        resource == 'folder_detail') {
+    } else if (_isShelfResource(resource)) {
+      _hasShelfSource = true;
       void visit(dynamic value) {
         if (value is List) {
           for (final item in value) {
             visit(item);
           }
         } else if (value is Map) {
-          if (_novel(value)) {
+          if (value.containsKey('book_type') && value['book_type'] != null) {
+            if (!_novel(value) || _isDeleted(value)) {
+              skipped++;
+              if (_novel(value) && _isDeleted(value)) {
+                final id = _id(value['book_id_str']) ?? _id(value['book_id']);
+                if (id != null) {
+                  _deletedShelfIds.add(id);
+                  _shelfIds.remove(id);
+                }
+              }
+              return;
+            }
             // A book record's nested maps/lists are its own fields
             // (author info, nested recommendations), not more shelf
             // entries. Recursing into them would import recommendations
             // and related books as if the user had shelved them.
-            _include(value);
+            final record = _include(value);
+            if (record != null) {
+              final id = record['id'] as String;
+              if (!_deletedShelfIds.contains(id)) {
+                _shelfIds.add(id);
+              }
+              final time = _time(value);
+              if (time > (record['time'] as int)) record['time'] = time;
+            }
             return;
           }
-          for (final child in value.values) {
+          for (final entry in value.entries) {
+            final key = entry.key.toString().toLowerCase();
+            if (key.contains('recommend') || key.contains('delete')) {
+              continue;
+            }
+            final child = entry.value;
             if (child is Map || child is List) visit(child);
           }
         }
@@ -154,6 +193,17 @@ class FanqieLibraryImport {
       }
     }
   }
+
+  Set<String> get shelfIds => Set<String>.unmodifiable(_shelfIds);
+
+  bool get hasShelfSource => _hasShelfSource;
+
+  bool get shelfSourceFailed => _shelfSourceFailed;
+
+  List<Map<String, dynamic>> get shelfRecords => [
+    for (final record in records)
+      if (_shelfIds.contains(record['id'])) record,
+  ];
 
   List<Map<String, dynamic>> get records => [
     for (final entry in _books.entries)
