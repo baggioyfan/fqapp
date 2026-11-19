@@ -444,27 +444,39 @@ impl UpstreamClient {
     /// this path deliberately bypasses generic signing. Transport/429/5xx are
     /// retried on the same device under the caller's deadline and HTTP 401/403
     /// replace it; an empty 200 body is returned as `Ok((vec![], device))`
-    /// instead of being repeated, because the caller switches door with that
-    /// very identity first. A non-empty business payload is returned untouched
-    /// so the endpoint can judge it.
+    /// instead of being repeated, because the caller owns the recovery ladder
+    /// (same-door re-probe, then another door, then one rotation). A non-empty
+    /// business payload is returned untouched so the endpoint can judge it.
     ///
-    /// The identity comes from the pool's least-recently-used slot, which is
-    /// also the slot [Self::rotate_playback_identity] hands out, so a rotation
-    /// followed by another call of this method naturally lands on the
-    /// replacement.
+    /// `pin` holds a retry on the identity that just answered. Without a pin the
+    /// pool's least-recently-used slot is used, which is also the slot
+    /// [Self::rotate_playback_identity] hands out.
     pub async fn v5_playback_with_device(
         &self,
         base: &str,
         body: &[u8],
+        pin: Option<&str>,
     ) -> Result<(Vec<u8>, Device), ClientError> {
         let mut last_err = None;
 
         for _ in 0..self.max_retries {
-            let dev = self
-                .pool
-                .get()
-                .await
-                .map_err(|e| ClientError::Other(format!("get device: {e}")))?;
+            // A pin keeps a retry of the same door on the identity that just
+            // answered; without one the least-recently-used slot is used.
+            let dev = match pin {
+                Some(device_id) => match self.pool.get_by_id(device_id).await {
+                    Ok(device) => device,
+                    Err(_) => self
+                        .pool
+                        .get()
+                        .await
+                        .map_err(|e| ClientError::Other(format!("get device: {e}")))?,
+                },
+                None => self
+                    .pool
+                    .get()
+                    .await
+                    .map_err(|e| ClientError::Other(format!("get device: {e}")))?,
+            };
 
             let cdid = if dev.cdid.is_empty() {
                 dev.openudid.as_str()
@@ -553,7 +565,7 @@ impl UpstreamClient {
     /// Body-only wrapper kept for callers that do not need the identity that
     /// answered (the endpoint orchestrator uses the `_with_device` form).
     pub async fn v5_playback(&self, base: &str, body: &[u8]) -> Result<Vec<u8>, ClientError> {
-        let (data, _) = self.v5_playback_with_device(base, body).await?;
+        let (data, _) = self.v5_playback_with_device(base, body, None).await?;
         if data.is_empty() {
             return Err(ClientError::EmptyPlaybackBody);
         }

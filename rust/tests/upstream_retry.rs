@@ -208,7 +208,7 @@ async fn v5_empty_body_still_reports_the_identity_that_must_carry_the_fallback()
     );
 
     let (body, device) = client
-        .v5_playback_with_device(&url, &playback_body())
+        .v5_playback_with_device(&url, &playback_body(), None)
         .await
         .expect("an empty body is not a transport failure");
     assert!(body.is_empty());

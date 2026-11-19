@@ -49,8 +49,18 @@ const V5_PLAYER_URL: &str =
 /// as the second attempt when the v5 player door answers an empty body.
 const VIDEO_TAB_PLAYER_PATH: &str = "/reading/bookapi/video_tab/multi_video_model/v1/";
 
-/// Hard cap on playback-door attempts per request, rotation round included.
-const MAX_PLAYBACK_ATTEMPTS: usize = 6;
+/// Hard cap on playback-door attempts per request, re-probe and rotation round
+/// included.
+const MAX_PLAYBACK_ATTEMPTS: usize = 8;
+
+/// A door that answers an empty body is probed once more after this pause: the
+/// refusal is transient per request far more often than it is a verdict about
+/// the identity, and the same door recovers by itself in a few hundred ms.
+const SAME_DOOR_REPROBE_DELAY: Duration = Duration::from_millis(250);
+
+/// The re-probe needs this much caller budget left: another round trip is not
+/// worth starting when the caller is nearly out of time.
+const REPROBE_MIN_BUDGET: Duration = Duration::from_millis(1_000);
 
 /// A rotation needs this much caller budget left to be worth attempting: a
 /// replacement registration is several round trips.
@@ -408,7 +418,7 @@ async fn attempt_playback_route(
     match route.door {
         Door::V5Player => match tokio::time::timeout_at(
             deadline,
-            ctx.up.v5_playback_with_device(V5_PLAYER_URL, body),
+            ctx.up.v5_playback_with_device(V5_PLAYER_URL, body, pin),
         )
         .await
         {
@@ -517,6 +527,9 @@ async fn fetch_playback_model(
     let mut pin: Option<String> = None;
     let mut all_empty = true;
     let mut attempts = 0usize;
+    // One same-door re-probe per request: an empty body is usually a transient
+    // per-request refusal, and the same door answers again a moment later.
+    let mut reprobed = false;
 
     // A long empty streak rotates the identity before the next attempt, which is
     // what recovered live playback for the reference implementation.
@@ -538,8 +551,37 @@ async fn fetch_playback_model(
             }
             attempts += 1;
             let started = Instant::now();
-            let attempt =
+            // Decided before the attempt: a door that is already parked is being
+            // probed deliberately, not freshly refused, so it earns no re-probe.
+            let route_parked = playback_routes::with_state(|state| state.parked(route, now));
+            let mut attempt =
                 attempt_playback_route(ctx, video_id, &body, route, pin.as_deref(), deadline).await;
+            let can_reprobe = matches!(attempt.outcome, DoorOutcome::Empty)
+                && !reprobed
+                && !route_parked
+                && !speculative
+                && route.door == crate::upstream::playback_routes::Door::V5Player
+                && attempts < MAX_PLAYBACK_ATTEMPTS
+                && Instant::now() + REPROBE_MIN_BUDGET < deadline
+                && crate::upstream::budget::remaining()
+                    .is_none_or(|left| left > REPROBE_MIN_BUDGET);
+            if can_reprobe && crate::upstream::budget::retry_pause(SAME_DOOR_REPROBE_DELAY).await {
+                reprobed = true;
+                attempts += 1;
+                log::info!(
+                    "v5 trace request={request_id} purpose={purpose} event=door route={} result=reprobe",
+                    route.tag(),
+                );
+                attempt = attempt_playback_route(
+                    ctx,
+                    video_id,
+                    &body,
+                    route,
+                    attempt.device_id.as_deref(),
+                    deadline,
+                )
+                .await;
+            }
             let elapsed = started.elapsed().as_millis();
             let outcome = match attempt.outcome {
                 DoorOutcome::Body(raw) => {

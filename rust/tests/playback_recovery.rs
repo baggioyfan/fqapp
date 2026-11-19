@@ -136,20 +136,33 @@ async fn an_empty_v5_body_falls_back_to_the_signed_video_tab_door_on_the_same_id
     );
 
     let requests = upstream.requests();
-    assert_eq!(requests.len(), 2, "v5 then one video_tab door");
+    assert_eq!(
+        requests.len(),
+        3,
+        "v5, its single re-probe, then one video_tab door"
+    );
     assert!(is_v5(&requests[0]) && requests[0].method == "POST");
-    assert!(is_tab(&requests[1]) && requests[1].method == "GET");
+    assert!(
+        is_v5(&requests[1]) && requests[1].method == "POST",
+        "the re-probe stays on the v5 door"
+    );
+    assert!(is_tab(&requests[2]) && requests[2].method == "GET");
     assert_eq!(
         device_of(&requests[0]),
         device_of(&requests[1]),
+        "the re-probe must reuse the identity that just answered"
+    );
+    assert_eq!(
+        device_of(&requests[0]),
+        device_of(&requests[2]),
         "the fallback door must be asked under the same identity"
     );
     assert!(
-        requests[1].header("x-ss-req-ticket").is_some(),
+        requests[2].header("x-ss-req-ticket").is_some(),
         "the fallback door is signed, not anonymous"
     );
 
-    let query = query_map(&requests[1].query);
+    let query = query_map(&requests[2].query);
     for (key, expected) in [
         ("video_id", VIDEO_ID),
         ("video_id_type", "0"),
@@ -167,6 +180,53 @@ async fn an_empty_v5_body_falls_back_to_the_signed_video_tab_door_on_the_same_id
             "video_tab parameter {key}"
         );
     }
+    upstream.shutdown();
+}
+
+#[tokio::test]
+async fn an_empty_v5_body_is_reprobed_once_on_the_same_identity_before_switching_door() {
+    let _guard = exclusive();
+    let calls = Arc::new(AtomicUsize::new(0));
+    let counter = calls.clone();
+    let upstream = MockUpstream::start(move |request| {
+        if is_v5(request) && counter.fetch_add(1, Ordering::SeqCst) == 0 {
+            MockReply::status(200)
+        } else {
+            MockReply::json(v5_body())
+        }
+    })
+    .await;
+    let (_dir, server) = server_with(&upstream, "same-door-reprobe").await;
+
+    let (status, body) = episode(&server, "").await;
+    assert_eq!(status, 200, "{body}");
+    let requests = upstream.requests();
+    assert_eq!(requests.len(), 2, "one re-probe, no door switch: {body}");
+    assert!(
+        requests.iter().all(is_v5),
+        "the re-probe stays on the v5 door"
+    );
+    assert_eq!(
+        device_of(&requests[0]),
+        device_of(&requests[1]),
+        "the re-probe must reuse the identity that just answered"
+    );
+    upstream.shutdown();
+}
+
+#[tokio::test]
+async fn a_prefetch_empty_body_is_not_reprobed() {
+    let _guard = exclusive();
+    let upstream = MockUpstream::start(|_| MockReply::status(200)).await;
+    let (_dir, server) = server_with(&upstream, "prefetch-empty").await;
+
+    let (status, body) = episode(&server, "_playback_purpose=prefetch").await;
+    assert_eq!(status, 500, "{body}");
+    assert_eq!(
+        upstream.requests().len(),
+        1,
+        "a prefetch must not spend a re-probe on the foreground's budget"
+    );
     upstream.shutdown();
 }
 
@@ -225,7 +285,7 @@ async fn every_door_empty_rotates_the_identity_once_and_stays_bounded() {
 
     let requests = upstream.requests();
     assert!(
-        requests.len() <= 6,
+        requests.len() <= 8,
         "attempts must stay bounded, saw {}",
         requests.len()
     );
@@ -311,7 +371,7 @@ async fn a_parked_empty_door_is_skipped_by_the_next_foreground_request() {
     let (status, body) = episode(&server, "").await;
     assert_eq!(status, 200, "{body}");
     let first = upstream.requests().len();
-    assert_eq!(first, 2);
+    assert_eq!(first, 3, "v5 empty, its re-probe, then the video_tab door");
 
     // Second request: the parked v5 door must not be retried before its cooldown.
     let (status, body) = episode(&server, "").await;

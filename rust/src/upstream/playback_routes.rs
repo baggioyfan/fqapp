@@ -144,6 +144,11 @@ impl PlaybackRouteState {
         self.health.get(&route).copied().unwrap_or_default()
     }
 
+    /// True while this door is parked by a cooldown.
+    pub fn parked(&self, route: Route, now_ms: u64) -> bool {
+        self.health_for(route).blocked_until_ms > now_ms
+    }
+
     /// Every route is parked because of an empty body.
     pub fn exhausted(&self, now_ms: u64) -> bool {
         routes().iter().all(|route| {
@@ -356,6 +361,16 @@ mod tests {
         assert!(!state.rotation_paced(1_000 + ms(ROTATE_COOLDOWN_SETTLED) - 1, false));
         assert!(state.rotation_paced(1_000 + ms(ROTATE_COOLDOWN_SETTLED), false));
         assert!(!state.rotation_paced(9_999_999, true));
+    }
+
+    #[test]
+    fn a_door_is_parked_exactly_until_its_cooldown_lapses() {
+        let mut state = PlaybackRouteState::default();
+        let v5 = routes()[0];
+        assert!(!state.parked(v5, 1_000));
+        state.failed(v5, 1_000, true);
+        assert!(state.parked(v5, 1_001));
+        assert!(!state.parked(v5, 1_000 + ms(EMPTY_COOLDOWN)));
     }
 
     #[test]

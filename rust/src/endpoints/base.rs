@@ -110,8 +110,9 @@ impl Upstream {
         &self,
         base: &str,
         body: &[u8],
+        pin: Option<&str>,
     ) -> Result<(Vec<u8>, Device), ClientError> {
-        self.up.v5_playback_with_device(base, body).await
+        self.up.v5_playback_with_device(base, body, pin).await
     }
 
     pub async fn raw_with_device(
