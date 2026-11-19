@@ -251,6 +251,35 @@ async fn a_non_empty_v5_body_never_reaches_a_fallback_door() {
 }
 
 #[tokio::test]
+async fn every_video_tab_payload_shape_reaches_the_shared_parser() {
+    let flat = {
+        let entry = json!({ "video_model": model() });
+        let mut rows = serde_json::Map::new();
+        rows.insert(VIDEO_ID.to_string(), entry);
+        json!({ "code": 0, "data": Value::Object(rows) })
+    };
+    let embedded = {
+        let entry = json!({ "video_model": model().to_string() });
+        let mut rows = serde_json::Map::new();
+        rows.insert(VIDEO_ID.to_string(), entry);
+        json!({ "code": 0, "data": { "video_model_data": Value::Object(rows) } })
+    };
+    for (name, payload) in [("flat", flat), ("string model", embedded)] {
+        let _guard = exclusive();
+        let reply = payload.clone();
+        let upstream = MockUpstream::start(move |_| MockReply::json(reply.clone())).await;
+        let (_dir, server) = server_with(&upstream, "tab-shape").await;
+        let (status, body) = episode(&server, "").await;
+        assert_eq!(status, 200, "{name}: {body}");
+        assert!(
+            body["video_url"].as_str().is_some(),
+            "{name}: the shared parser must find a playable url: {body}"
+        );
+        upstream.shutdown();
+    }
+}
+
+#[tokio::test]
 async fn a_rejected_video_tab_model_is_not_treated_as_a_playable_answer() {
     let _guard = exclusive();
     let upstream = MockUpstream::start(|request| {

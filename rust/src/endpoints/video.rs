@@ -365,29 +365,47 @@ fn video_tab_query(video_id: &str) -> Vec<(&str, &str)> {
     ]
 }
 
-/// Rewrites a `video_tab` response into the player response shape the existing
-/// extractor already understands: `{"data":{"<id>":{"video_model":..}}}`.
+/// Hands a `video_tab` payload to the endpoint parser unchanged.
 ///
-/// Returns `None` for a business rejection or a body without a model, which the
-/// caller treats as a failed door rather than an empty one.
-fn video_tab_player_shape(raw: &[u8], video_id: &str) -> Option<Vec<u8>> {
-    let root: Value = serde_json::from_slice(raw).ok()?;
+/// The parser already walks `data.video_model_data.<id>`, `data.<id>` and the
+/// grouped shapes, so this only validates the envelope and re-wraps `data`.
+/// A business code or a payload without `data` is a failed door, never an empty
+/// one; the envelope line records keys, `data` type, code and message only, so a
+/// shape drift stays diagnosable without logging a URL or a body.
+fn video_tab_player_shape(raw: &[u8]) -> Option<Vec<u8>> {
+    let root: Value = match serde_json::from_slice(raw) {
+        Ok(root) => root,
+        Err(_) => {
+            log::warn!(
+                "v5 trace event=tab result=failed reason=json body_len={}",
+                raw.len()
+            );
+            return None;
+        }
+    };
     let code = root
         .get("code")
         .or_else(|| root.get("Code"))
         .and_then(Value::as_i64)
         .unwrap_or(0);
     if code != 0 {
+        log::warn!("v5 trace event=tab result=failed reason=business code={code}");
         return None;
     }
-    let data = root.get("data")?.as_object()?;
-    let entry = data
-        .get("video_model_data")
-        .and_then(Value::as_object)
-        .and_then(|rows| rows.get(video_id))
-        .or_else(|| data.get(video_id))?;
-    let model = entry.get("video_model")?;
-    serde_json::to_vec(&json!({ "data": { video_id: { "video_model": model } } })).ok()
+    let Some(data) = root.get("data") else {
+        log::warn!(
+            "v5 trace event=tab result=failed reason=data envelope={}",
+            body_envelope(&root)
+        );
+        return None;
+    };
+    match serde_json::to_vec(&json!({ "data": data })) {
+        Ok(shaped) => Some(shaped),
+        Err(_) => {
+            log::warn!("v5 trace event=tab result=failed reason=remarshal");
+            None
+        }
+    }
 }
 
 async fn attempt_playback_route(
@@ -441,7 +459,7 @@ async fn attempt_playback_route(
                             device_id,
                         };
                     }
-                    match video_tab_player_shape(&raw, video_id) {
+                    match video_tab_player_shape(&raw) {
                         Some(shaped) => PlaybackAttempt {
                             outcome: DoorOutcome::Body(shaped),
                             device_id,
