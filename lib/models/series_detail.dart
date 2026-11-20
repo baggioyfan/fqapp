@@ -125,15 +125,19 @@ class SeriesDetail {
   /// Play counter formatted the way the app shows other large numbers.
   String get playLabel => formatCounter('$playCount');
 
-  /// Parses the series detail payload. `{code, data}` with the record under
-  /// `data.video_data`; a business error yields [empty].
-  static SeriesDetail fromPayload(Map<String, dynamic> payload) {
+  /// Parses the series detail payload. The bridge shape uses
+  /// `data.video_data`; the upstream shape keys records by video ID and puts
+  /// series fields directly on that record. A business error yields [empty].
+  static SeriesDetail fromPayload(
+    Map<String, dynamic> payload, {
+    String requestedSeriesId = '',
+  }) {
     final code = payload['code'];
     if (code != null && code != 0 && code != 200) return empty;
     final data = payload['data'];
     if (data is! Map) return empty;
-    final video = data['video_data'];
-    if (video is! Map) return empty;
+    final video = _seriesVideoData(data, requestedSeriesId);
+    if (video == null) return empty;
 
     return SeriesDetail(
       seriesId: _string(
@@ -149,7 +153,7 @@ class SeriesDetail {
       followerCount: _int(video['followed_cnt']),
       commentCount: _int(video['comment_cnt']),
       categories: _categoryNames(video['category_schema']),
-      originalBook: _relateBook(data['video_relate_book']),
+      originalBook: _seriesRelateBook(data, video),
       status: video['series_status'] == null
           ? null
           : _int(video['series_status']),
@@ -158,6 +162,96 @@ class SeriesDetail {
     );
   }
 }
+
+Map? _seriesVideoData(Map data, String requestedSeriesId) {
+  final normalized = data['video_data'];
+  if (normalized is Map) {
+    if (_isSeriesRecord(normalized)) return normalized;
+    final nested = _selectSeriesRecord(normalized, requestedSeriesId);
+    return nested ?? normalized;
+  }
+
+  return _selectSeriesRecord(data, requestedSeriesId);
+}
+
+Map? _selectSeriesRecord(Map data, String requestedSeriesId) {
+  final candidates = <({String key, Map video})>[];
+  for (final entry in data.entries) {
+    final value = entry.value;
+    if (value is! Map) continue;
+    final video = value['video_data'];
+    final candidate = video is Map ? video : value;
+    if (_isSeriesRecord(candidate)) {
+      candidates.add((key: entry.key.toString(), video: candidate));
+    }
+  }
+  if (requestedSeriesId.isNotEmpty) {
+    final seriesMatches = candidates
+        .where(
+          (candidate) => _matchesSeries(candidate.video, requestedSeriesId),
+        )
+        .toList();
+    if (seriesMatches.length == 1) return seriesMatches.single.video;
+
+    final keyMatches = candidates
+        .where((candidate) => candidate.key == requestedSeriesId)
+        .toList();
+    if (keyMatches.length == 1) return keyMatches.single.video;
+    if (seriesMatches.length > 1 ||
+        keyMatches.length > 1 ||
+        candidates.length != 1) {
+      return null;
+    }
+    return candidates.single.video;
+  }
+  return candidates.length == 1 ? candidates.single.video : null;
+}
+
+bool _matchesSeries(Map video, String requestedSeriesId) {
+  if (requestedSeriesId.isEmpty) return true;
+  final id = _seriesId(video);
+  return id.isNotEmpty && id == requestedSeriesId;
+}
+
+String _seriesId(Map video) =>
+    _string(video['series_id_str']).ifEmpty(_string(video['series_id']));
+
+SeriesRelateBook? _seriesRelateBook(Map data, Map selectedVideo) {
+  final direct = _relateBook(data['video_relate_book']);
+  if (direct != null) return direct;
+
+  final sources = <Map>[data];
+  if (data['video_data'] is Map) sources.add(data['video_data'] as Map);
+  SeriesRelateBook? selectedBook;
+  final books = <SeriesRelateBook>[];
+  for (final source in sources) {
+    for (final value in source.values) {
+      if (value is! Map) continue;
+      final ownBook = _relateBook(value);
+      if (ownBook != null) books.add(ownBook);
+      final related = _relateBook(value['video_relate_book']);
+      if (related != null) {
+        if (identical(value, selectedVideo) ||
+            identical(value['video_data'], selectedVideo)) {
+          selectedBook = related;
+        } else {
+          books.add(related);
+        }
+      }
+    }
+  }
+
+  if (selectedBook != null) return selectedBook;
+
+  final unique = <String, SeriesRelateBook>{
+    for (final book in books)
+      if (book.id.isNotEmpty) book.id: book,
+  };
+  return unique.length == 1 ? unique.values.single : null;
+}
+
+bool _isSeriesRecord(Map video) =>
+    _string(video['series_title']).isNotEmpty || _seriesId(video).isNotEmpty;
 
 /// `video_relate_book.book_info`（官方 `SaasBookInfo`：book_id/book_name/
 /// creation_status/thumb_url…）。

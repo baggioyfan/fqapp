@@ -1392,7 +1392,10 @@ class ApiClient {
       final status = response.statusCode;
       final bytes = response.bodyBytes;
       final detail = await Isolate.run(
-        () => SeriesDetail.fromPayload(_decodeEnvelope(status, bytes)),
+        () => SeriesDetail.fromPayload(
+          _decodeEnvelope(status, bytes),
+          requestedSeriesId: seriesId,
+        ),
       );
       if (strict && detail.isEmpty) {
         throw const ApiException('剧集详情暂时无法加载');
