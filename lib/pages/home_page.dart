@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:material_ui/material_ui.dart';
+import 'package:flutter_lucide/flutter_lucide.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../models/home_cell.dart';
@@ -34,6 +35,7 @@ import '../widgets/home/home_shelf.dart';
 import '../widgets/home/home_skeleton.dart';
 import '../widgets/home/home_tab_bar.dart';
 import '../widgets/home/ugc_story_feed.dart';
+import '../widgets/desktop_shell_scope.dart';
 import '../widgets/tab_swipe_area.dart';
 import 'cached_book_reader.dart';
 import 'category_page.dart';
@@ -394,26 +396,84 @@ class _HomePageState extends ConsumerState<HomePage> {
             bottom: false,
             child: Column(
               children: [
-                if (AppStyleTokens.of(context).isClassic)
-                  HomeHero(
-                    onSearch: _openSearch,
-                    onCategory: _openCategory,
-                    cueLoader: widget.cueLoader,
+                if (isWindowsDesktop && DesktopShellScope.hasFrameOf(context))
+                  DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: palette.canvas,
+                      border: Border(bottom: BorderSide(color: palette.line)),
+                    ),
+                    child: Padding(
+                      padding: const EdgeInsets.only(right: homeGutter),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: ValueListenableBuilder<double>(
+                              valueListenable: _tabProgress,
+                              builder: (context, progress, _) => HomeTabBar(
+                                selectedIndex: state.tabIndex,
+                                onSelect: _selectTab,
+                                categories: categories,
+                                progress: progress,
+                                showBottomBorder: false,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          OutlinedButton.icon(
+                            key: const Key('home_category_button'),
+                            onPressed: _openCategory,
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: palette.ink,
+                              backgroundColor: palette.surface,
+                              side: BorderSide(color: palette.line),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 12,
+                              ),
+                              minimumSize: const Size(0, 32),
+                              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                            ),
+                            icon: Icon(
+                              LucideIcons.layout_grid,
+                              size: 15,
+                              color: palette.ink,
+                            ),
+                            label: const Text(
+                              '分类',
+                              style: TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
                   )
-                else
-                  HomeMasthead(
-                    onSearch: _openSearch,
-                    onCategory: _openCategory,
+                else ...[
+                  if (AppStyleTokens.of(context).isClassic)
+                    HomeHero(
+                      onSearch: _openSearch,
+                      onCategory: _openCategory,
+                      cueLoader: widget.cueLoader,
+                    )
+                  else
+                    HomeMasthead(
+                      onSearch: _openSearch,
+                      onCategory: _openCategory,
+                    ),
+                  ValueListenableBuilder<double>(
+                    valueListenable: _tabProgress,
+                    builder: (context, progress, _) => HomeTabBar(
+                      selectedIndex: state.tabIndex,
+                      onSelect: _selectTab,
+                      categories: categories,
+                      progress: progress,
+                    ),
                   ),
-                ValueListenableBuilder<double>(
-                  valueListenable: _tabProgress,
-                  builder: (context, progress, _) => HomeTabBar(
-                    selectedIndex: state.tabIndex,
-                    onSelect: _selectTab,
-                    categories: categories,
-                    progress: progress,
-                  ),
-                ),
+                ],
                 Expanded(
                   // Headers stay outside both the horizontal transform and
                   // the vertical viewport, including loading/error states.

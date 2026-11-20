@@ -41,6 +41,8 @@ import '../services/drama_mute_preferences.dart';
 import '../services/haptic_preferences.dart';
 import '../services/library_store.dart';
 import '../widgets/desktop_settings_body.dart';
+import '../widgets/desktop_shell_scope.dart';
+import '../widgets/home/home_design.dart';
 import '../widgets/settings/settings_archive_rows.dart';
 import '../widgets/settings/settings_widgets.dart';
 import '../widgets/settings/classic_settings_icons.dart';
@@ -61,8 +63,25 @@ import 'ai_reading/settings/ai_settings_page.dart';
 
 /// Settings home: a list of category entries (PiliPlus multi-level
 /// navigation). Each category opens its own archive option page.
-class SettingsPage extends StatelessWidget {
+class SettingsPage extends StatefulWidget {
   const SettingsPage({super.key});
+
+  @override
+  State<SettingsPage> createState() => _SettingsPageState();
+}
+
+class _SettingsPageState extends State<SettingsPage> {
+  @override
+  void initState() {
+    super.initState();
+    if (isWindowsDesktop) DesktopShellState.enterSettings();
+  }
+
+  @override
+  void dispose() {
+    if (isWindowsDesktop) DesktopShellState.exitSettings();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -252,21 +271,13 @@ class SettingsPage extends StatelessWidget {
     // Keep the desktop body at one element path while switching themes: its
     // nested Navigator owns the theme picker and must not be recreated mid-tap.
     if (isWindowsDesktop) {
-      return WenkuPage(
-        header: _header(context),
-        child: Padding(
-          padding: EdgeInsets.only(
-            top:
-                MediaQuery.paddingOf(context).top + FrostedHeader.toolbarHeight,
-          ),
-          child: DesktopSettingsBody(
-            categories: style.isClassic
-                ? [
-                    for (final category in categories)
-                      _classicCategory(category),
-                  ]
-                : categories,
-          ),
+      final palette = HomePalette.of(context);
+      return Scaffold(
+        backgroundColor: palette.canvas,
+        body: DesktopSettingsBody(
+          categories: style.isClassic
+              ? [for (final category in categories) _classicCategory(category)]
+              : categories,
         ),
       );
     }

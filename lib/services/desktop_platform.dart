@@ -94,6 +94,7 @@ class DesktopPlatform with WindowListener {
   static final navigatorKey = GlobalKey<NavigatorState>();
   static final readerBrightness = ValueNotifier<double>(1);
   static final fullscreen = ValueNotifier<bool>(false);
+  static final maximized = ValueNotifier<bool>(false);
   final _events = <String, StreamController<dynamic>>{};
   final _players = <int, _DesktopPlayer>{};
   final _tts = FlutterTts();
@@ -131,10 +132,14 @@ class DesktopPlatform with WindowListener {
         ),
         center: true,
         title: '什锦铺',
+        titleBarStyle: TitleBarStyle.hidden,
       ),
       () async {
         await windowManager.show();
         await windowManager.focus();
+        try {
+          maximized.value = await windowManager.isMaximized();
+        } catch (_) {}
       },
     );
     _tts.setCompletionHandler(() {
@@ -201,8 +206,57 @@ class DesktopPlatform with WindowListener {
   }
 
   Future<void> setFullscreen(bool value) async {
-    await windowManager.setFullScreen(value);
+    try {
+      await windowManager.setFullScreen(value);
+    } catch (_) {}
     fullscreen.value = value;
+    if (!value) {
+      try {
+        maximized.value = await windowManager.isMaximized();
+      } catch (_) {}
+    }
+  }
+
+  Future<void> minimizeWindow() async {
+    if (!isWindowsDesktop) return;
+    try {
+      await windowManager.minimize();
+    } catch (_) {}
+  }
+
+  Future<void> toggleMaximizeWindow() async {
+    if (!isWindowsDesktop) return;
+    try {
+      if (await windowManager.isMaximized()) {
+        await windowManager.unmaximize();
+      } else {
+        await windowManager.maximize();
+      }
+    } catch (_) {}
+  }
+
+  Future<void> closeWindow() async {
+    if (!isWindowsDesktop) return;
+    try {
+      await windowManager.close();
+    } catch (_) {}
+  }
+
+  Future<void> startWindowDragging() async {
+    if (!isWindowsDesktop) return;
+    try {
+      await windowManager.startDragging();
+    } catch (_) {}
+  }
+
+  @override
+  void onWindowMaximize() {
+    maximized.value = true;
+  }
+
+  @override
+  void onWindowUnmaximize() {
+    maximized.value = false;
   }
 
   @override

@@ -4,76 +4,201 @@ part of '../reader_page.dart';
 extension _ReaderPageBuild on _ReaderPageState {
   Widget _buildReader(BuildContext context) {
     if (!isWindowsDesktop) return _buildReaderSurface(context);
-    return LayoutBuilder(
-      builder: (context, bounds) => ColoredBox(
-        color: _effectiveBackgroundColor,
-        child: Row(
-          children: [
-            if (bounds.maxWidth >= 1000)
-              DesktopChapterSidebar(
-                chapters: widget.chapters,
-                currentIndex: _index,
-                onSelected: (index) => unawaited(_jumpToChapter(index)),
-              ),
-            Expanded(
-              child: Center(
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 880),
+    final preset = _effectivePreset;
+    final sidebarBg = Color.alphaBlend(
+      preset.textColor.withValues(alpha: preset.isDark ? 0.04 : 0.03),
+      _effectiveBackgroundColor,
+    );
+    final sidebarBorder = preset.textColor.withValues(alpha: 0.12);
+    return ValueListenableBuilder<bool>(
+      valueListenable: DesktopPlatform.fullscreen,
+      builder: (context, fullscreen, _) => LayoutBuilder(
+        builder: (context, bounds) {
+          final showSidebar =
+              bounds.maxWidth >= 1000 && _desktopSidebarOpen && !fullscreen;
+          return ColoredBox(
+            color: _effectiveBackgroundColor,
+            child: Row(
+              children: [
+                if (showSidebar)
+                  DesktopChapterSidebar(
+                    chapters: widget.chapters,
+                    currentIndex: _index,
+                    backgroundColor: sidebarBg,
+                    borderColor: sidebarBorder,
+                    textColor: preset.textColor,
+                    mutedColor: preset.mutedTextColor,
+                    accentColor: preset.accentColor,
+                    onCollapse: () =>
+                        _setState(() => _desktopSidebarOpen = false),
+                    onSelected: (index) => unawaited(_jumpToChapter(index)),
+                  ),
+                Expanded(
                   child: Stack(
                     fit: StackFit.expand,
                     children: [
-                      Focus(
-                        autofocus: true,
-                        onKeyEvent: (node, event) {
-                          if (event is! KeyDownEvent ||
-                              FocusManager.instance.primaryFocus?.context
-                                      ?.findAncestorWidgetOfExactType<
-                                        EditableText
-                                      >() !=
-                                  null) {
-                            return KeyEventResult.ignored;
-                          }
-                          final key = event.logicalKey;
-                          if ([
-                            LogicalKeyboardKey.arrowRight,
-                            LogicalKeyboardKey.pageDown,
-                          ].contains(key)) {
-                            unawaited(_turnPage(1));
-                            return KeyEventResult.handled;
-                          }
-                          if ([
-                            LogicalKeyboardKey.arrowLeft,
-                            LogicalKeyboardKey.pageUp,
-                          ].contains(key)) {
-                            unawaited(_turnPage(-1));
-                            return KeyEventResult.handled;
-                          }
-                          return KeyEventResult.ignored;
-                        },
-                        child: Listener(
-                          onPointerSignal: _desktopScroll,
-                          child: _buildReaderSurface(context),
-                        ),
-                      ),
-                      Positioned.fill(
-                        child: IgnorePointer(
-                          child: ValueListenableBuilder<double>(
-                            valueListenable: DesktopPlatform.readerBrightness,
-                            builder: (_, brightness, _) => ColoredBox(
-                              color: Colors.black.withValues(
-                                alpha: 1 - brightness,
+                      Center(
+                        child: ConstrainedBox(
+                          constraints: const BoxConstraints(maxWidth: 880),
+                          child: Stack(
+                            fit: StackFit.expand,
+                            children: [
+                              Focus(
+                                autofocus: true,
+                                onKeyEvent: (node, event) {
+                                  if (event is! KeyDownEvent ||
+                                      FocusManager
+                                              .instance
+                                              .primaryFocus
+                                              ?.context
+                                              ?.findAncestorWidgetOfExactType<
+                                                EditableText
+                                              >() !=
+                                          null) {
+                                    return KeyEventResult.ignored;
+                                  }
+                                  final key = event.logicalKey;
+                                  if (key == LogicalKeyboardKey.f11) {
+                                    unawaited(
+                                      DesktopPlatform.instance.setFullscreen(
+                                        !fullscreen,
+                                      ),
+                                    );
+                                    return KeyEventResult.handled;
+                                  }
+                                  if (key == LogicalKeyboardKey.escape &&
+                                      fullscreen) {
+                                    unawaited(
+                                      DesktopPlatform.instance.setFullscreen(
+                                        false,
+                                      ),
+                                    );
+                                    return KeyEventResult.handled;
+                                  }
+                                  if ([
+                                    LogicalKeyboardKey.arrowRight,
+                                    LogicalKeyboardKey.pageDown,
+                                  ].contains(key)) {
+                                    unawaited(_turnPage(1));
+                                    return KeyEventResult.handled;
+                                  }
+                                  if ([
+                                    LogicalKeyboardKey.arrowLeft,
+                                    LogicalKeyboardKey.pageUp,
+                                  ].contains(key)) {
+                                    unawaited(_turnPage(-1));
+                                    return KeyEventResult.handled;
+                                  }
+                                  return KeyEventResult.ignored;
+                                },
+                                child: Listener(
+                                  onPointerSignal: _desktopScroll,
+                                  child: _buildReaderSurface(context),
+                                ),
                               ),
-                            ),
+                              Positioned.fill(
+                                child: IgnorePointer(
+                                  child: ValueListenableBuilder<double>(
+                                    valueListenable:
+                                        DesktopPlatform.readerBrightness,
+                                    builder: (_, brightness, _) => ColoredBox(
+                                      color: Colors.black.withValues(
+                                        alpha: 1 - brightness,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ],
                           ),
                         ),
                       ),
+                      if (bounds.maxWidth >= 700)
+                        ValueListenableBuilder<bool>(
+                          valueListenable: _controlsVisibility,
+                          builder: (context, controls, _) {
+                            final showUtilityPill =
+                                !showSidebar || controls || fullscreen;
+                            if (!showUtilityPill) {
+                              return const SizedBox.shrink();
+                            }
+                            return Positioned(
+                              top: 12,
+                              left: 12,
+                              child: DecoratedBox(
+                                decoration: BoxDecoration(
+                                  color: sidebarBg.withValues(alpha: 0.92),
+                                  borderRadius: BorderRadius.circular(8),
+                                  border: Border.all(color: sidebarBorder),
+                                ),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    if (!fullscreen && bounds.maxWidth >= 1000)
+                                      IconButton(
+                                        key: const Key(
+                                          'reader-desktop-sidebar-toggle',
+                                        ),
+                                        tooltip: _desktopSidebarOpen
+                                            ? '收起目录'
+                                            : '展开目录',
+                                        visualDensity: VisualDensity.compact,
+                                        constraints:
+                                            const BoxConstraints.tightFor(
+                                              width: 34,
+                                              height: 32,
+                                            ),
+                                        padding: EdgeInsets.zero,
+                                        onPressed: () => _setState(
+                                          () => _desktopSidebarOpen =
+                                              !_desktopSidebarOpen,
+                                        ),
+                                        icon: Icon(
+                                          _desktopSidebarOpen
+                                              ? LucideIcons.panel_left_close
+                                              : LucideIcons.panel_left_open,
+                                          size: 16,
+                                          color: preset.textColor,
+                                        ),
+                                      ),
+                                    IconButton(
+                                      key: const Key(
+                                        'reader-desktop-fullscreen-toggle',
+                                      ),
+                                      tooltip: fullscreen ? '退出全屏' : '全屏阅读',
+                                      visualDensity: VisualDensity.compact,
+                                      constraints:
+                                          const BoxConstraints.tightFor(
+                                            width: 34,
+                                            height: 32,
+                                          ),
+                                      padding: EdgeInsets.zero,
+                                      onPressed: () => unawaited(
+                                        DesktopPlatform.instance.setFullscreen(
+                                          !fullscreen,
+                                        ),
+                                      ),
+                                      icon: Icon(
+                                        fullscreen
+                                            ? LucideIcons.minimize_2
+                                            : LucideIcons.maximize_2,
+                                        size: 15,
+                                        color: preset.textColor,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            );
+                          },
+                        ),
                     ],
                   ),
                 ),
-              ),
+              ],
             ),
-          ],
-        ),
+          );
+        },
       ),
     );
   }

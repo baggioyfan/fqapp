@@ -1840,16 +1840,16 @@ class _DramaPageState extends ConsumerState<DramaPage>
       child: GridView.builder(
         key: Key(gridKey),
         padding: EdgeInsets.fromLTRB(
-          12,
+          wide && isWindowsDesktop ? 20 : 12,
           // 频道条底边到第一行海报的距离：只留 12 时条带和封面几乎贴在一起，
           // 与首页「标签条 → 内容」的 16 对齐。
           MediaQuery.paddingOf(context).top + _topChromeHeight + 16,
-          12,
-          bottomInset + 20,
+          wide && isWindowsDesktop ? 20 : 12,
+          isWindowsDesktop ? 24 : bottomInset + 20,
         ),
         gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
           crossAxisCount: columns,
-          crossAxisSpacing: 8,
+          crossAxisSpacing: wide && isWindowsDesktop ? 12 : 8,
           mainAxisSpacing: 16,
           // 海报约 5:7 + 片名 + 「分类·集数」；两列格片名可占两行。
           childAspectRatio: wide
@@ -2148,25 +2148,55 @@ class _DramaPageState extends ConsumerState<DramaPage>
                 ),
               ),
               if (!DesktopPlatform.fullscreen.value)
-                SizedBox(
-                  height: 44,
+                Container(
+                  height: 46,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF141416),
+                    border: Border(
+                      top: BorderSide(
+                        color: Colors.white.withValues(alpha: 0.08),
+                      ),
+                    ),
+                  ),
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
                       TextButton.icon(
+                        style: TextButton.styleFrom(
+                          foregroundColor: Colors.white,
+                          disabledForegroundColor: Colors.white38,
+                        ),
                         onPressed: _screenIndex > 0
                             ? () => _desktopNextDrama(items, -1)
                             : null,
                         icon: const Icon(Icons.keyboard_arrow_up),
                         label: const Text('上一条（Page Up）'),
                       ),
-                      const SizedBox(width: 24),
-                      Text(
-                        '${_screenIndex + 1} / ${items.length}',
-                        style: const TextStyle(color: Colors.white60),
+                      const SizedBox(width: 20),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 4,
+                        ),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF232328),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Text(
+                          '${_screenIndex + 1} / ${items.length}',
+                          style: const TextStyle(
+                            color: Colors.white70,
+                            fontSize: 12.5,
+                          ),
+                        ),
                       ),
-                      const SizedBox(width: 24),
+                      const SizedBox(width: 20),
                       TextButton.icon(
+                        style: TextButton.styleFrom(
+                          foregroundColor: Colors.white,
+                          disabledForegroundColor: Colors.white38,
+                        ),
                         onPressed: _screenIndex + 1 < items.length
                             ? () => _desktopNextDrama(items, 1)
                             : null,
@@ -4950,14 +4980,16 @@ class _LocalListState extends State<_LocalList> {
                   key: Key('drama_${widget.channel.label}_grid'),
                   // 官方 staggered 网格间距（`j0`）：左右 12dp、行/列间距 8dp。
                   padding: EdgeInsets.fromLTRB(
-                    12,
+                    desktopGrid && isWindowsDesktop ? 20 : 12,
                     8,
-                    12,
-                    MediaQuery.paddingOf(context).bottom + 72.0 + 20,
+                    desktopGrid && isWindowsDesktop ? 20 : 12,
+                    isWindowsDesktop
+                        ? 24.0
+                        : MediaQuery.paddingOf(context).bottom + 72.0 + 20,
                   ),
                   gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
                     crossAxisCount: columns,
-                    crossAxisSpacing: 8,
+                    crossAxisSpacing: desktopGrid && isWindowsDesktop ? 12 : 8,
                     mainAxisSpacing: desktopGrid ? 16 : 8,
                     // 官方封面 10:14 + 粗体两行标题 + 进度行。
                     childAspectRatio: desktopGrid ? .58 : 0.47,

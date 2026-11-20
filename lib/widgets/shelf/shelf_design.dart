@@ -206,11 +206,14 @@ double shelfGridChildAspectRatio(
 }
 
 /// The width of one 双列 cell, including nothing of the page padding.
-double shelfDoubleCellWidth(double availableWidth) => math.max(
-  1.0,
-  (availableWidth - ShelfTokens.screenPadding * 2 - ShelfTokens.gridSpacing) /
-      2,
-);
+double shelfDoubleCellWidth(double availableWidth, {int columns = 2}) =>
+    math.max(
+      1.0,
+      (availableWidth -
+              ShelfTokens.screenPadding * 2 -
+              ShelfTokens.gridSpacing * (columns - 1)) /
+          columns,
+    );
 
 /// 双列类型小标签的实测高度（10sp 文本 + 上下 3dp 内边距）。
 double shelfKindTagHeight(BuildContext context) =>
@@ -227,9 +230,10 @@ double shelfCacheStatusHeight(BuildContext context) =>
 double shelfDoubleChildAspectRatio(
   BuildContext context, {
   required double availableWidth,
+  int columns = 2,
 }) {
   final scaler = MediaQuery.textScalerOf(context);
-  final cellWidth = shelfDoubleCellWidth(availableWidth);
+  final cellWidth = shelfDoubleCellWidth(availableWidth, columns: columns);
   final coverWidth = math.max(
     1.0,
     cellWidth - ShelfTokens.doubleCardPadding * 2,

@@ -1131,15 +1131,18 @@ class _DetailPageState extends State<DetailPage> {
   /// 铺开，行为不变。
   int _desktopSection = 0;
 
-  Widget _desktopPanel(HomePalette palette, Widget child) => Material(
-    color: palette.surface,
-    clipBehavior: Clip.antiAlias,
-    shape: RoundedRectangleBorder(
-      borderRadius: BorderRadius.circular(12),
-      side: BorderSide(color: palette.line),
-    ),
-    child: Padding(padding: const EdgeInsets.all(16), child: child),
-  );
+  Widget _desktopPanel(HomePalette palette, Widget child) {
+    final wide = MediaQuery.sizeOf(context).width >= 1000;
+    return Material(
+      color: palette.surface,
+      clipBehavior: Clip.antiAlias,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: BorderSide(color: palette.line),
+      ),
+      child: Padding(padding: EdgeInsets.all(wide ? 20 : 16), child: child),
+    );
+  }
 
   Widget _desktopBody(HomePalette palette) {
     final width = MediaQuery.sizeOf(context).width;
@@ -1366,14 +1369,26 @@ class _DetailPageState extends State<DetailPage> {
       style: TextStyle(color: palette.muted, fontSize: 13),
     ),
     const SizedBox(height: 16),
-    SizedBox(
-      height: (MediaQuery.sizeOf(context).height - 280).clamp(260.0, 640.0),
-      child: DesktopChapterSidebar(
-        width: double.infinity,
-        chapterUnit: _chapterUnit,
-        chapters: _allChapters,
-        currentIndex: _resumeIndex ?? -1,
-        onSelected: (index) => unawaited(_openChapter(_allChapters[index])),
+    DecoratedBox(
+      decoration: BoxDecoration(
+        color: palette.canvas,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: palette.line),
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(10),
+        child: SizedBox(
+          height: (MediaQuery.sizeOf(context).height - 280).clamp(260.0, 640.0),
+          child: DesktopChapterSidebar(
+            width: double.infinity,
+            showBorder: false,
+            backgroundColor: palette.canvas,
+            chapterUnit: _chapterUnit,
+            chapters: _allChapters,
+            currentIndex: _resumeIndex ?? -1,
+            onSelected: (index) => unawaited(_openChapter(_allChapters[index])),
+          ),
+        ),
       ),
     ),
   ];

@@ -37,6 +37,7 @@ class HomeTabBar extends StatelessWidget {
   /// **只有经典主题（[ClassicHomeTabBar]）会消费它**：档案风格的标签条是
   /// 每个标签自己带一条下划线，横滑时不做跟手位移，这里仅透传、不参与布局。
   final double? progress;
+  final bool showBottomBorder;
 
   const HomeTabBar({
     super.key,
@@ -44,6 +45,7 @@ class HomeTabBar extends StatelessWidget {
     required this.onSelect,
     this.categories = homeCategories,
     this.progress,
+    this.showBottomBorder = true,
   });
 
   @override
@@ -63,7 +65,9 @@ class HomeTabBar extends StatelessWidget {
     return Container(
       decoration: BoxDecoration(
         color: palette.canvas,
-        border: Border(bottom: BorderSide(color: palette.line, width: 1)),
+        border: showBottomBorder
+            ? Border(bottom: BorderSide(color: palette.line, width: 1))
+            : null,
       ),
       child: SingleChildScrollView(
         scrollDirection: Axis.horizontal,

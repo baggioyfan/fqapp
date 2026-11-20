@@ -14,6 +14,7 @@ import 'package:fqapp/pages/detail_page.dart';
 import 'package:fqapp/pages/reader_page.dart';
 import 'package:fqapp/services/desktop_platform.dart';
 import 'package:fqapp/widgets/desktop_app_frame.dart';
+import 'package:fqapp/widgets/desktop_shell_scope.dart';
 import 'package:fqapp/widgets/wenku/wenku_ui.dart';
 import 'support/fakes.dart';
 
@@ -27,6 +28,7 @@ void _testWindows(String name, Future<void> Function(WidgetTester) body) {
       await body(tester);
     } finally {
       await tester.pumpWidget(const SizedBox.shrink());
+      DesktopShellState.reset();
       debugDefaultTargetPlatformOverride = null;
     }
   });
@@ -56,6 +58,7 @@ void main() {
   setUp(() {
     SharedPreferences.setMockInitialValues({});
     DesktopPlatform.fullscreen.value = false;
+    DesktopShellState.reset();
     desktopTab.value = 0;
   });
 
@@ -106,9 +109,11 @@ void main() {
             greaterThanOrEqualTo(44),
           );
           expect(find.byKey(const Key('detail_id_copy')), findsOneWidget);
+          expect(find.byKey(const Key('desktop-window-bar')), findsOneWidget);
+          expect(find.byKey(const Key('desktop-nav-pane')), findsOneWidget);
           expect(
-            tester.widget<NavigationRail>(find.byType(NavigationRail)).minWidth,
-            76,
+            tester.getSize(find.byKey(const Key('desktop-nav-pane'))).width,
+            sample.width >= 1100 ? 200 : 68,
           );
           expect(find.byKey(const Key('desktop-settings')), findsOneWidget);
         }
