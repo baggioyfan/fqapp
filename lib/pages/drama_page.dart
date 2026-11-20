@@ -386,9 +386,13 @@ class _DramaPageState extends ConsumerState<DramaPage>
   }
 
   final Map<int, PageController> _feedControllers = {};
+  final Map<String, ScrollController> _gridControllers = {};
+  final Map<String, int> _gridAutoFillForCount = {};
   final Map<int, int> _screenIndices = {};
   PageController _pagesFor(int tab) =>
       _feedControllers.putIfAbsent(tab, PageController.new);
+  ScrollController _gridControllerFor(String gridKey) =>
+      _gridControllers.putIfAbsent(gridKey, ScrollController.new);
   PageController get _pages => _pagesFor(_current.tabIndex);
   bool _channelScrolling = false;
 
@@ -639,6 +643,9 @@ class _DramaPageState extends ConsumerState<DramaPage>
     _channelScrollingWatchdog?.cancel();
     _pullDistance.dispose();
     for (final controller in _feedControllers.values) {
+      controller.dispose();
+    }
+    for (final controller in _gridControllers.values) {
       controller.dispose();
     }
     _channelProgress.dispose();
@@ -1006,8 +1013,10 @@ class _DramaPageState extends ConsumerState<DramaPage>
     return false;
   }
 
-  Future<void> _refresh() =>
-      ref.read(dramaProvider.notifier).load(manualRefresh: true);
+  Future<void> _refresh() {
+    _gridAutoFillForCount.clear();
+    return ref.read(dramaProvider.notifier).load(manualRefresh: true);
+  }
 
   /// 官方单击语义：**暂停 / 继续当前这条视频**，不跳任何界面。
   ///
@@ -1834,11 +1843,22 @@ class _DramaPageState extends ConsumerState<DramaPage>
       columns = dramaDesktopColumns(context);
     }
     final bottomInset = _effectiveBottomInset(context);
+    if (active &&
+        !state.isLoading &&
+        !state.isLoadMore &&
+        state.hasMore &&
+        state.error == null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _maybeAutoFillGrid(gridKey, items.length);
+      });
+    }
     return NotificationListener<ScrollNotification>(
       onNotification: (notification) =>
           active ? _onGridScroll(notification) : false,
       child: GridView.builder(
         key: Key(gridKey),
+        controller: _gridControllerFor(gridKey),
+        physics: const AlwaysScrollableScrollPhysics(),
         padding: EdgeInsets.fromLTRB(
           wide && isWindowsDesktop ? 20 : 12,
           // 频道条底边到第一行海报的距离：只留 12 时条带和封面几乎贴在一起，
@@ -1872,6 +1892,26 @@ class _DramaPageState extends ConsumerState<DramaPage>
     );
   }
 
+  void _maybeAutoFillGrid(String gridKey, int itemCount) {
+    if (!mounted || !_tickerEnabled) return;
+    if (_gridShape(_current)?.gridKey != gridKey) return;
+    final state = ref.read(dramaProvider);
+    if (state.isLoading ||
+        state.isLoadMore ||
+        !state.hasMore ||
+        state.error != null) {
+      return;
+    }
+    final controller = _gridControllers[gridKey];
+    if (controller == null || !controller.hasClients) return;
+    final position = controller.position;
+    if (!position.hasContentDimensions) return;
+    if (position.extentAfter >= 600) return;
+    if (_gridAutoFillForCount[gridKey] == itemCount) return;
+    _gridAutoFillForCount[gridKey] = itemCount;
+    unawaited(ref.read(dramaProvider.notifier).loadMore());
+  }
+
   /// 瀑布格的滚动：保留下拉刷新（同一套手势与提示），把 feed 的
   /// 竖滑换页/内联同步换成触底翻页。
   bool _onGridScroll(ScrollNotification notification) {
@@ -1881,11 +1921,14 @@ class _DramaPageState extends ConsumerState<DramaPage>
           .clamp(0, kDramaPullRefreshTrigger);
       return false;
     }
-    if (notification is ScrollUpdateNotification &&
-        _pullDistance.value > 0 &&
-        (notification.scrollDelta ?? 0) > 0) {
-      _pullDistance.value = (_pullDistance.value - notification.scrollDelta!)
-          .clamp(0, kDramaPullRefreshTrigger);
+    if (notification is ScrollUpdateNotification) {
+      if (_pullDistance.value > 0 && (notification.scrollDelta ?? 0) > 0) {
+        _pullDistance.value = (_pullDistance.value - notification.scrollDelta!)
+            .clamp(0, kDramaPullRefreshTrigger);
+      }
+      if (notification.metrics.extentAfter < 600) {
+        ref.read(dramaProvider.notifier).loadMore();
+      }
     }
     if (notification is ScrollEndNotification) {
       final shouldRefresh = _pullDistance.value >= kDramaPullRefreshTrigger;

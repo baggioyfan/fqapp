@@ -4,19 +4,22 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'package:fqapp/models/channel_tab.dart';
 import 'package:fqapp/models/chapter_media.dart';
-import 'package:fqapp/models/homepage_page.dart';
 import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/models/rank.dart';
 import 'package:fqapp/pages/comic_reader_page.dart';
+import 'package:fqapp/pages/drama_page.dart';
 import 'package:fqapp/pages/home_page.dart';
 import 'package:fqapp/pages/home_provider.dart';
 import 'package:fqapp/pages/mine_page.dart';
 import 'package:fqapp/pages/rank_page.dart';
 import 'package:fqapp/pages/settings_page.dart';
+import 'package:fqapp/services/api_client.dart';
 import 'package:fqapp/services/app_theme.dart';
 import 'package:fqapp/services/app_theme_style.dart';
 import 'package:fqapp/services/desktop_platform.dart';
+import 'package:fqapp/services/drama_channel_preferences.dart';
 import 'package:fqapp/widgets/desktop_app_frame.dart';
 import 'package:fqapp/widgets/desktop_chapter_sidebar.dart';
 import 'package:fqapp/widgets/desktop_settings_body.dart';
@@ -24,6 +27,7 @@ import 'package:fqapp/widgets/desktop_shell_scope.dart';
 import 'package:fqapp/widgets/home/home_back_button.dart';
 import 'package:fqapp/widgets/wenku/wenku_ui.dart';
 import 'support/app_ui_host.dart';
+import 'support/controlled_player.dart';
 import 'support/fakes.dart';
 
 void main() {
@@ -282,6 +286,104 @@ void main() {
       expect(find.byType(DesktopChapterSidebar), findsOneWidget);
       await tester.pumpWidget(const SizedBox.shrink());
     } finally {
+      await tester.binding.setSurfaceSize(null);
+      DesktopShellState.reset();
+      debugDefaultTargetPlatformOverride = null;
+    }
+  });
+
+  testWidgets('Windows DramaPage browse grid auto-fills beyond 6 items', (
+    tester,
+  ) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.windows;
+    await tester.binding.setSurfaceSize(const Size(1280, 800));
+    DramaChannelPreferences.reset();
+    DramaChannelPreferences.load(await SharedPreferences.getInstance());
+    final requestedOffsets = <int>[];
+
+    HomeNotifier makeNotifier({int initialTabIndex = 0}) => HomeNotifier(
+      initialTabIndex: initialTabIndex,
+      homepageLoader:
+          ({int tabType = 2, int offset = 0, String? sessionId}) async {
+            if (tabType == kChannelVideoEpisode) {
+              requestedOffsets.add(offset);
+              const pageSize = 6;
+              final items = [
+                for (var i = 0; i < pageSize; i++)
+                  MediaItem(
+                    id: 'ep-${offset + i}',
+                    title: '短剧 ${offset + i}',
+                    cover: '',
+                    author: '演员',
+                    badge: '',
+                    ep: '全20集',
+                    kind: 'video',
+                  ),
+              ];
+              return HomepagePage(
+                items: items,
+                nextOffset: offset + pageSize < 24 ? offset + pageSize : null,
+                sessionId: 'sess-1',
+              );
+            }
+            return HomepagePage(
+              items: [
+                MediaItem(
+                  id: 'feed-1',
+                  title: '推荐剧 1',
+                  cover: '',
+                  author: '演员',
+                  badge: '',
+                  ep: '全12集',
+                  kind: 'video',
+                ),
+              ],
+              nextOffset: null,
+              sessionId: null,
+            );
+          },
+      searchLoader: (query, {int page = 1}) async => const [],
+    );
+
+    try {
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            homeProvider.overrideWith(() => makeNotifier()),
+            dramaProvider.overrideWith(
+              () => makeNotifier(initialTabIndex: dramaTabIndex),
+            ),
+          ],
+          child: MaterialApp(
+            home: DramaPage(
+              channelLoader: () async => const ChannelTable(
+                tabs: [
+                  ChannelTab(type: kChannelVideoFeed, title: '推荐'),
+                  ChannelTab(type: kChannelVideoEpisode, title: '看剧'),
+                ],
+              ),
+              contentLoader: (itemId, tab) async =>
+                  throw const ApiException('offline test'),
+              historyStore: ControlledReaderStore(),
+              playerFactory: () => ControlledNativePlayer(),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('看剧'));
+      await tester.pumpAndSettle();
+
+      expect(tester.takeException(), isNull);
+      expect(find.byKey(const Key('drama_episode_grid')), findsOneWidget);
+      expect(requestedOffsets, containsAll(<int>[0, 6]));
+      expect(find.text('短剧 0'), findsOneWidget);
+      expect(find.text('短剧 6'), findsOneWidget);
+
+      await tester.pumpWidget(const SizedBox.shrink());
+    } finally {
+      DramaChannelPreferences.reset();
       await tester.binding.setSurfaceSize(null);
       DesktopShellState.reset();
       debugDefaultTargetPlatformOverride = null;
