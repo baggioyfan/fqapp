@@ -13,6 +13,12 @@ enum PlaybackIssue {
   timeout('加载超时', '网络或视频响应较慢，请稍后重试。'),
   unavailable('视频暂时无法播放', '播放地址可能已失效，可以重试获取新地址，或切换其他剧集。'),
   service('播放服务暂时不可用', '请稍后重试，或先观看其他剧集。'),
+
+  /// 片源编码本机解不了（上游只给了 bytevc2/H.266 档）。
+  ///
+  /// 后端把它包成 500 下发，但这是**内容**问题，不是服务抖动：说成「播放服务
+  /// 暂时不可用」会让用户以为等一会儿就好，实际要换一份片源才行。
+  unsupported('这一集暂时无法播放', '片源编码本机不支持，可以稍后重试，或先看其他剧集。'),
   decoding('视频解析失败', '视频格式可能不受支持，可以重试或切换其他剧集。'),
   unknown('播放失败', '请重试，或切换其他剧集。'),
   empty('暂无可播放剧集', '返回后试试其他作品。');
@@ -41,6 +47,10 @@ enum PlaybackIssue {
       };
     }
     if (error is ApiException) {
+      // 必须先看业务原因，再看状态码：后端把「该视频暂不支持播放」包成 500
+      // 下发，按状态码归类会把它说成「播放服务暂时不可用」——那是把内容问题
+      // 讲成服务问题，用户会一直等一个不会自己好的错误。
+      if (error.message.contains('暂不支持播放')) return unsupported;
       if (error.statusCode case final int status) {
         return _fromHttpStatus(status);
       }

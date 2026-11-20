@@ -342,3 +342,107 @@ async fn stream_variants_do_not_merge_bytevc2_tiers() {
     assert_eq!(names, ["1080P", "360P"], "{body}");
     assert!(!body.to_string().contains(REJECTED_URL), "{body}");
 }
+
+/// 上游按设备分流：同一集的数据可能这一份只给 bytevc2（H.266，播放链路上
+/// 没有解码器），下一份给 h264/h265 多档。实测 2026-11-20：同一集、同一个
+/// 进程连打 20 次，6 次拿到多档、14 次只有 bytevc2；好设备的表现是稳定的，
+/// 差的连打 9 次全是 bytevc2。所以「全档 bytevc2」不是终止状态，换一份响应
+/// 就能过——必须走重试，否则用户看到的是这一集的真实片源被说成
+/// 「播放服务暂时不可用」。
+#[tokio::test]
+async fn bytevc2_only_response_is_retried_until_a_playable_roll_arrives() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    let rolls = Arc::new(AtomicUsize::new(0));
+    let counter = rolls.clone();
+    let upstream = MockUpstream::start(move |req| {
+        // 只数取流请求：设备注册也走这个 mock。
+        if !req.path.contains("multi_video_model") {
+            return MockReply::json(json!({"data": {}}));
+        }
+        let roll = counter.fetch_add(1, Ordering::SeqCst);
+        if roll == 0 {
+            return MockReply::json(json!({"data": {"video_model": {
+                "key_seed": "AAAA",
+                "video_list": {
+                    "video_1": {"main_url": REJECTED_URL, "codec_type": "bytevc2"}
+                }
+            }}}));
+        }
+        MockReply::json(json!({"data": {"video_model": {
+            "key_seed": "AAAA",
+            "video_list": {
+                "video_1": {"main_url": ALLOWED_URL, "codec_type": "h264", "spade_a": SPADE_A}
+            }
+        }}}))
+    })
+    .await;
+    let dir = TempDir::new("video-codec-retry-roll");
+    let server = build_server(&dir, Some(upstream.origin.clone()), &[], &[], &pool_json(5)).await;
+
+    let (status, body) = request_video(&server, "mode=stream").await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(body["video_url"], ALLOWED_URL, "{body}");
+    assert!(
+        rolls.load(Ordering::SeqCst) >= 2,
+        "a bytevc2-only roll must be re-requested, saw {} playback requests",
+        rolls.load(Ordering::SeqCst)
+    );
+}
+
+/// 上游按设备身份分流码流，而一台设备的分流是稳定的（2026-11-20 实测：好设备
+/// 3/3 可解，差的连打 9 次全拒）。既然身份本身就是线索，就不该每集都从头重掷：
+/// 第一集学到「哪台设备给得出多档」之后，下一集必须直接用那台——否则用户在
+/// 每一集上都要多等 3–8 次取流，还得赌运气。
+#[tokio::test]
+async fn a_device_that_served_tiers_is_preferred_by_the_next_request() {
+    // 池里 5 台设备，只有 3 号给得出可解码档位。
+    const GOOD_DEVICE: &str = "device_id=0000000000000003";
+    let upstream = MockUpstream::start(|req| {
+        if !req.path.contains("multi_video_model") {
+            return MockReply::json(json!({"data": {}}));
+        }
+        if req.query.contains(GOOD_DEVICE) {
+            return MockReply::json(json!({"data": {"video_model": {
+                "key_seed": "AAAA",
+                "video_list": {
+                    "video_1": {"main_url": ALLOWED_URL, "codec_type": "h264", "spade_a": SPADE_A}
+                }
+            }}}));
+        }
+        MockReply::json(json!({"data": {"video_model": {
+            "key_seed": "AAAA",
+            "video_list": {
+                "video_1": {"main_url": REJECTED_URL, "codec_type": "bytevc2"}
+            }
+        }}}))
+    })
+    .await;
+    let dir = TempDir::new("video-codec-device-preference");
+    let server = build_server(&dir, Some(upstream.origin.clone()), &[], &[], &pool_json(5)).await;
+
+    let (status, body) = request_video(&server, "video_id=first-episode&mode=stream").await;
+    assert_eq!(status, 200, "{body}");
+    let after_first = playback_requests(&upstream);
+    assert!(
+        after_first > 1,
+        "the first episode has to roll onto the playable device, saw {after_first} requests"
+    );
+
+    let (status, body) = request_video(&server, "video_id=second-episode&mode=stream").await;
+    assert_eq!(status, 200, "{body}");
+    let second_episode = playback_requests(&upstream) - after_first;
+    assert_eq!(
+        second_episode, 1,
+        "the device that served tiers must be reused instead of rolled again, saw {second_episode} playback requests"
+    );
+}
+
+fn playback_requests(upstream: &MockUpstream) -> usize {
+    upstream
+        .requests()
+        .iter()
+        .filter(|request| request.path.contains("multi_video_model"))
+        .count()
+}

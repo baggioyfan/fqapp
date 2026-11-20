@@ -15,6 +15,7 @@ use sha2::{Digest, Sha512};
 use tokio::io::AsyncWriteExt;
 use tokio::time::Instant;
 
+use crate::device::codec_health::CodecVerdict;
 use crate::endpoints::base::{
     phoenix_player_headers, phoenix_player_url, Upstream, UpstreamMode, UpstreamRequestSpec,
     UA_ANDROID_BROWSER, UA_WINDOWS_BROWSER,
@@ -41,6 +42,21 @@ const VIDEO_WORK_BUDGET: Duration = Duration::from_secs(18);
 const VIDEO_VARIANT_BUDGET: Duration = Duration::from_secs(4);
 const VIDEO_RESPONSE_RESERVE: Duration = Duration::from_secs(1);
 const VIDEO_SOURCE_RETRY_DELAYS: [Duration; 2] = [Duration::from_secs(1), Duration::from_secs(2)];
+/// 全档 bytevc2 的重试间隔。
+///
+/// 这一类失败不是网络抖动，而是**这一份**取流响应碰上了只下发 H.266 档位的
+/// 那条分流（实测 2026-11-20：同一集同一个身份连打 20 次，6 次拿到
+/// h264/h265 多档、14 次只拿到 bytevc2 全档；同一台设备的结果稳定，说明是
+/// 按设备分流）。换一次请求就会重新分流，响应仍在 200–300ms 内答完，所以
+/// 用滴答级别的间隔重掷，而不是照搬网络重试的 1s/2s。
+const VIDEO_CODEC_RETRY_DELAY: Duration = Duration::from_millis(120);
+/// 全档 bytevc2 时最多重掷几次。
+///
+/// 实测一台设备的结果是稳定的（好的一直给多档，差的连打 9 次全是 bytevc2），
+/// 而池里好设备约占 1/5–1/3，所以重掷几次比"一次定生死"划算得多：单次成功率
+/// 约 0.3 时，9 次尝试实测 40/40 全过（改前同口径 30% 成功），代价是最坏情况
+/// 多花 8×120ms 加每次取流 200–300ms。
+const VIDEO_CODEC_RETRY_LIMIT: usize = 8;
 const VIDEO_RETRY_MIN_BUDGET: Duration = Duration::from_millis(250);
 const VIDEO_DEVICE_ROTATION_BUDGET: Duration = Duration::from_secs(6);
 const VIDEO_DEVICE_RETRY_RESERVE: Duration = Duration::from_secs(2);
@@ -55,7 +71,12 @@ const VIDEO_DEVICE_SETTLE: Duration = Duration::from_millis(500);
 /// history if upstream ever revives one.
 const STREAM_VIDEO_SOURCES: [StreamVideoSource; 1] = [StreamVideoSource::V5];
 const STREAM_SOURCE_COUNT: usize = STREAM_VIDEO_SOURCES.len();
-const STREAM_SOURCE_ATTEMPT_LIMIT: usize = VIDEO_SOURCE_RETRY_DELAYS.len() + 1;
+/// 一次取流最多留几份响应体供清晰度合并。
+///
+/// 必须覆盖最长的重试路径：全档 bytevc2 会重掷 [VIDEO_CODEC_RETRY_LIMIT] 次，
+/// 取到可解档位的那一份往往排在后面；按旧的「网络阶梯 + 1」算只有 3 份，成功
+/// 的那一份会被丢掉，清晰度面板就只剩前几份 bytevc2 里的空集。
+const STREAM_SOURCE_ATTEMPT_LIMIT: usize = VIDEO_CODEC_RETRY_LIMIT + 1;
 const STREAM_BODY_LIMIT: usize = STREAM_SOURCE_COUNT * STREAM_SOURCE_ATTEMPT_LIMIT;
 static STREAM_TRACE_SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
@@ -742,6 +763,9 @@ async fn run_stream_video_source(
     let mut retry_pin = String::new();
     let mut retry_slot = false;
     let mut retry_index = 0;
+    // 全档 bytevc2 有自己的一份重掷额度：它和网络抖动不是一类失败，不该占
+    // 网络重试阶梯的位置，也不该被阶梯的长度卡死在两次。
+    let mut codec_retries = 0usize;
 
     loop {
         let attempt_started = Instant::now();
@@ -754,9 +778,19 @@ async fn run_stream_video_source(
         if let Some(device_id) = recovery.current().await {
             retry_pin = device_id;
         }
+        if retry_pin.is_empty() {
+            // 已知可解的设备优先：分流按设备给，先挑对的远比事后重掷便宜。
+            if let Some(device_id) = ctx.pool.preferred_codec_device() {
+                retry_pin = device_id;
+            }
+        }
         let mut fetched =
             fetch_stream_video_source(source, ctx, video_id, deadline, retry_pin.as_str()).await;
-        fetched.remember_empty_device(&mut empty_devices);
+        // 钉的设备已经不在池子里时取流会退回轮转；别让一个失效的钉把后续尝试
+        // 全部空转在同一个已经不存在的身份上。
+        if !retry_pin.is_empty() && fetched.device_id.as_deref() != Some(retry_pin.as_str()) {
+            retry_pin.clear();
+        }
         if let Some(parsed) = fetched.parsed.clone() {
             log::info!(
                 "stream trace request={} source={} attempt={retry_index} event=fetch_body elapsed_ms={} models={} meta_tiers={} fallback_models={} empty_playback={} retryable={}",
@@ -816,6 +850,24 @@ async fn run_stream_video_source(
         fetched.retryable |= attempt.retryable;
         let retryable = fetched.retryable;
         let resolution = attempt.resolution;
+        // 设备身份就是「这份响应能不能解」的线索，先记下来再决定下一步：下一次
+        // 请求（以及下一次重掷）就能直接挑已知可解的设备，不必从头试。
+        if let Some(device_id) = fetched.device_id.as_deref() {
+            let verdict = match &resolution {
+                VideoSourceResolution::Found(_, _) => Some(CodecVerdict::Playable),
+                VideoSourceResolution::CodecRejected => Some(CodecVerdict::UnsupportedOnly),
+                _ => None,
+            };
+            if let Some(verdict) = verdict {
+                ctx.pool.record_codec_verdict(device_id, verdict);
+            }
+        }
+        // 全档 bytevc2 不是"这台设备坏了"：隔离它只会换来一次新身份注册（上游
+        // 按出口 IP 限注册量），而它对其余剧集仍按同一份分流答复，用偏好记录
+        // 躲开就够了。把它算成空响应会一边烧设备池一边被注册节流卡住。
+        if !matches!(resolution, VideoSourceResolution::CodecRejected) {
+            fetched.remember_empty_device(&mut empty_devices);
+        }
         let serves_stream = matches!(resolution, VideoSourceResolution::Found(_, _))
             || fetched
                 .parsed
@@ -841,12 +893,6 @@ async fn run_stream_video_source(
             };
         }
 
-        let Some(retry_delay) = VIDEO_SOURCE_RETRY_DELAYS.get(retry_index) else {
-            return StreamSourceRun {
-                resolution,
-                empty_devices,
-            };
-        };
         if !retryable {
             return StreamSourceRun {
                 resolution,
@@ -854,7 +900,43 @@ async fn run_stream_video_source(
             };
         }
 
-        let mut retry_at = Instant::now() + *retry_delay;
+        let retry_delay = if matches!(resolution, VideoSourceResolution::CodecRejected) {
+            // 分流是按设备给的，换请求就换一份响应，不必等网络重试那么久。
+            if codec_retries >= VIDEO_CODEC_RETRY_LIMIT {
+                return StreamSourceRun {
+                    resolution,
+                    empty_devices,
+                };
+            }
+            codec_retries += 1;
+            // 换设备不能指望池子的 LRU：它按秒记 `last_used`，120ms 一次的重掷
+            // 在同一秒里会被交回同一台（实测连打 9 次全落在同一台设备上），那
+            // 等于根本没换。先挑已知可解的设备，没有就显式排除被拒的这一台。
+            let rejected = fetched.device_id.clone().unwrap_or_default();
+            retry_pin = match ctx.pool.preferred_codec_device_excluding(&rejected) {
+                Some(device_id) => device_id,
+                None => ctx
+                    .pool
+                    .get_excluding(&rejected)
+                    .await
+                    .map(|device| device.device_id)
+                    .unwrap_or_default(),
+            };
+            log::info!(
+                "video {video_id}: {} attempt={retry_index} only bytevc2 tiers (no decoder); re-rolling the door retry={codec_retries}",
+                source.name()
+            );
+            VIDEO_CODEC_RETRY_DELAY
+        } else {
+            let Some(ladder_delay) = VIDEO_SOURCE_RETRY_DELAYS.get(retry_index) else {
+                return StreamSourceRun {
+                    resolution,
+                    empty_devices,
+                };
+            };
+            *ladder_delay
+        };
+        let mut retry_at = Instant::now() + retry_delay;
         if !retry_has_budget(retry_at, deadline) {
             log::warn!(
                 "video {video_id}: {} source retry skipped; insufficient deadline remaining",
@@ -869,7 +951,7 @@ async fn run_stream_video_source(
         // Prove a device can still serve the current source before replacing it.
         // If another source is still settling, keep using this device and defer
         // rotation rather than spending this source's remaining retry window.
-        if fetched.empty_playback {
+        if fetched.empty_playback && !matches!(resolution, VideoSourceResolution::CodecRejected) {
             if let Some(failed_device_id) = fetched.device_id.as_deref() {
                 retry_pin = failed_device_id.to_string();
                 if retry_index > 0 {
@@ -1704,9 +1786,12 @@ async fn resolve_stream_video_source_attempt(
             resolution: VideoSourceResolution::Found(url, key),
             retryable: false,
         },
+        // 全档 bytevc2 不等于"这一集永远播不了"：上游按设备分流，换一次请求
+        // 就会重新分流（[VIDEO_CODEC_RETRY_DELAY]）。所以它不是终止状态，
+        // 走重试阶梯换一份响应；阶梯走完仍只有 bytevc2 才把原因交给用户。
         FallbackResolution::CodecRejected => SourceAttemptResolution {
             resolution: VideoSourceResolution::CodecRejected,
-            retryable: false,
+            retryable: true,
         },
         FallbackResolution::NotFound {
             retryable,
@@ -1720,7 +1805,7 @@ async fn resolve_stream_video_source_attempt(
         {
             SourceAttemptResolution {
                 resolution: VideoSourceResolution::CodecRejected,
-                retryable: false,
+                retryable: true,
             }
         }
         FallbackResolution::NotFound { .. } => SourceAttemptResolution {

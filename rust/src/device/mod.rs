@@ -4,6 +4,7 @@
 //! registration is never performed while the pool lock is held, and saves are
 //! version-guarded so an in-flight registration cannot overwrite newer state.
 
+pub mod codec_health;
 pub mod crypto;
 pub mod pool_crypto;
 pub mod register;
@@ -221,6 +222,8 @@ pub struct DevicePool {
     maintenance_lock: Arc<Mutex<()>>,
     /// Serializes the final file commit against retirement.
     commit: Arc<CommitGate>,
+    /// Which identities hand out a decodable stream; see `codec_health`.
+    codec_health: codec_health::CodecHealth,
 }
 
 impl DevicePool {
@@ -381,6 +384,7 @@ impl DevicePool {
             }),
             maintenance_lock: Arc::new(Mutex::new(())),
             commit: Arc::new(CommitGate::new()),
+            codec_health: codec_health::CodecHealth::new(),
         }))
     }
 
@@ -557,6 +561,29 @@ impl DevicePool {
     }
 
     /// Registers a fresh device and swaps it in for a failed one.
+    /// Records whether this device handed out a decodable stream.
+    ///
+    /// Upstream splits codec tiers by device identity, and one identity's split
+    /// is stable, so this is the cheapest way to stop re-rolling the dice on
+    /// every playback request. In-memory only; see `codec_health`.
+    pub fn record_codec_verdict(&self, device_id: &str, verdict: codec_health::CodecVerdict) {
+        self.codec_health.record(device_id, verdict);
+    }
+
+    /// A device that recently handed out a decodable stream, if any is known.
+    ///
+    /// The caller pins it; a device that has meanwhile left the pool simply
+    /// fails the pin lookup and the regular rotation takes over.
+    pub fn preferred_codec_device(&self) -> Option<String> {
+        self.codec_health.preferred()
+    }
+
+    /// 同上，但排除一台设备：码流被拒后换设备时，换回同一台没有意义。
+    pub fn preferred_codec_device_excluding(&self, device_id: &str) -> Option<String> {
+        let excluded = (!device_id.is_empty()).then_some(device_id);
+        self.codec_health.preferred_excluding(excluded)
+    }
+
     pub async fn replace_failed(&self, device_id: &str) -> Result<Device, String> {
         let _maintenance = self.maintenance_lock.lock().await;
         const MAX_ATTEMPTS: usize = 5;
@@ -600,6 +627,7 @@ impl DevicePool {
                             "replace device {device_id}: failed to persist replacement: {error}"
                         ));
                     }
+                    self.codec_health.forget(device_id);
                     return Ok(nd);
                 }
                 _ => {
@@ -634,6 +662,7 @@ impl DevicePool {
         if !removed {
             return false;
         }
+        self.codec_health.forget(device_id);
         if let Err(error) = self.save().await {
             log::warn!("quarantine device: failed to persist pool: {error}");
         }
