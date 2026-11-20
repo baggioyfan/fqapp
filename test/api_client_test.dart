@@ -9,6 +9,42 @@ import 'package:http/testing.dart';
 
 void main() {
   test(
+    'series detail forwards the requested id to upstream record selection',
+    () async {
+      final requests = <http.Request>[];
+      final transport = MockClient((request) async {
+        requests.add(request);
+        return http.Response.bytes(
+          utf8.encode(
+            jsonEncode({
+              'code': 0,
+              'data': {
+                'video-id': {
+                  'series_id_str': 'series-42',
+                  'series_title': 'Fixture series',
+                  'episode_cnt': 12,
+                },
+              },
+            }),
+          ),
+          200,
+        );
+      });
+      addTearDown(transport.close);
+      final api = ApiClient(
+        client: transport,
+        baseUrl: 'http://localhost:9000',
+      );
+
+      final detail = await api.seriesDetail('series-42');
+
+      expect(detail.title, 'Fixture series');
+      expect(detail.episodeCount, 12);
+      expect(requests.single.url.path, '/api/v1/series/series-42');
+    },
+  );
+
+  test(
     'series detail strict failures preserve legacy best-effort callers',
     () async {
       for (final response in [

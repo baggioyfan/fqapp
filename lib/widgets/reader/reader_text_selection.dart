@@ -209,18 +209,34 @@ class ReaderSelectionGeometry {
   final List<ReaderSelectionEntry> _entries = [];
 
   void register({required ReaderSelectionEntry entry}) {
-    unregister(entry.blockIndex);
+    _entries.removeWhere(
+      (existing) =>
+          !existing.box.attached ||
+          identical(existing.box, entry.box) ||
+          (existing.blockIndex == entry.blockIndex &&
+              existing.windowTop == entry.windowTop),
+    );
     _entries.add(entry);
   }
 
-  void unregister(int blockIndex) =>
-      _entries.removeWhere((entry) => entry.blockIndex == blockIndex);
+  void unregister(int blockIndex, {double? windowTop}) => _entries.removeWhere(
+    (entry) =>
+        entry.blockIndex == blockIndex &&
+        (windowTop == null || entry.windowTop == windowTop),
+  );
 
-  ReaderSelectionEntry? entryFor(int blockIndex) {
+  ReaderSelectionEntry? entryFor(int blockIndex, {double? blockY}) {
+    ReaderSelectionEntry? fallback;
     for (final entry in _entries) {
-      if (entry.blockIndex == blockIndex && entry.box.attached) return entry;
+      if (entry.blockIndex != blockIndex || !entry.box.attached) continue;
+      fallback ??= entry;
+      if (blockY == null ||
+          (blockY >= entry.windowTop - .01 &&
+              blockY <= entry.windowBottom + .01)) {
+        return entry;
+      }
     }
-    return null;
+    return fallback;
   }
 
   /// Nearest entry to [global], by block-space distance to the entry's
@@ -228,13 +244,21 @@ class ReaderSelectionGeometry {
   /// construction, so the entry holding the finger wins outright.
   ReaderSelectionEntry? _entryAt(Offset global) {
     ReaderSelectionEntry? best;
-    var bestDistance = double.infinity;
+    var bestHorizontal = double.infinity;
+    var bestVertical = double.infinity;
     for (final entry in _entries) {
       if (!entry.box.attached) continue;
       final local = entry.box.globalToLocal(global);
-      final distance = entry.distanceTo(local.dy);
-      if (distance < bestDistance) {
-        bestDistance = distance;
+      final width = entry.box.hasSize ? entry.box.size.width : 0.0;
+      final horizontal = local.dx < 0
+          ? -local.dx
+          : (width > 0 && local.dx > width ? local.dx - width : 0.0);
+      final vertical = entry.distanceTo(local.dy);
+      if (horizontal < bestHorizontal - 0.5 ||
+          ((horizontal - bestHorizontal).abs() <= 0.5 &&
+              vertical < bestVertical)) {
+        bestHorizontal = horizontal;
+        bestVertical = vertical;
         best = entry;
       }
     }
@@ -361,7 +385,10 @@ class _ReaderBlockMarkLayerState extends State<ReaderBlockMarkLayer> {
 
   @override
   void dispose() {
-    widget.scope.geometry.unregister(widget.block.index);
+    widget.scope.geometry.unregister(
+      widget.block.index,
+      windowTop: widget.windowTop,
+    );
     _painter?.dispose();
     super.dispose();
   }

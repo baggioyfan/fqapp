@@ -27,6 +27,7 @@ class ReaderLayoutSpec {
   final double paragraphSpacing;
   final bool firstLineIndent;
   final bool justifyText;
+  final int columns;
 
   ReaderLayoutSpec({
     required this.viewport,
@@ -38,6 +39,9 @@ class ReaderLayoutSpec {
        paragraphSpacing = preferences.paragraphSpacing,
        firstLineIndent = preferences.firstLineIndent,
        justifyText = preferences.justifyText,
+       columns = preferences.pageMode == ReaderPageMode.paged
+           ? preferences.columnMode.resolveColumns(viewport)
+           : 1,
        titleAlign = preferences.titleAlignment == ReaderTitleAlignment.center
            ? TextAlign.center
            : TextAlign.start,
@@ -62,7 +66,13 @@ class ReaderLayoutSpec {
          textBaseline: TextBaseline.alphabetic,
        );
 
-  double get width => math.max(1, viewport.width - horizontalPadding * 2);
+  double get pageWidth => math.max(1, viewport.width - horizontalPadding * 2);
+  double get columnGap => columns > 1
+      ? math.min(math.max(24.0, horizontalPadding * 2), pageWidth * 0.25)
+      : 0;
+  double get width => columns > 1
+      ? math.max(1, (pageWidth - columnGap * (columns - 1)) / columns)
+      : pageWidth;
   double get pagePadding => math.min(verticalPadding, viewport.height / 4);
   double get pageHeight => math.max(1, viewport.height - pagePadding * 2);
   double get navigationHeight => math.max(48, textScaler.scale(14) * 1.4 + 24);
@@ -80,7 +90,8 @@ class ReaderLayoutSpec {
       verticalPadding == other.verticalPadding &&
       paragraphSpacing == other.paragraphSpacing &&
       firstLineIndent == other.firstLineIndent &&
-      justifyText == other.justifyText;
+      justifyText == other.justifyText &&
+      columns == other.columns;
 
   @override
   int get hashCode => Object.hash(
@@ -94,6 +105,7 @@ class ReaderLayoutSpec {
     paragraphSpacing,
     firstLineIndent,
     justifyText,
+    columns,
   );
 }
 
@@ -321,12 +333,14 @@ class ReaderPageFragment {
   final int firstLine;
   final int lastLine;
   final double top;
+  final int column;
 
   const ReaderPageFragment({
     required this.block,
     required this.firstLine,
     required this.lastLine,
     required this.top,
+    this.column = 0,
   });
 
   double get sourceTop => block.lines[firstLine].top;
@@ -345,7 +359,14 @@ class ReaderTextPage {
 
   int get start => fragments.first.start;
   int get end => fragments.last.end;
-  double get height => fragments.last.top + fragments.last.height;
+  double get height {
+    var maxBottom = 0.0;
+    for (final fragment in fragments) {
+      final bottom = fragment.top + fragment.height;
+      if (bottom > maxBottom) maxBottom = bottom;
+    }
+    return maxBottom;
+  }
 }
 
 // Note: 两种阅读方式共用行测量，进度保存规范化正文的文字偏移；见
@@ -1108,11 +1129,13 @@ class ReaderChapterLayout {
   ) {
     final pages = <ReaderTextPage>[];
     var fragments = <ReaderPageFragment>[];
+    var column = 0;
     var used = 0.0;
     void finishPage() {
       if (fragments.isEmpty) return;
       pages.add(ReaderTextPage(List.unmodifiable(fragments)));
       fragments = [];
+      column = 0;
       used = 0;
     }
 
@@ -1122,9 +1145,16 @@ class ReaderChapterLayout {
         final line = block.lines[i];
         if (fragments.isNotEmpty &&
             used + line.height > spec.pageHeight + .001) {
-          finishPage();
+          if (column + 1 < spec.columns) {
+            column++;
+            used = 0;
+          } else {
+            finishPage();
+          }
         }
-        if (fragments.isNotEmpty && identical(fragments.last.block, block)) {
+        if (fragments.isNotEmpty &&
+            identical(fragments.last.block, block) &&
+            fragments.last.column == column) {
           final previous = fragments.removeLast();
           fragments.add(
             ReaderPageFragment(
@@ -1132,6 +1162,7 @@ class ReaderChapterLayout {
               firstLine: previous.firstLine,
               lastLine: i,
               top: previous.top,
+              column: column,
             ),
           );
         } else {
@@ -1141,6 +1172,7 @@ class ReaderChapterLayout {
               firstLine: i,
               lastLine: i,
               top: used,
+              column: column,
             ),
           );
         }

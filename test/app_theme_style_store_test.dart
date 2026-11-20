@@ -118,6 +118,30 @@ void main() {
   );
 
   test(
+    'app-wide store swallows a read failure and keeps the classic default',
+    () async {
+      final original = SharedPreferencesStorePlatform.instance;
+      SharedPreferencesStorePlatform.instance = _FailFirstRead({
+        'flutter.${AppThemeStyleStore.storageKey}': 'archive',
+      });
+      addTearDown(() {
+        SharedPreferences.resetStatic();
+        SharedPreferencesStorePlatform.instance = original;
+      });
+
+      // The startup gate awaits this singleton, so a failed read has to fall back
+      // to the app's first-frame appearance instead of failing the whole chain
+      // (#421).
+      await AppThemeStyleStore.instance.load();
+      expect(AppThemeStyleStore.instance.value, AppThemeStyle.classic);
+
+      // A failed read must not latch: the next attempt still reads from disk.
+      await AppThemeStyleStore.instance.load();
+      expect(AppThemeStyleStore.instance.value, AppThemeStyle.archive);
+    },
+  );
+
+  test(
     'theme changes never write brightness, reader or shelf preferences',
     () async {
       const existing = {
@@ -144,6 +168,22 @@ void main() {
       });
     },
   );
+}
+
+/// Fails the first `getAll()` and recovers after it, so a retrying caller can
+/// be exercised without swapping in a second fake.
+class _FailFirstRead extends InMemorySharedPreferencesStore {
+  _FailFirstRead(super.data) : super.withData();
+
+  int reads = 0;
+
+  @override
+  Future<Map<String, Object>> getAll() async {
+    if (++reads == 1) {
+      throw StateError('test read failure');
+    }
+    return super.getAll();
+  }
 }
 
 class _GatedWrites extends InMemorySharedPreferencesStore {

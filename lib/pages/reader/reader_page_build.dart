@@ -14,14 +14,41 @@ extension _ReaderPageBuild on _ReaderPageState {
       valueListenable: DesktopPlatform.fullscreen,
       builder: (context, fullscreen, _) => LayoutBuilder(
         builder: (context, bounds) {
+          const sidebarWidth = 248.0;
+          final columnMode = _displayPreferences.columnMode;
+          final automaticSpreadWithoutSidebar =
+              _paged &&
+              columnMode == ReaderColumnMode.auto &&
+              columnMode.resolveColumns(
+                    Size(bounds.maxWidth, bounds.maxHeight),
+                  ) >
+                  1;
+          final sidebarWouldDisableAutomaticSpread =
+              automaticSpreadWithoutSidebar &&
+              columnMode.resolveColumns(
+                    Size(bounds.maxWidth - sidebarWidth, bounds.maxHeight),
+                  ) ==
+                  1;
           final showSidebar =
-              bounds.maxWidth >= 1000 && _desktopSidebarOpen && !fullscreen;
+              bounds.maxWidth >= 1000 &&
+              !sidebarWouldDisableAutomaticSpread &&
+              _desktopSidebarOpen &&
+              !fullscreen;
+          final viewport = Size(
+            bounds.maxWidth - (showSidebar ? sidebarWidth : 0),
+            bounds.maxHeight,
+          );
+          final wideSpread =
+              _paged &&
+              _displayPreferences.columnMode.resolveColumns(viewport) > 1;
           return ColoredBox(
             color: _effectiveBackgroundColor,
             child: Row(
               children: [
                 if (showSidebar)
                   DesktopChapterSidebar(
+                    key: const ValueKey('reader-desktop-chapter-sidebar'),
+                    width: sidebarWidth,
                     chapters: widget.chapters,
                     currentIndex: _index,
                     backgroundColor: sidebarBg,
@@ -39,7 +66,11 @@ extension _ReaderPageBuild on _ReaderPageState {
                     children: [
                       Center(
                         child: ConstrainedBox(
-                          constraints: const BoxConstraints(maxWidth: 880),
+                          constraints: BoxConstraints(
+                            maxWidth: wideSpread
+                                ? math.max(1440.0, bounds.maxHeight + 1)
+                                : 880,
+                          ),
                           child: Stack(
                             fit: StackFit.expand,
                             children: [
@@ -134,7 +165,9 @@ extension _ReaderPageBuild on _ReaderPageState {
                                 child: Row(
                                   mainAxisSize: MainAxisSize.min,
                                   children: [
-                                    if (!fullscreen && bounds.maxWidth >= 1000)
+                                    if (!fullscreen &&
+                                        bounds.maxWidth >= 1000 &&
+                                        !sidebarWouldDisableAutomaticSpread)
                                       IconButton(
                                         key: const Key(
                                           'reader-desktop-sidebar-toggle',
@@ -308,6 +341,7 @@ extension _ReaderPageBuild on _ReaderPageState {
                                     compact:
                                         _preferences.readingInfoMode ==
                                         ReaderInfoMode.compact,
+                                    showProgress: !_controlsVisible,
                                     status: _deviceStatus,
                                     progress: _chapterProgress(),
                                     chapterIndex: _index,

@@ -34,10 +34,10 @@ import 'video_catalogue.dart';
 /// superseded activation is disposed instead of being adopted.
 ///
 /// Progress is saved when a player is stopped or released, using the same
-/// fields as the full page player (`player_page.dart`). Deliberately *not*
-/// implemented in this round: 累计阅读时长/统计、诊断日志、自动连播、相邻剧
-/// 地址预取 — the inline feed only starts, stops and remembers where the
-/// viewer was. 倍速（面板选档 + 长按快进）与横滑 seek 已在会话内支持。
+/// fields as the full page player (`player_page.dart`). A completed episode
+/// advances within the same series while playback is still wanted. Statistics,
+/// diagnostics, and adjacent-series prefetch remain intentionally out of scope.
+/// 倍速(面板选档 + 长按快进)与横滑 seek 已在会话内支持。
 class InlineVideoPlayback {
   InlineVideoPlayback({
     this.directoryLoader,
@@ -631,9 +631,13 @@ class InlineVideoPlayback {
     await _applyPlaybackPrefs(player);
     if (!_current(generation, player)) return;
     if (!_wantsPlay) return;
-    _playIssued = true;
-    _progressDirty = true;
     try {
+      if (player.completed) {
+        await seek(Duration.zero);
+        if (!_current(generation, player) || !_wantsPlay) return;
+      }
+      _playIssued = true;
+      _progressDirty = true;
       await player.play();
     } catch (failure) {
       if (_current(generation, player)) await _fail(failure);
@@ -677,9 +681,13 @@ class InlineVideoPlayback {
     final player = _player;
     if (player == null || !player.isCreated || error.value != null) return;
     final generation = _generation;
-    _playIssued = true;
-    _progressDirty = true;
     try {
+      if (player.completed) {
+        await seek(Duration.zero);
+        if (!_current(generation, player) || !_wantsPlay) return;
+      }
+      _playIssued = true;
+      _progressDirty = true;
       await player.play();
     } catch (failure) {
       if (_current(generation, player)) await _fail(failure);
@@ -969,6 +977,23 @@ class InlineVideoPlayback {
           if (requested) _progressDirty = true;
           playing.value = _playbackRequested(player);
         }
+      }),
+      player.completedStream.listen((completed) {
+        if (!completed ||
+            !_current(generation, player) ||
+            !_wantsPlay ||
+            !player.playWhenReady) {
+          return;
+        }
+        final series = _active;
+        final index = _activeIndex;
+        if (series == null || index == null) return;
+        if (index + 1 < _episodes.length) {
+          unawaited(activate(series, startEpisodeIndex: index + 1));
+          return;
+        }
+        playing.value = false;
+        unawaited(_persistProgress());
       }),
       player.errorStream.listen((failure) {
         if (_current(generation, player)) unawaited(_fail(failure));

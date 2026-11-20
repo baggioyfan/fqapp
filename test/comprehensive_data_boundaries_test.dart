@@ -101,6 +101,8 @@ void main() {
             home: app.AppBootstrap(child: Text('local data ready')),
           ),
         );
+        // 等真实启动链走完:骨架在位时 pumpAndSettle 会一直推进到闸门放行,
+        // 有界推进等不到这里的真实 I/O(见 test/support/pump_until.dart)。
         await tester.pumpAndSettle();
 
         expect(find.text('local data ready'), findsOneWidget);

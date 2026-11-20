@@ -49,6 +49,175 @@ Map<String, dynamic> _payload({List<Map<String, dynamic>>? cast}) => {
 
 void main() {
   group('SeriesDetail', () {
+    test('parses upstream detail and book records keyed by video id', () {
+      final series = SeriesDetail.fromPayload({
+        'code': 0,
+        'data': {
+          'video-id': {
+            'series_id_str': 'series-42',
+            'series_title': 'Fixture series',
+            'series_intro': 'Fixture intro',
+            'series_cover': 'https://example.test/series.jpg',
+            'episode_cnt': 12,
+            'episode_right_text': '共12集',
+            'series_play_cnt': 1000,
+            'followed_cnt': 25,
+            'category_schema': '[{"name":"Mystery"}]',
+            'series_status': 1,
+          },
+          'book-id': {
+            'ShowInEpisodeIndex': [1],
+            'ShowStartFromEpisodeIndex': 1,
+            'book_info': {
+              'book_id': 'book-42',
+              'book_name': 'Fixture book',
+              'creation_status': '1',
+              'thumb_url': 'https://example.test/book.jpg',
+            },
+          },
+        },
+      }, requestedSeriesId: 'series-42');
+
+      expect(series.seriesId, 'series-42');
+      expect(series.title, 'Fixture series');
+      expect(series.intro, 'Fixture intro');
+      expect(series.episodeCount, 12);
+      expect(series.episodeLabel, '共12集');
+      expect(series.playCount, 1000);
+      expect(series.followerCount, 25);
+      expect(series.categories, ['Mystery']);
+      expect(series.status, 1);
+      expect(series.originalBook?.id, 'book-42');
+      expect(series.originalBook?.title, 'Fixture book');
+    });
+
+    test('selects the requested series from upstream record maps', () {
+      final series = SeriesDetail.fromPayload({
+        'code': 0,
+        'data': {
+          'other-video-id': {
+            'series_id_str': 'other-series',
+            'series_title': 'Unrelated series',
+          },
+          'video-id': {
+            'series_id_str': 'series-42',
+            'series_title': 'Fixture series',
+            'episode_cnt': 12,
+          },
+        },
+      }, requestedSeriesId: 'series-42');
+
+      expect(series.seriesId, 'series-42');
+      expect(series.title, 'Fixture series');
+      expect(series.episodeCount, 12);
+      expect(series.originalBook, isNull);
+    });
+
+    test('prefers the requested series id over a matching record key', () {
+      final series = SeriesDetail.fromPayload({
+        'code': 0,
+        'data': {
+          'series-42': {
+            'series_id_str': 'different-series',
+            'series_title': 'Key match only',
+          },
+          'video-id': {
+            'series_id_str': 'series-42',
+            'series_title': 'Series id match',
+          },
+        },
+      }, requestedSeriesId: 'series-42');
+
+      expect(series.title, 'Series id match');
+    });
+
+    test(
+      'matches an upstream record by key when the request uses a video id',
+      () {
+        final series = SeriesDetail.fromPayload({
+          'code': 0,
+          'data': {
+            'video-id': {
+              'series_id_str': 'series-42',
+              'series_title': 'Fixture series',
+            },
+            'other-video-id': {
+              'series_id_str': 'other-series',
+              'series_title': 'Unrelated series',
+            },
+          },
+        }, requestedSeriesId: 'video-id');
+
+        expect(series.seriesId, 'series-42');
+        expect(series.title, 'Fixture series');
+      },
+    );
+
+    test('keeps a sole upstream record when its numeric id is lossy', () {
+      const lossyNumericId = 7675233261169167000;
+      final normalized = SeriesDetail.fromPayload({
+        'code': 0,
+        'data': {
+          'video_data': {
+            'series_id': lossyNumericId,
+            'series_title': 'Fixture series',
+          },
+        },
+      }, requestedSeriesId: '7675233261169167422');
+      final keyed = SeriesDetail.fromPayload({
+        'code': 0,
+        'data': {
+          'video-id': {
+            'series_id': lossyNumericId,
+            'series_title': 'Fixture series',
+          },
+        },
+      }, requestedSeriesId: '7675233261169167422');
+
+      expect(normalized.title, 'Fixture series');
+      expect(keyed.title, 'Fixture series');
+    });
+
+    test('parses an id-keyed envelope nested under video_data', () {
+      final series = SeriesDetail.fromPayload({
+        'code': 0,
+        'data': {
+          'video_data': {
+            'video-id': {
+              'series_id_str': 'series-42',
+              'series_title': 'Fixture series',
+            },
+          },
+        },
+      }, requestedSeriesId: 'series-42');
+
+      expect(series.seriesId, 'series-42');
+      expect(series.title, 'Fixture series');
+    });
+
+    test('reads the related book nested under the selected video record', () {
+      final series = SeriesDetail.fromPayload({
+        'code': 0,
+        'data': {
+          'video_data': {
+            'video-id': {
+              'series_id_str': 'series-42',
+              'series_title': 'Fixture series',
+              'video_relate_book': {
+                'book_info': {
+                  'book_id': 'book-42',
+                  'book_name': 'Fixture book',
+                },
+              },
+            },
+          },
+        },
+      }, requestedSeriesId: 'series-42');
+
+      expect(series.originalBook?.id, 'book-42');
+      expect(series.originalBook?.title, 'Fixture book');
+    });
+
     test('reads the cast with roles and avatars', () {
       final series = SeriesDetail.fromPayload(_payload());
       expect(series.cast, hasLength(2));
@@ -70,6 +239,16 @@ void main() {
       expect(series.originalBook, isNull);
     });
 
+    test('preserves the normalized record if the request used a video id', () {
+      final series = SeriesDetail.fromPayload(
+        _payload(),
+        requestedSeriesId: 'video-id',
+      );
+
+      expect(series.title, '初次沦陷');
+      expect(series.seriesId, '7675233261169167422');
+    });
+
     test('reads the original book from video_relate_book', () {
       // 官方播放页原著卡（`BottomRelateBookView`）的数据源：
       // `data.video_relate_book.book_info`，真实值见对照文档 §29。
@@ -89,6 +268,19 @@ void main() {
       expect(book.title, '从宿舍逃杀开始斩尽幽诡邪神');
       expect(book.cover, 'https://example.test/book.heic');
       expect(book.status, '1');
+    });
+
+    test('prefers the top-level related book to indexed book records', () {
+      final payload = _payload();
+      final data = payload['data'] as Map;
+      data['video_relate_book'] = {
+        'book_info': {'book_id': 'top-level', 'book_name': 'Top-level book'},
+      };
+      data['indexed-book'] = {
+        'book_info': {'book_id': 'indexed', 'book_name': 'Indexed book'},
+      };
+
+      expect(SeriesDetail.fromPayload(payload).originalBook?.id, 'top-level');
     });
 
     test('reads the series status (1 = 已完结, official SeriesStatus)', () {

@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:ui' as ui;
 
+import 'package:flutter/foundation.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
@@ -259,6 +260,113 @@ void main() {
   );
 
   testWidgets(
+    'tablet and Windows spreads preserve reading width and settings choices',
+    (tester) async {
+      await _size(tester, const Size(1120, 746));
+      final store = MemoryReaderStore();
+      await tester.pumpWidget(_app(store: store));
+      await tester.pumpAndSettle();
+
+      var pager = _pager(tester);
+      expect(pager.layout.spec.columns, 2);
+      expect(find.byKey(const ValueKey('reader-column-divider')), findsWidgets);
+      final firstPage = pager.layout.pages.first;
+      expect(
+        firstPage.fragments.map((fragment) => fragment.column).toSet(),
+        equals({0, 1}),
+      );
+      // Text flows strictly from the left column (0) into the right column (1).
+      final leftFragments = firstPage.fragments
+          .where((fragment) => fragment.column == 0)
+          .toList();
+      final rightFragments = firstPage.fragments
+          .where((fragment) => fragment.column == 1)
+          .toList();
+      expect(
+        leftFragments.last.end,
+        lessThanOrEqualTo(rightFragments.first.start),
+      );
+
+      await _tapSide(tester, 1);
+      final anchor = store.entry!['textOffset'] as int;
+      expect(anchor, greaterThan(0));
+
+      // Switch to single-column mode via reader settings -> 屏幕 -> 页面分栏.
+      await _openAppearance(tester);
+      await openReaderSettingsCategory(tester, 'page');
+      final singleChip = find.byKey(const ValueKey('reader-column-single'));
+      await tester.ensureVisible(singleChip);
+      await tester.tap(singleChip);
+      await tester.pump(const Duration(milliseconds: 150));
+      await tester.pumpAndSettle();
+      await closeReaderSettingsSheet(tester);
+      await tester.pumpAndSettle();
+
+      pager = _pager(tester);
+      expect(pager.layout.spec.columns, 1);
+      expect(find.byKey(const ValueKey('reader-column-divider')), findsNothing);
+      _expectAnchor(tester, store, anchor);
+      expect(
+        (await ReaderPreferences.load()).columnMode,
+        ReaderColumnMode.single,
+      );
+
+      // Switch to explicit dual-column mode and verify it stays two columns
+      // even on a narrower portrait tablet viewport.
+      await _openAppearance(tester);
+      await openReaderSettingsCategory(tester, 'page');
+      final dualChip = find.byKey(const ValueKey('reader-column-dual'));
+      await tester.ensureVisible(dualChip);
+      await tester.tap(dualChip);
+      await tester.pump(const Duration(milliseconds: 150));
+      await tester.pumpAndSettle();
+      await closeReaderSettingsSheet(tester);
+      await tester.pumpAndSettle();
+
+      await tester.binding.setSurfaceSize(const Size(746, 1120));
+      await tester.pumpAndSettle();
+      pager = _pager(tester);
+      expect(pager.layout.spec.columns, 2);
+      _expectAnchor(tester, store, anchor);
+      expect(
+        (await ReaderPreferences.load()).columnMode,
+        ReaderColumnMode.dual,
+      );
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox.shrink());
+
+      SharedPreferences.setMockInitialValues({});
+      debugDefaultTargetPlatformOverride = TargetPlatform.windows;
+      try {
+        for (final scenario in [
+          (size: const Size(1920, 1080), hasSidebar: true),
+          (size: const Size(1080, 900), hasSidebar: false),
+        ]) {
+          await _size(tester, scenario.size);
+          await tester.pumpWidget(_app());
+          await tester.pumpAndSettle();
+
+          pager = _pager(tester);
+          expect(pager.layout.spec.columns, 2, reason: '${scenario.size}');
+          expect(
+            pager.layout.spec.viewport.width,
+            greaterThan(880),
+            reason: 'spreads should use the available desktop width',
+          );
+          expect(
+            find.byKey(const ValueKey('reader-desktop-chapter-sidebar')),
+            scenario.hasSidebar ? findsOneWidget : findsNothing,
+          );
+          expect(tester.takeException(), isNull);
+          await tester.pumpWidget(const SizedBox.shrink());
+        }
+      } finally {
+        debugDefaultTargetPlatformOverride = null;
+      }
+    },
+  );
+
+  testWidgets(
     'switching between scrolling and pagination preserves text and choice',
     (tester) async {
       await _size(tester, const Size(390, 760));
@@ -506,9 +614,12 @@ Future<void> _swipe(WidgetTester tester, int direction) async {
 }
 
 Future<void> _openAppearance(WidgetTester tester) async {
-  await tester.tapAt(tester.getRect(_surface).center);
-  await tester.pumpAndSettle();
-  await tester.tap(find.byKey(const ValueKey('reader-settings')));
+  final settings = find.byKey(const ValueKey('reader-settings'));
+  if (settings.evaluate().isEmpty) {
+    await tester.tapAt(tester.getRect(_surface).center);
+    await tester.pumpAndSettle();
+  }
+  await tester.tap(settings);
   await tester.pumpAndSettle();
 }
 
