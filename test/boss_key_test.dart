@@ -187,7 +187,7 @@ void main() {
       const shortcut = BossKeyShortcut(meta: true, shift: true, key: 'H');
       expect(
         shortcut.formatLabel(platform: TargetPlatform.macOS),
-        '⌘ + Shift + H',
+        'Shift + ⌘ + H',
       );
     });
 
