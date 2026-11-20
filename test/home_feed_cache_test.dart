@@ -31,7 +31,8 @@ Future<void> _flushMicrotasks() async {
 }
 
 void main() {
-  final videoTabIndex = HomeNotifier.tabs.indexOf('视频');
+  // 本 fork 的首页顶栏只有 6 项，「视频」在底层表 allTabs 里（下标 6）。
+  final videoTabIndex = HomeNotifier.allTabs.indexOf('视频');
 
   setUpAll(() async {
     final directory = await Directory.systemTemp.createTemp(
