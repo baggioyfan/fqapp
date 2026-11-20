@@ -385,38 +385,17 @@ impl UpstreamClient {
     /// is precisely the header v5 requires. Device rotation behaves the same as
     /// [`UpstreamClient::do_with_device_capped`] - a pin that rotated out falls
     /// back to the pool, and a device that fails auth is replaced.
-    pub async fn v5_playback(
+    pub async fn v5_playback_with_device(
         &self,
         base: &str,
         body: &[u8],
-        pin_device: &str,
+        pin: Option<&str>,
     ) -> Result<(Vec<u8>, Device), ClientError> {
         let mut last_err: Option<ClientError> = None;
-        let mut pin = if pin_device.is_empty() {
-            None
-        } else {
-            Some(pin_device.to_string())
-        };
+        let mut pin = pin.map(|id| id.to_string());
 
         for _attempt in 0..self.max_retries {
-            let mut use_pin = pin.clone();
-            let dev = match &use_pin {
-                Some(id) => match self.pool.get_by_id(id).await {
-                    Ok(d) => d,
-                    Err(_) => {
-                        use_pin = None;
-                        self.pool
-                            .get()
-                            .await
-                            .map_err(|e| ClientError::Other(format!("get device: {e}")))?
-                    }
-                },
-                None => self
-                    .pool
-                    .get()
-                    .await
-                    .map_err(|e| ClientError::Other(format!("get device: {e}")))?,
-            };
+            let dev = self.pinned_or_next_device(pin.as_deref()).await?;
 
             let cdid = if dev.cdid.is_empty() {
                 dev.openudid.as_str()
@@ -429,6 +408,17 @@ impl UpstreamClient {
                 cdid,
                 ..Default::default()
             };
+            if let Some(trace) = super::playback_trace::current() {
+                log::info!(
+                    "v5 trace request={} purpose={} attempt={} device={} event=identity cdid_fallback_used={} registration_version_known={}",
+                    trace.request_id,
+                    trace.purpose,
+                    trace.attempt,
+                    trace.device_tag,
+                    dev.cdid.is_empty(),
+                    !dev.registered_version_code.is_empty(),
+                );
+            }
             let signed = match crate::sign::v5::sign_playback_v5(
                 base,
                 &identity,
@@ -449,17 +439,19 @@ impl UpstreamClient {
                 "Content-Type".to_string(),
                 "application/json; charset=utf-8".to_string(),
             ));
-            let attempt = self
-                .http
-                .request_with_limit(
-                    "POST",
-                    &target,
-                    &headers,
-                    Some(body.to_vec()),
-                    None,
-                    Some(crate::upstream::http::API_BODY_LIMIT_BYTES),
-                )
-                .await;
+            let attempt = super::playback_trace::with_device(&dev.device_id, async {
+                self.http
+                    .request_with_limit(
+                        "POST",
+                        &target,
+                        &headers,
+                        Some(body.to_vec()),
+                        None,
+                        Some(crate::upstream::http::API_BODY_LIMIT_BYTES),
+                    )
+                    .await
+            })
+            .await;
             let resp = match attempt {
                 Ok(resp) => resp,
                 Err(TransportError::Network(m)) => {
@@ -506,6 +498,158 @@ impl UpstreamClient {
             self.max_retries,
             last_err.map(|e| e.to_string()).unwrap_or_default()
         )))
+    }
+
+    /// Body-only wrapper kept for callers that do not need the identity that
+    /// answered.
+    pub async fn v5_playback(&self, base: &str, body: &[u8]) -> Result<Vec<u8>, ClientError> {
+        let (data, _) = self.v5_playback_with_device(base, body, None).await?;
+        Ok(data)
+    }
+
+    /// Signs and sends one `GET` on a door of the v5 player family.
+    ///
+    /// The `video_tab` fallback belongs to the same player family as the v5
+    /// door, so it is signed with the same Medusa/Helios/Khronos envelope in
+    /// `GET` form instead of the generic argus/ladon profile. The identity is
+    /// `pin` when given (the door that just refused), otherwise the pool's
+    /// least-recently-used slot. An empty body is returned as `Ok((vec![], _))`
+    /// and the caller owns the recovery decision.
+    pub async fn v5_get_with_device(
+        &self,
+        base: &str,
+        extra: &[(&str, &str)],
+        pin: Option<&str>,
+    ) -> Result<(Vec<u8>, Device), ClientError> {
+        let mut last_err: Option<ClientError> = None;
+        let mut pin = pin.map(|id| id.to_string());
+
+        for _attempt in 0..self.max_retries {
+            let dev = self.pinned_or_next_device(pin.as_deref()).await?;
+            let cdid = if dev.cdid.is_empty() {
+                dev.openudid.as_str()
+            } else {
+                dev.cdid.as_str()
+            };
+            let identity = crate::sign::v5::V5Identity {
+                device_id: &dev.device_id,
+                iid: &dev.install_id,
+                cdid,
+                ..Default::default()
+            };
+            let signed = match crate::sign::v5::sign_playback_v5_get(
+                base,
+                extra,
+                &identity,
+                crate::timeutil::now_millis(),
+            ) {
+                Some(signed) => signed,
+                None => {
+                    return Err(ClientError::Other(
+                        "v5 GET signing found no branch-12 ticket".to_string(),
+                    ))
+                }
+            };
+
+            let target = self.effective_url(&signed.url);
+            let headers = signed.headers;
+            let attempt = super::playback_trace::with_device(&dev.device_id, async {
+                self.http
+                    .request_with_limit(
+                        "GET",
+                        &target,
+                        &headers,
+                        None,
+                        None,
+                        Some(crate::upstream::http::API_BODY_LIMIT_BYTES),
+                    )
+                    .await
+            })
+            .await;
+
+            let resp = match attempt {
+                Ok(resp) => resp,
+                Err(TransportError::Network(m)) => {
+                    last_err = Some(ClientError::Transient {
+                        message: m,
+                        retry_after: None,
+                    });
+                    continue;
+                }
+                Err(TransportError::TooLarge(m)) => return Err(ClientError::Other(m)),
+            };
+
+            if resp.status != 200 {
+                let err = if is_auth_fail_status(resp.status) {
+                    ClientError::DeviceFailed(format!("HTTP {}", resp.status))
+                } else if is_retryable_status(resp.status) {
+                    ClientError::Transient {
+                        message: format!("HTTP {}", resp.status),
+                        retry_after: parse_retry_after(resp.header("retry-after")),
+                    }
+                } else {
+                    ClientError::Http(format!("HTTP {}", resp.status))
+                };
+                last_err = Some(err.clone());
+                if err.is_device_failed() {
+                    if super::budget::remaining().is_some_and(|left| left.is_zero()) {
+                        return Err(err);
+                    }
+                    let _ = self.pool.replace_failed(&dev.device_id).await;
+                    pin = None;
+                    if !super::budget::retry_pause(Duration::from_millis(100)).await {
+                        return Err(err);
+                    }
+                    continue;
+                }
+                return Err(err);
+            }
+
+            return Ok((resp.body, dev));
+        }
+
+        Err(ClientError::Other(format!(
+            "v5 fallback door failed after {} device attempts: {}",
+            self.max_retries,
+            last_err.map(|e| e.to_string()).unwrap_or_default()
+        )))
+    }
+
+    /// Reuses `pin` when the pool still holds it, otherwise draws the
+    /// least-recently-used device.
+    async fn pinned_or_next_device(&self, pin: Option<&str>) -> Result<Device, ClientError> {
+        if let Some(device_id) = pin {
+            if let Ok(device) = self.pool.get_by_id(device_id).await {
+                return Ok(device);
+            }
+        }
+        self.pool
+            .get()
+            .await
+            .map_err(|e| ClientError::Other(format!("get device: {e}")))
+    }
+
+    /// One bounded identity rotation for playback recovery.
+    ///
+    /// A standby device from the pool costs nothing and is preferred; only a
+    /// pool that holds nothing else pays for a fresh registration, which can
+    /// take seconds, so callers wrap this in their own deadline. No device is
+    /// retired on an empty body: `failed` is the identity to step away from,
+    /// not a verdict about it.
+    pub async fn rotate_playback_identity(&self, failed: Option<&str>) -> Result<Device, String> {
+        match failed {
+            Some(failed) => match self.pool.get_excluding(failed).await {
+                Ok(device) => Ok(device),
+                Err(_) => self.pool.replace_failed(failed).await,
+            },
+            None => {
+                let victim = self.pool.get().await?;
+                match self.pool.get_excluding(&victim.device_id).await {
+                    Ok(device) => Ok(device),
+                    Err(_) => self.pool.replace_failed(&victim.device_id).await,
+                }
+            }
+        }
     }
 }
 

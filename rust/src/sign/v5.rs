@@ -869,7 +869,11 @@ fn encode_component(value: &str) -> String {
 }
 
 /// The query bag, in the exact order the v5 door expects.
-fn playback_query(who: &V5Identity, ticket: i64) -> String {
+///
+/// `extra` carries a sibling door's own fields (the `video_tab` fallback). They
+/// sit between the identity bag and `_rticket`, so a door without extras keeps
+/// the original byte order.
+fn playback_query(who: &V5Identity, ticket: i64, extra: &[(&str, &str)]) -> String {
     let pairs: [(&str, &str); 12] = [
         ("aid", "8662"),
         ("app_name", "novelread"),
@@ -888,6 +892,9 @@ fn playback_query(who: &V5Identity, ticket: i64) -> String {
         .iter()
         .map(|(k, v)| format!("{}={}", encode_component(k), encode_component(v)))
         .collect();
+    for (k, v) in extra {
+        parts.push(format!("{}={}", encode_component(k), encode_component(v)));
+    }
     parts.push(format!("_rticket={ticket}"));
     parts.join("&")
 }
@@ -908,12 +915,42 @@ pub fn sign_playback_v5(
     body: Option<&[u8]>,
     now_ms: i64,
 ) -> Option<V5Request> {
+    sign_playback_v5_with(base, who, body, &[], now_ms)
+}
+
+/// Signs a `GET` on a door of the same player family — the `video_tab`
+/// fallback the official app keeps.
+///
+/// `extra` carries that door's own query fields. A `GET` has no body, so the
+/// digest that selects the branch is the digest of zero bytes and the
+/// body-describing headers (`Content-Encoding`, `x-ss-stub`) are omitted:
+/// sending them without a body is what made the generic-signature attempt
+/// answer `HTTP 200` with zero bytes.
+pub fn sign_playback_v5_get(
+    base: &str,
+    extra: &[(&str, &str)],
+    who: &V5Identity,
+    now_ms: i64,
+) -> Option<V5Request> {
+    sign_playback_v5_with(base, who, None, extra, now_ms)
+}
+
+fn sign_playback_v5_with(
+    base: &str,
+    who: &V5Identity,
+    body: Option<&[u8]>,
+    extra: &[(&str, &str)],
+    now_ms: i64,
+) -> Option<V5Request> {
     let ts = (now_ms / 1000) as i32;
+    // The signed digest of "no body" is the digest of zero bytes, matching the
+    // upstream GET door; a present body is signed as-is.
+    let signed_body: Option<&[u8]> = Some(body.unwrap_or(&[]));
 
     for offset in 0..1024 {
         let ticket = now_ms + offset;
-        let query = playback_query(who, ticket);
-        if branch_v5(&query, body, ts) != 0 {
+        let query = playback_query(who, ticket, extra);
+        if branch_v5(&query, signed_body, ts) != 0 {
             continue;
         }
 
@@ -921,7 +958,10 @@ pub fn sign_playback_v5(
         let mut headers: Vec<(String, String)> = vec![
             ("x-khronos".to_string(), ts.to_string()),
             ("x-helios".to_string(), helios_v5(ts, rand_u32())),
-            ("x-medusa".to_string(), medusa_v5(&url, body, ts, who)),
+            (
+                "x-medusa".to_string(),
+                medusa_v5(&url, signed_body, ts, who),
+            ),
         ];
 
         headers.push(("User-Agent".to_string(), V5_UA.to_string()));
@@ -930,8 +970,10 @@ pub fn sign_playback_v5(
             "application/json; charset=utf-8,application/x-protobuf".to_string(),
         ));
         if let Some(payload) = body {
-            headers.push(("Content-Encoding".to_string(), "gzip".to_string()));
-            headers.push(("x-ss-stub".to_string(), md5_hex_upper(payload)));
+            if !payload.is_empty() {
+                headers.push(("Content-Encoding".to_string(), "gzip".to_string()));
+                headers.push(("x-ss-stub".to_string(), md5_hex_upper(payload)));
+            }
         }
 
         return Some(V5Request { url, headers });
@@ -1013,8 +1055,8 @@ mod tests {
         let who = V5Identity::default();
         let mut seen = 0;
         for offset in 0..64 {
-            let query = playback_query(&who, 1_780_000_000_000 + offset);
-            if branch_v5(&query, None, 1_780_000_000) == 0 {
+            let query = playback_query(&who, 1_780_000_000_000 + offset, &[]);
+            if branch_v5(&query, Some(&[]), 1_780_000_000) == 0 {
                 seen += 1;
             }
         }

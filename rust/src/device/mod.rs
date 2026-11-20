@@ -539,6 +539,23 @@ impl DevicePool {
         }
     }
 
+    /// Least-recently-used device other than `device_id`.
+    ///
+    /// Playback recovery steps away from the identity that just answered an
+    /// empty body without retiring it, so this is a read-only pick: no device
+    /// is removed, marked failed or re-registered here.
+    pub async fn get_excluding(&self, device_id: &str) -> Result<Device, String> {
+        let picked = {
+            let mut s = self.state.lock().await;
+            s.devices.sort_by(|a, b| a.last_used.cmp(&b.last_used));
+            s.devices
+                .iter()
+                .find(|device| device.device_id != device_id && !device.secret_key.is_empty())
+                .cloned()
+        };
+        picked.ok_or_else(|| format!("no alternate device besides {device_id}"))
+    }
+
     /// Registers a fresh device and swaps it in for a failed one.
     pub async fn replace_failed(&self, device_id: &str) -> Result<Device, String> {
         let _maintenance = self.maintenance_lock.lock().await;

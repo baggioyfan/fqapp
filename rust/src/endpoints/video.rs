@@ -1182,6 +1182,294 @@ fn playable_url_text(url: &str) -> bool {
 const V5_PLAYER_URL: &str =
     "https://api5-normal-sinfonlinea.fqnovel.com/novel/player/multi_video_model/player/v1";
 
+/// The official app's `GET` playback-model door carrying the model list, used
+/// as the second attempt when the v5 player door answers an empty body.
+const VIDEO_TAB_PLAYER_PATH: &str = "/reading/bookapi/video_tab/multi_video_model/v1/";
+
+/// Hard cap on playback-door attempts per request, re-probe and rotation round
+/// included.
+const MAX_PLAYBACK_ATTEMPTS: usize = 8;
+
+/// A door that answers an empty body is probed once more after this pause: the
+/// refusal is transient per request far more often than it is a verdict about
+/// the identity, and the same door recovers by itself in a few hundred ms.
+const SAME_DOOR_REPROBE_DELAY: Duration = Duration::from_millis(250);
+
+/// A rotation needs this much caller budget left to be worth attempting: a
+/// replacement registration is several round trips.
+const ROTATION_MIN_BUDGET: Duration = Duration::from_millis(1_500);
+
+/// What one playback-door attempt produced.
+enum DoorOutcome {
+    /// A non-empty 200 body.
+    Body(Vec<u8>),
+    /// `HTTP 200` with zero bytes: the door refused without saying why.
+    Empty,
+    /// Transport error, unusable status or a body without a usable model.
+    Failed,
+}
+
+struct PlaybackAttempt {
+    outcome: DoorOutcome,
+    /// Identity that produced this outcome, when the transport revealed it.
+    device_id: Option<String>,
+}
+
+/// The `video_tab` door's own query fields: the official app's snake_case
+/// `GetVideoModelRequest` parameters.
+fn video_tab_query(video_id: &str) -> Vec<(&str, &str)> {
+    vec![
+        ("video_id", video_id),
+        ("video_id_type", "0"),
+        ("device_level", "1"),
+        ("need_all_video_definition", "1"),
+        ("need_mp4_align", "0"),
+        ("use_os_player", "0"),
+        ("video_platform", "1024"),
+        ("source", "0"),
+        ("from_video_id", ""),
+    ]
+}
+
+/// Hands a `video_tab` payload to the endpoint parser unchanged.
+///
+/// The parser already walks `data.video_model_data.<id>`, `data.<id>` and the
+/// grouped shapes, so this only validates the envelope and re-wraps `data`.
+/// A business code or a payload without `data` is a failed door, never an empty
+/// one.
+fn video_tab_player_shape(raw: &[u8]) -> Option<Vec<u8>> {
+    let root: Value = match serde_json::from_slice(raw) {
+        Ok(root) => root,
+        Err(_) => {
+            log::warn!(
+                "v5 trace event=tab result=failed reason=json body_len={}",
+                raw.len()
+            );
+            return None;
+        }
+    };
+    let code = root
+        .get("code")
+        .or_else(|| root.get("Code"))
+        .and_then(Value::as_i64)
+        .unwrap_or(0);
+    if code != 0 {
+        log::warn!("v5 trace event=tab result=failed reason=business code={code}");
+        return None;
+    }
+    let Some(data) = root.get("data") else {
+        log::warn!("v5 trace event=tab result=failed reason=data envelope");
+        return None;
+    };
+    match serde_json::to_vec(&json!({ "data": data })) {
+        Ok(shaped) => Some(shaped),
+        Err(_) => {
+            log::warn!("v5 trace event=tab result=failed reason=remarshal");
+            None
+        }
+    }
+}
+
+/// One door attempt, under a pin when the caller has one.
+async fn attempt_playback_route(
+    ctx: &Ctx,
+    video_id: &str,
+    body: &[u8],
+    route: crate::upstream::playback_routes::Route,
+    pin: Option<&str>,
+) -> PlaybackAttempt {
+    use crate::upstream::playback_routes::Door;
+    let up = Upstream::new(ctx.up.clone());
+    let pin_device = pin.unwrap_or("");
+    match route.door {
+        Door::V5Player => {
+            match up
+                .v5_playback_with_device(V5_PLAYER_URL, body, pin_device)
+                .await
+            {
+                Ok((data, device)) => PlaybackAttempt {
+                    outcome: if data.is_empty() {
+                        DoorOutcome::Empty
+                    } else {
+                        DoorOutcome::Body(data)
+                    },
+                    device_id: Some(device.device_id),
+                },
+                Err(_) => PlaybackAttempt {
+                    outcome: DoorOutcome::Failed,
+                    device_id: None,
+                },
+            }
+        }
+        Door::VideoTab => {
+            let base = format!("{}{}", route.host(), VIDEO_TAB_PLAYER_PATH);
+            let extra = video_tab_query(video_id);
+            match up.v5_get_with_device(&base, &extra, pin_device).await {
+                Ok((raw, device)) => {
+                    let device_id = Some(device.device_id);
+                    if raw.is_empty() {
+                        return PlaybackAttempt {
+                            outcome: DoorOutcome::Empty,
+                            device_id,
+                        };
+                    }
+                    match video_tab_player_shape(&raw) {
+                        Some(shaped) => PlaybackAttempt {
+                            outcome: DoorOutcome::Body(shaped),
+                            device_id,
+                        },
+                        None => PlaybackAttempt {
+                            outcome: DoorOutcome::Failed,
+                            device_id,
+                        },
+                    }
+                }
+                Err(_) => PlaybackAttempt {
+                    outcome: DoorOutcome::Failed,
+                    device_id: None,
+                },
+            }
+        }
+    }
+}
+
+/// Fetches the playback model through every playback door.
+///
+/// One v5 attempt, then the signed `video_tab` door under the same identity,
+/// with per-door cooldowns (30 s after an empty body, 5 s after any other
+/// failure), one same-door re-probe and at most one identity rotation per
+/// request.
+async fn fetch_playback_model(
+    ctx: &Ctx,
+    video_id: &str,
+    initial_pin: &str,
+) -> ApiResult<(Vec<u8>, String)> {
+    use crate::upstream::playback_routes;
+    use crate::upstream::playback_routes::Door;
+
+    let body = v5_playback_body(video_id)?;
+    let mut pin: Option<String> = if initial_pin.is_empty() {
+        None
+    } else {
+        Some(initial_pin.to_string())
+    };
+    let mut attempts = 0usize;
+    // One same-door re-probe per request: an empty body is usually a transient
+    // per-request refusal, and the same door answers again a moment later.
+    let mut reprobed = false;
+
+    for round in 0..2u8 {
+        let plan =
+            playback_routes::with_state(|state| state.plan(playback_routes::now_ms(), false));
+        for route in plan {
+            if attempts >= MAX_PLAYBACK_ATTEMPTS {
+                break;
+            }
+            attempts += 1;
+            // Decided before the attempt: a door that is already parked is being
+            // probed deliberately, not freshly refused, so it earns no re-probe.
+            let route_parked =
+                playback_routes::with_state(|state| state.parked(route, playback_routes::now_ms()));
+            let mut attempt =
+                attempt_playback_route(ctx, video_id, &body, route, pin.as_deref()).await;
+            let can_reprobe = matches!(&attempt.outcome, DoorOutcome::Empty)
+                && !reprobed
+                && !route_parked
+                && route.door == Door::V5Player
+                && attempts < MAX_PLAYBACK_ATTEMPTS;
+            if can_reprobe && crate::upstream::budget::retry_pause(SAME_DOOR_REPROBE_DELAY).await {
+                reprobed = true;
+                attempts += 1;
+                log::info!("v5 trace event=door route={} result=reprobe", route.tag(),);
+                attempt = attempt_playback_route(
+                    ctx,
+                    video_id,
+                    &body,
+                    route,
+                    attempt.device_id.as_deref(),
+                )
+                .await;
+            }
+            match attempt.outcome {
+                DoorOutcome::Body(raw) => {
+                    let device_id = attempt
+                        .device_id
+                        .clone()
+                        .or_else(|| pin.clone())
+                        .unwrap_or_default();
+                    playback_routes::with_state(|state| {
+                        state.success(route, playback_routes::now_ms());
+                        state.note_round(false);
+                    });
+                    log::info!(
+                        "v5 trace event=door route={} result=ok body_len={}",
+                        route.tag(),
+                        raw.len(),
+                    );
+                    return Ok((raw, device_id));
+                }
+                DoorOutcome::Empty => {
+                    playback_routes::with_state(|state| {
+                        state.failed(route, playback_routes::now_ms(), true)
+                    });
+                    log::info!("v5 trace event=door route={} result=empty", route.tag());
+                }
+                DoorOutcome::Failed => {
+                    playback_routes::with_state(|state| {
+                        state.failed(route, playback_routes::now_ms(), false)
+                    });
+                    log::warn!("v5 trace event=door route={} result=failed", route.tag());
+                }
+            }
+            if let Some(device_id) = attempt.device_id {
+                pin = Some(device_id);
+            }
+        }
+
+        // A round that ended with every door parked may still buy one rotation,
+        // but only while pacing allows it: the device pool is bounded.
+        let parked_now =
+            playback_routes::with_state(|state| state.exhausted(playback_routes::now_ms()));
+        let paced = playback_routes::with_state(|state| {
+            state.rotation_paced(playback_routes::now_ms(), false)
+        });
+        let due =
+            playback_routes::with_state(|state| state.rotate_due(playback_routes::now_ms(), false));
+        let can_rotate = round == 0
+            && paced
+            && (parked_now || due)
+            && crate::upstream::budget::remaining().is_none_or(|left| left > ROTATION_MIN_BUDGET);
+        if !can_rotate {
+            break;
+        }
+        match ctx.up.rotate_playback_identity(pin.as_deref()).await {
+            Ok(device) => {
+                log::info!("v5 trace event=rotate result=ok");
+                playback_routes::with_state(|state| {
+                    state.note_rotate(playback_routes::now_ms(), true)
+                });
+                pin = Some(device.device_id);
+                continue;
+            }
+            Err(error) => {
+                log::warn!("v5 trace event=rotate result=unavailable error={error}");
+                playback_routes::with_state(|state| {
+                    state.note_rotate(playback_routes::now_ms(), false)
+                });
+                break;
+            }
+        }
+    }
+
+    playback_routes::with_state(|state| state.note_round(true));
+    let (empty_rounds, rotations) =
+        playback_routes::with_state(|state| (state.empty_rounds(), state.rotations()));
+    log::warn!(
+        "v5 trace event=final result=empty attempts={attempts} empty_rounds={empty_rounds} rotations={rotations}"
+    );
+    Err(ApiError::Internal("视频取流失败，请稍后重试".to_string()))
+}
+
 /// The v5 request body, already gzipped.
 ///
 /// Compression has to happen *before* signing: the v5 signature covers the exact
@@ -1215,20 +1503,17 @@ fn v5_playback_body(video_id: &str) -> ApiResult<Vec<u8>> {
         .map_err(|e| ApiError::Internal(format!("gzip v5 playback body: {e}")))
 }
 
-/// Queries the v5 playback door.
+/// Queries the playback model, walking every playback door.
 ///
-/// It signs its own query string, so it does not go through
-/// [UpstreamRequestSpec]; see [crate::upstream::UpstreamClient::v5_playback].
+/// A door signs its own query string, so this does not go through
+/// [UpstreamRequestSpec]; see [crate::upstream::UpstreamClient::v5_playback_with_device]
+/// and [crate::upstream::UpstreamClient::v5_get_with_device].
 async fn fetch_v5_video_model(
     ctx: &Ctx,
     video_id: &str,
     pin_device: &str,
 ) -> ApiResult<(Vec<u8>, String)> {
-    let body = v5_playback_body(video_id)?;
-    Upstream::new(ctx.up.clone())
-        .v5_playback_with_device(V5_PLAYER_URL, &body, pin_device)
-        .await
-        .map(|(raw, device)| (raw, device.device_id))
+    fetch_playback_model(ctx, video_id, pin_device).await
 }
 
 /// Parses the multi_video_model response and extracts the best quality MP4 URL.
