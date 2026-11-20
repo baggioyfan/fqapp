@@ -1438,7 +1438,7 @@ async fn fetch_playback_model(
         let can_rotate = round == 0
             && paced
             && (parked_now || due)
-            && crate::upstream::budget::remaining().map_or(true, |left| left > ROTATION_MIN_BUDGET);
+            && crate::upstream::budget::remaining().is_none_or(|left| left > ROTATION_MIN_BUDGET);
         if !can_rotate {
             break;
         }
