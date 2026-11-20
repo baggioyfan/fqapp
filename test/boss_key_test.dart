@@ -373,7 +373,9 @@ void main() {
         );
         await tester.pumpAndSettle();
 
-        final entry = find.byKey(const ValueKey('settings-entry-老板键'));
+        // 本 fork 的桌面（含 Linux）走两栏 `DesktopSettingsBody`，列表行
+        // 没有 `settings-entry-*` 键，按文字找。
+        final entry = find.widgetWithText(SettingsRow, '老板键');
         expect(entry, findsOneWidget);
         await tester.tap(entry);
         await tester.pumpAndSettle();

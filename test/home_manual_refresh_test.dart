@@ -33,9 +33,10 @@ void main() {
     final harness = _Harness(cache, items: ['a', 'b', 'c', 'd']);
     addTearDown(harness.dispose);
 
-    // 冷启动命中落地缓存：从停留的 b 继续。
+    // 冷启动命中落地缓存：网格流没有可播放面，只能拿快照垫首帧，**不按
+    // 「停留的卡」裁剪**——否则 a 再也回不来。
     await harness.notifier.load();
-    expect(harness.ids, ['b', 'c', 'd']);
+    expect(harness.ids, ['a', 'b', 'c', 'd']);
 
     // 用户下拉。旧行为：还是续接，a 再也回不来，新卡全被 seen 吃掉，
     // 界面一帧不动；现在整页替换，从第一张卡重新排。
@@ -46,8 +47,16 @@ void main() {
   });
 
   test('冷启动仍按快照续接，短剧流从上次那张卡继续', () async {
-    final cache = await _seededCache(['a', 'b', 'c'], lastVid: 'b');
-    final harness = _Harness(cache, items: ['a', 'b', 'c', 'd']);
+    final cache = await _seededCache(
+      ['a', 'b', 'c'],
+      lastVid: 'b',
+      tabIndex: _videoTabIndex,
+    );
+    final harness = _Harness(
+      cache,
+      items: ['a', 'b', 'c', 'd'],
+      videoFeed: true,
+    );
     addTearDown(harness.dispose);
 
     await harness.notifier.load();
@@ -97,10 +106,14 @@ void main() {
 /// 与搜索兜底，测试只关心快照与替换逻辑。
 const _tabIndex = 1;
 
+/// 底层表里的「视频」（下标 6，`tab_type=16`）：唯一会续接「停留的卡」的流。
+final _videoTabIndex = HomeNotifier.allTabs.indexOf('视频');
+
 class _Harness {
-  _Harness(this.cache, {required this.items});
+  _Harness(this.cache, {required this.items, this.videoFeed = false});
 
   final HomeFeedCache cache;
+  final bool videoFeed;
   List<String> items;
   Future<void>? gate;
   bool fail = false;
@@ -108,7 +121,8 @@ class _Harness {
 
   late final provider = NotifierProvider<HomeNotifier, HomeState>(
     () => HomeNotifier(
-      initialTabIndex: _tabIndex,
+      initialTabIndex: videoFeed ? _videoTabIndex : _tabIndex,
+      resumeVideoFeed: videoFeed,
       // 失败路径会退到搜索兜底；这里给空的，别让它真去打网络。
       searchLoader: (query, {int page = 1}) async => const [],
       homepageLoader:
@@ -149,10 +163,11 @@ Future<HomeFeedCache> _emptyCache() async {
 Future<HomeFeedCache> _seededCache(
   List<String> ids, {
   required String lastVid,
+  int tabIndex = _tabIndex,
 }) async {
   final cache = await _emptyCache();
   await cache.save(
-    _tabIndex,
+    tabIndex,
     [for (final id in ids) _item(id)],
     hasMore: true,
     lastVid: lastVid,
