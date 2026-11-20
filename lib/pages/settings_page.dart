@@ -63,7 +63,7 @@ class SettingsPage extends StatelessWidget {
   Widget build(BuildContext context) {
     // 开关读的是 ValueNotifier：先把持久化的值读出来，读到后自动重绘。
     unawaited(BookOpenPreferences.instance.load());
-    if (!isMediaDesktop) return _buildContent(context);
+    if (!isBossKeyHost) return _buildContent(context);
     unawaited(BossKeyPreferences.instance.load());
     return ListenableBuilder(
       listenable: Listenable.merge([
@@ -152,7 +152,7 @@ class SettingsPage extends StatelessWidget {
           if (!isDesktopHost) _videoDecoderItem(),
         ],
       ),
-      if (isMediaDesktop)
+      if (isBossKeyHost)
         SettingsCategory(
           icon: SettingsCategoryIcons.bossKey,
           title: '老板键',

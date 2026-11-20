@@ -133,6 +133,70 @@ void main() {
       expect(BossKeyShortcut.tryDecode(shortcut.encode()), shortcut);
     });
 
+    test('maps every bindable key to a macOS Carbon key code', () {
+      // macOS 的键码和 ASCII 没有对应关系，漏一个就有一个键在 Mac 上按不动，
+      // 所以这里逐个核对，而不是抽查。
+      const macCodes = <String, int>{
+        'A': 0x00,
+        'S': 0x01,
+        'B': 0x0B,
+        'Q': 0x0C,
+        'T': 0x11,
+        '1': 0x12,
+        '0': 0x1D,
+        'Equal': 0x18,
+        'Space': 0x31,
+        'Escape': 0x35,
+        'F1': 0x7A,
+        'F12': 0x6F,
+        'Delete': 0x75,
+        'ArrowUp': 0x7E,
+      };
+      for (final entry in macCodes.entries) {
+        expect(
+          BossKeyShortcut(key: entry.key).macVirtualKey,
+          entry.value,
+          reason: 'macOS 键码不对：${entry.key}',
+        );
+      }
+
+      // 每个能录进设置的键都必须有 macOS 键码；`Insert` 是唯一的例外
+      // （Mac 键盘上没有这个键），约定用 -1 表示不支持。
+      const keys = <String>[
+        'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N',
+        'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z',
+        '0', '1', '2', '3', '4', '5', '6', '7', '8', '9',
+        'F1', 'F2', 'F3', 'F4', 'F5', 'F6', 'F7', 'F8', 'F9', 'F10', 'F11',
+        'F12', 'Space', 'Tab', 'Escape', 'Backquote', 'Minus', 'Equal',
+        'BracketLeft', 'BracketRight', 'Semicolon', 'Quote', 'Comma', 'Period',
+        'Slash', 'Backslash', 'Delete', 'Home', 'End', 'PageUp', 'PageDown',
+        'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight',
+      ];
+      for (final key in keys) {
+        expect(
+          BossKeyShortcut(key: key).macVirtualKey,
+          isNot(-1),
+          reason: '$key 在 macOS 上没有键码',
+        );
+      }
+      expect(const BossKeyShortcut(key: 'Insert').macVirtualKey, -1);
+      expect(const BossKeyShortcut(key: 'a').macVirtualKey, -1);
+    });
+
+    test('formats Meta as ⌘ on macOS', () {
+      const shortcut = BossKeyShortcut(meta: true, shift: true, key: 'H');
+      expect(
+        shortcut.formatLabel(platform: TargetPlatform.macOS),
+        '⌘ + Shift + H',
+      );
+    });
+
+    test('sends the macOS key code in the platform args', () {
+      const shortcut = BossKeyShortcut(alt: true, key: 'Q');
+      expect(shortcut.toPlatformArgs()['macVk'], 0x0C);
+      expect(shortcut.toPlatformArgs()['winVk'], 0x51);
+    });
+
     test('validates modifiers, function keys, and reserved shortcuts', () {
       expect(const BossKeyShortcut(key: 'Q').isValid, isFalse);
       expect(const BossKeyShortcut(shift: true, key: 'Q').isValid, isFalse);
@@ -375,6 +439,30 @@ void main() {
 
         // 本 fork 的桌面（含 Linux）走两栏 `DesktopSettingsBody`，列表行
         // 没有 `settings-entry-*` 键，按文字找。
+        final entry = find.widgetWithText(SettingsRow, '老板键');
+        expect(entry, findsOneWidget);
+        await tester.tap(entry);
+        await tester.pumpAndSettle();
+
+        expect(find.byType(BossKeySettingsPage), findsOneWidget);
+        expect(find.text('启用老板键'), findsOneWidget);
+      } finally {
+        debugDefaultTargetPlatformOverride = null;
+      }
+    });
+
+    testWidgets('shows boss key entry on macOS settings page', (tester) async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
+      try {
+        tester.view.physicalSize = const Size(1280, 800);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.reset);
+
+        await BossKeyService.instance.initialize();
+        await tester.pumpWidget(wrapApp(const SettingsPage()));
+        await tester.pumpAndSettle();
+
+        // macOS 和 Windows 一样走两栏 DesktopSettingsBody。
         final entry = find.widgetWithText(SettingsRow, '老板键');
         expect(entry, findsOneWidget);
         await tester.tap(entry);

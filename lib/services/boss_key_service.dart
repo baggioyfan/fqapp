@@ -61,7 +61,8 @@ class BossKeyApplyResult {
   final String? errorMessage;
 }
 
-/// Native global-hotkey bridge (Windows Win32 `RegisterHotKey`, Linux X11 `XGrabKey`).
+/// Native global-hotkey bridge: Win32 `RegisterHotKey` on Windows, X11
+/// `XGrabKey` on Linux, Carbon `RegisterEventHotKey` on macOS.
 abstract class BossKeyNativeBridge {
   Future<({bool globalHotkey, String backend})> capabilities();
   Future<void> register(BossKeyShortcut shortcut);
@@ -153,7 +154,7 @@ class BossKeyService {
   BossKeyWindowControl _windowControl = _WindowManagerBossKeyControl();
   Future<void> Function()? _pausePlaybackOverride;
   DateTime Function() _clock = DateTime.now;
-  bool Function() _platformSupported = () => isMediaDesktop;
+  bool Function() _platformSupported = () => isBossKeyHost;
 
   final ValueNotifier<BossKeyStatus> status = ValueNotifier<BossKeyStatus>(
     const BossKeyStatus(),
@@ -611,7 +612,7 @@ class BossKeyService {
     _windowControl = windowControl ?? _WindowManagerBossKeyControl();
     _pausePlaybackOverride = pausePlayback;
     _clock = clock ?? DateTime.now;
-    _platformSupported = platformSupported ?? (() => isMediaDesktop);
+    _platformSupported = platformSupported ?? (() => isBossKeyHost);
     _initialized = false;
     _toggling = false;
     _recordingDepth = 0;

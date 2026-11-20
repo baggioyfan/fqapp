@@ -230,6 +230,232 @@ PLIST="macos/Runner/Info.plist"
   die "Info.plist 里没写进 FLTEnableImpeller=false"
 echo "    Info.plist FLTEnableImpeller → false"
 
+echo "==> 2g/6 写入老板键全局快捷键通道（Carbon RegisterEventHotKey）"
+# 上游的 macos/ 是构建时生成的，没有地方放原生的热键实现；而 Android/Windows
+# 之外的 macOS 桌面同样要能「一键隐藏」。这里直接覆盖 flutter create 生成的
+# Runner/MainFlutterWindow.swift —— 它本来就在 pbxproj 里，不需要改工程文件，
+# 也就不会因为模板换代而漂移。
+#
+# 为什么用 Carbon 而不是 CGEventTap：RegisterEventHotKey 不需要「辅助功能」
+# 授权，用户装上就能用；CGEventTap 要走系统设置里手动勾选，反而更麻烦。
+# 窗口的隐藏/恢复仍由 Dart 侧的 window_manager 负责（orderOut / makeKeyAndOrderFront
+# + activationPolicy），这里只管收键后回一句 onTriggered。
+cat > macos/Runner/MainFlutterWindow.swift <<'SWIFT'
+import Cocoa
+import Carbon.HIToolbox
+import FlutterMacOS
+
+/// 老板键的 macOS 原生半边：Carbon 全局热键 + `fqapp/boss_key` 方法通道。
+///
+/// Windows 是 Win32 `RegisterHotKey`、Linux 是 X11 `XGrabKey`，三端的通道名与
+/// 方法名保持一致（capabilities / register / unregister / onTriggered），Dart
+/// 侧 `BossKeyService` 不需要知道自己跑在哪个系统上。
+private let kBossKeySignature = OSType(0x4651_4B42)  // 'FQKB'
+
+final class BossKeyChannel {
+  private let channel: FlutterMethodChannel
+  private var hotKeyRef: EventHotKeyRef?
+  private var handlerRef: EventHandlerRef?
+  private var registeredKeyCode: UInt32 = 0
+  private var registeredModifiers: UInt32 = 0
+
+  init(messenger: FlutterBinaryMessenger) {
+    channel = FlutterMethodChannel(
+      name: "fqapp/boss_key",
+      binaryMessenger: messenger
+    )
+    channel.setMethodCallHandler { [weak self] call, result in
+      guard let self else {
+        result(
+          FlutterError(code: "UNAVAILABLE", message: "老板键通道已释放", details: nil)
+        )
+        return
+      }
+      self.handle(call, result: result)
+    }
+  }
+
+  deinit {
+    if let handler = handlerRef {
+      RemoveEventHandler(handler)
+      handlerRef = nil
+    }
+    releaseHotKey()
+  }
+
+  private func handle(_ call: FlutterMethodCall, result: FlutterResult) {
+    switch call.method {
+    case "capabilities":
+      result(["globalHotkey": true, "backend": "carbon"])
+    case "unregister":
+      unregister()
+      result(true)
+    case "register":
+      guard let args = call.arguments as? [String: Any] else {
+        result(
+          FlutterError(code: "INVALID_ARGUMENT", message: "缺少快捷键参数", details: nil)
+        )
+        return
+      }
+      // 键码 0 是合法的（kVK_ANSI_A），所以「缺省」用 -1 表示。
+      let keyCode = (args["macVk"] as? NSNumber)?.intValue ?? -1
+      guard keyCode >= 0 && keyCode <= 0x7F else {
+        result(
+          FlutterError(
+            code: "INVALID_ARGUMENT",
+            message: "该按键在 macOS 上没有对应键",
+            details: nil
+          )
+        )
+        return
+      }
+      var modifiers: UInt32 = 0
+      if (args["ctrl"] as? NSNumber)?.boolValue == true {
+        modifiers |= UInt32(controlKey)
+      }
+      if (args["alt"] as? NSNumber)?.boolValue == true {
+        modifiers |= UInt32(optionKey)
+      }
+      if (args["shift"] as? NSNumber)?.boolValue == true {
+        modifiers |= UInt32(shiftKey)
+      }
+      if (args["meta"] as? NSNumber)?.boolValue == true {
+        modifiers |= UInt32(cmdKey)
+      }
+      register(keyCode: UInt32(keyCode), modifiers: modifiers, result: result)
+    default:
+      result(FlutterMethodNotImplemented)
+    }
+  }
+
+  private func register(
+    keyCode: UInt32,
+    modifiers: UInt32,
+    result: FlutterResult
+  ) {
+    if hotKeyRef != nil, registeredKeyCode == keyCode,
+      registeredModifiers == modifiers
+    {
+      result(true)
+      return
+    }
+
+    installHandlerIfNeeded()
+
+    var ref: EventHotKeyRef?
+    let hotKeyID = EventHotKeyID(signature: kBossKeySignature, id: 1)
+    let status = RegisterEventHotKey(
+      keyCode,
+      modifiers,
+      hotKeyID,
+      GetApplicationEventTarget(),
+      0,
+      &ref
+    )
+    guard status == noErr, let newRef = ref else {
+      if status == eventHotKeyExistsErr {
+        result(
+          FlutterError(
+            code: "HOTKEY_CONFLICT",
+            message: "该快捷键已被其他应用占用",
+            details: nil
+          )
+        )
+      } else {
+        result(
+          FlutterError(
+            code: "REGISTER_FAILED",
+            message: "注册全局快捷键失败（\(status)）",
+            details: nil
+          )
+        )
+      }
+      return
+    }
+
+    // 新组合注册成功后再放掉旧的：冲突时原来的快捷键仍然能用，不会两头落空。
+    releaseHotKey()
+    hotKeyRef = newRef
+    registeredKeyCode = keyCode
+    registeredModifiers = modifiers
+    result(true)
+  }
+
+  private func unregister() {
+    releaseHotKey()
+    registeredKeyCode = 0
+    registeredModifiers = 0
+  }
+
+  private func releaseHotKey() {
+    if let ref = hotKeyRef {
+      UnregisterEventHotKey(ref)
+      hotKeyRef = nil
+    }
+  }
+
+  private func installHandlerIfNeeded() {
+    guard handlerRef == nil else { return }
+    var eventType = EventTypeSpec(
+      eventClass: OSType(kEventClassKeyboard),
+      eventKind: UInt32(kEventHotKeyPressed)
+    )
+    InstallEventHandler(
+      GetApplicationEventTarget(),
+      { _, event, context in
+        guard let context else { return OSStatus(eventNotHandledErr) }
+        let bridge = Unmanaged<BossKeyChannel>
+          .fromOpaque(context)
+          .takeUnretainedValue()
+        return bridge.handleHotKey(event)
+      },
+      1,
+      &eventType,
+      Unmanaged.passUnretained(self).toOpaque(),
+      &handlerRef
+    )
+  }
+
+  fileprivate func handleHotKey(_ event: EventRef?) -> OSStatus {
+    var hotKeyID = EventHotKeyID()
+    let status = GetEventParameter(
+      event,
+      EventParamName(kEventParamDirectObject),
+      EventParamType(typeEventHotKeyID),
+      nil,
+      UInt32(MemoryLayout<EventHotKeyID>.size),
+      nil,
+      &hotKeyID
+    )
+    guard status == noErr, hotKeyID.signature == kBossKeySignature else {
+      return OSStatus(eventNotHandledErr)
+    }
+    channel.invokeMethod("onTriggered", arguments: nil)
+    return noErr
+  }
+}
+
+class MainFlutterWindow: NSWindow {
+  private var bossKeyChannel: BossKeyChannel?
+
+  override func awakeFromNib() {
+    let flutterViewController = FlutterViewController()
+    let windowFrame = self.frame
+    self.contentViewController = flutterViewController
+    self.setFrame(windowFrame, display: true)
+
+    RegisterGeneratedPlugins(registry: flutterViewController)
+    bossKeyChannel = BossKeyChannel(
+      messenger: flutterViewController.engine.binaryMessenger
+    )
+
+    super.awakeFromNib()
+  }
+}
+SWIFT
+[ -f macos/Runner/MainFlutterWindow.swift ] ||
+  die "macos/ 生成异常：MainFlutterWindow.swift 没写进去"
+
 echo "==> 3/6 flutter pub get"
 flutter pub get
 

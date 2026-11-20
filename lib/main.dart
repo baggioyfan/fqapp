@@ -250,7 +250,7 @@ Future<void> _loadLocalData() async {
   // 短剧切后台悬浮窗开关（#24）：异步读取，失败退化为默认关闭。
   unawaited(PlayerPreferences.loadFloatingWindow());
   // 桌面端老板键偏好与全局热键监听：可选能力，失败只退化为未启用。
-  if (isMediaDesktop) {
+  if (isBossKeyHost) {
     unawaited(
       optional(() async {
         await BossKeyPreferences.instance.load();

@@ -416,7 +416,11 @@ class _BossKeyRecorderDialogState extends State<_BossKeyRecorderDialog> {
       if (pressed.contains(LogicalKeyboardKey.metaLeft) ||
           pressed.contains(LogicalKeyboardKey.metaRight) ||
           pressed.contains(LogicalKeyboardKey.meta))
-        Theme.of(context).platform == TargetPlatform.windows ? 'Win' : 'Super',
+        switch (Theme.of(context).platform) {
+          TargetPlatform.windows => 'Win',
+          TargetPlatform.macOS => '⌘',
+          _ => 'Super',
+        },
     ];
     return parts.isEmpty ? null : '${parts.join(' + ')} + ...';
   }

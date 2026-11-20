@@ -7,8 +7,9 @@ import 'package:shared_preferences/shared_preferences.dart';
 /// A desktop global hotkey binding for the boss key feature.
 ///
 /// Key identifiers use stable canonical tokens (for example `Q`, `F9`, `Space`)
-/// so preferences serialize cleanly across Windows and Linux and translate to
-/// both Win32 virtual-key codes and X11 KeySyms.
+/// so preferences serialize cleanly across every desktop and translate to the
+/// three native encodings: Win32 virtual-key codes, X11 KeySyms, and macOS
+/// Carbon key codes.
 @immutable
 class BossKeyShortcut {
   const BossKeyShortcut({
@@ -40,10 +41,19 @@ class BossKeyShortcut {
   /// X11 KeySym (`XK_*`), or `0` if [key] is unknown.
   int get x11KeySym => _keySpecs[key]?.x11KeySym ?? 0;
 
+  /// macOS Carbon 虚拟键码（`kVK_*`），`-1` 表示该键在 macOS 上没有对应键。
+  ///
+  /// 注意不能拿 `0` 当「不支持」：`kVK_ANSI_A` 本身就是 0x00。
+  int get macVirtualKey => _macKeyCodes[key] ?? -1;
+
   /// Human-readable display label (for example `Alt + Q` or `Ctrl + Shift + F9`).
   String formatLabel({TargetPlatform? platform}) {
     final target = platform ?? defaultTargetPlatform;
-    final metaLabel = target == TargetPlatform.windows ? 'Win' : 'Super';
+    final metaLabel = switch (target) {
+      TargetPlatform.windows => 'Win',
+      TargetPlatform.macOS => '⌘',
+      _ => 'Super',
+    };
     final parts = <String>[
       if (ctrl) 'Ctrl',
       if (alt) 'Alt',
@@ -60,7 +70,7 @@ class BossKeyShortcut {
       return '暂不支持该按键，请换用字母、数字或功能键';
     }
     if (!isFunctionKey && !hasPrimaryModifier) {
-      return '普通按键需要搭配 Ctrl、Alt 或 Win/Super 修饰键';
+      return '普通按键需要搭配 Ctrl、Alt 或 Win/Super/⌘ 修饰键';
     }
     if (_isReservedSystemShortcut) {
       return '该组合为系统保留快捷键，请选择其他按键';
@@ -105,6 +115,7 @@ class BossKeyShortcut {
     'key': key,
     'winVk': winVirtualKey,
     'x11KeySym': x11KeySym,
+    'macVk': macVirtualKey,
   };
 
   static BossKeyShortcut? tryDecode(String? raw) {
@@ -304,6 +315,87 @@ const _keySpecs = <String, _KeySpec>{
   'ArrowDown': _KeySpec('Down', 0x28, 0xFF54),
   'ArrowLeft': _KeySpec('Left', 0x25, 0xFF51),
   'ArrowRight': _KeySpec('Right', 0x27, 0xFF53),
+};
+
+/// macOS 虚拟键码（Carbon `kVK_*`），按同一套规范键名索引。
+///
+/// Windows 用 `VK_*`、Linux 用 `XK_*`，三者互不相通：macOS 的键码与 ASCII 无
+/// 对应关系（`A` 是 0x00、`S` 是 0x01），只能逐个列出。`Insert` 在 macOS 上
+/// 没有对应键，故意缺省 —— 拿到 `-1` 就按「不支持该按键」报错。
+///
+/// 数值来自 Carbon `HIToolbox/Events.h`。
+const _macKeyCodes = <String, int>{
+  'A': 0x00,
+  'S': 0x01,
+  'D': 0x02,
+  'F': 0x03,
+  'H': 0x04,
+  'G': 0x05,
+  'Z': 0x06,
+  'X': 0x07,
+  'C': 0x08,
+  'V': 0x09,
+  'B': 0x0B,
+  'Q': 0x0C,
+  'W': 0x0D,
+  'E': 0x0E,
+  'R': 0x0F,
+  'Y': 0x10,
+  'T': 0x11,
+  '1': 0x12,
+  '2': 0x13,
+  '3': 0x14,
+  '4': 0x15,
+  '6': 0x16,
+  '5': 0x17,
+  'Equal': 0x18,
+  '9': 0x19,
+  '7': 0x1A,
+  'Minus': 0x1B,
+  '8': 0x1C,
+  '0': 0x1D,
+  'BracketRight': 0x1E,
+  'O': 0x1F,
+  'U': 0x20,
+  'BracketLeft': 0x21,
+  'I': 0x22,
+  'P': 0x23,
+  'L': 0x25,
+  'J': 0x26,
+  'Quote': 0x27,
+  'K': 0x28,
+  'Semicolon': 0x29,
+  'Backslash': 0x2A,
+  'Comma': 0x2B,
+  'Slash': 0x2C,
+  'N': 0x2D,
+  'M': 0x2E,
+  'Period': 0x2F,
+  'Tab': 0x30,
+  'Space': 0x31,
+  'Backquote': 0x32,
+  'Escape': 0x35,
+  'F5': 0x60,
+  'F6': 0x61,
+  'F7': 0x62,
+  'F3': 0x63,
+  'F8': 0x64,
+  'F9': 0x65,
+  'F11': 0x67,
+  'F10': 0x6D,
+  'F12': 0x6F,
+  'Home': 0x73,
+  'PageUp': 0x74,
+  'Delete': 0x75,
+  'F4': 0x76,
+  'End': 0x77,
+  'F2': 0x78,
+  'PageDown': 0x79,
+  'F1': 0x7A,
+  'ArrowLeft': 0x7B,
+  'ArrowRight': 0x7C,
+  'ArrowDown': 0x7D,
+  'ArrowUp': 0x7E,
 };
 
 final _lowerKeyLookup = <String, String>{
