@@ -257,172 +257,183 @@ class _DesktopVideoChromeState extends State<DesktopVideoChrome> {
     width: _catalogWidth,
     child: ColoredBox(
       color: const Color(0xff1c1c1f),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 14, 16, 6),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Expanded(
-                      child: Text(
-                        c.seriesTitle.isEmpty ? c.title : c.seriesTitle,
-                        maxLines: docked ? 2 : 3,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          fontSize: 19,
-                          fontWeight: FontWeight.bold,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          border: docked
+              ? Border(
+                  left: BorderSide(color: Colors.white.withValues(alpha: 0.08)),
+                )
+              : null,
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 14, 16, 6),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(
+                        child: Text(
+                          c.seriesTitle.isEmpty ? c.title : c.seriesTitle,
+                          maxLines: docked ? 2 : 3,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 19,
+                            fontWeight: FontWeight.bold,
+                          ),
                         ),
                       ),
+                      if (docked)
+                        IconButton(
+                          tooltip: '收起面板',
+                          visualDensity: VisualDensity.compact,
+                          onPressed: () =>
+                              setState(() => _dockCollapsed = true),
+                          icon: const Icon(Icons.view_sidebar),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    hasCompleteEpisodeCatalogue(c.episodes)
+                        ? '共 ${c.episodes.length} 集 · ${c.episodeLabel}'
+                        : '完整目录暂不可用',
+                    style: const TextStyle(color: Colors.white60),
+                  ),
+                  if (c.synopsis.isNotEmpty) ...[
+                    const SizedBox(height: 10),
+                    Text(
+                      c.synopsis,
+                      maxLines: docked ? 3 : 5,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: Colors.white70,
+                        fontSize: 13,
+                        height: 1.45,
+                      ),
                     ),
-                    if (docked)
-                      IconButton(
-                        tooltip: '收起面板',
+                  ],
+                ],
+              ),
+            ),
+            Wrap(
+              spacing: 4,
+              runSpacing: 4,
+              children: [
+                if (c.onOpenSeriesDetail != null)
+                  TextButton(
+                    onPressed: c.onOpenSeriesDetail,
+                    child: const Text('作品详情'),
+                  ),
+                if (c.onComments != null)
+                  TextButton(
+                    onPressed: c.onComments,
+                    child: Text('评论 ${c.commentCount}'),
+                  ),
+                if (c.onOpenOfflineCache != null)
+                  TextButton(
+                    onPressed: c.onOpenOfflineCache,
+                    child: const Text('下载'),
+                  ),
+                if (c.onOpenListenMode != null)
+                  TextButton(
+                    onPressed: c.onOpenListenMode,
+                    child: const Text('听剧'),
+                  ),
+                if (c.onOpenRelatedSeries != null)
+                  TextButton(
+                    onPressed: c.onOpenRelatedSeries,
+                    child: const Text('同系列'),
+                  ),
+              ],
+            ),
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              child: Text('选集', style: TextStyle(fontWeight: FontWeight.bold)),
+            ),
+            // 长剧（如 600+ 集）逐行翻太慢：给一段 50 集的区间跳集，
+            // 外加一枚随时回到当前集的定位 chip。排布用流式换行：旧版横向
+            // 滚动列表在 304 宽面板里只露得出前两三枚，第 4 段起被切且没有
+            // 任何可横滑的提示（滚轮在这一行还是竖向、滑不动），等于不存
+            // 在；换行后全部段一目了然，长剧多占几行是已知取舍。
+            if (c.episodes.length > _catalogSegmentSize)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+                child: Wrap(
+                  spacing: 6,
+                  runSpacing: 6,
+                  children: [
+                    ActionChip(
+                      avatar: const Icon(Icons.my_location, size: 14),
+                      label: const Text('当前集'),
+                      labelStyle: const TextStyle(fontSize: 12),
+                      visualDensity: VisualDensity.compact,
+                      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      onPressed: () =>
+                          _scrollCatalogTo(c.currentIndex, animate: true),
+                    ),
+                    for (
+                      var start = 0;
+                      start < c.episodes.length;
+                      start += _catalogSegmentSize
+                    )
+                      ChoiceChip(
+                        label: Text(
+                          '${start + 1}-${math.min(start + _catalogSegmentSize, c.episodes.length)}',
+                        ),
+                        labelStyle: const TextStyle(fontSize: 12),
+                        selected:
+                            c.currentIndex >= start &&
+                            c.currentIndex < start + _catalogSegmentSize,
                         visualDensity: VisualDensity.compact,
-                        onPressed: () => setState(() => _dockCollapsed = true),
-                        icon: const Icon(Icons.view_sidebar),
+                        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        onSelected: (_) =>
+                            _scrollCatalogTo(start, animate: true),
                       ),
                   ],
                 ),
-                const SizedBox(height: 8),
-                Text(
-                  hasCompleteEpisodeCatalogue(c.episodes)
-                      ? '共 ${c.episodes.length} 集 · ${c.episodeLabel}'
-                      : '完整目录暂不可用',
-                  style: const TextStyle(color: Colors.white60),
+              ),
+            Expanded(
+              child: GridView.builder(
+                controller: _catalogController,
+                padding: const EdgeInsets.fromLTRB(
+                  _catalogGridPadding,
+                  0,
+                  _catalogGridPadding,
+                  16,
                 ),
-                if (c.synopsis.isNotEmpty) ...[
-                  const SizedBox(height: 10),
-                  Text(
-                    c.synopsis,
-                    maxLines: docked ? 3 : 5,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: Colors.white70,
-                      fontSize: 13,
-                      height: 1.45,
-                    ),
+                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: _catalogColumns,
+                  mainAxisSpacing: _catalogSpacing,
+                  crossAxisSpacing: _catalogSpacing,
+                  childAspectRatio: _catalogAspectRatio,
+                ),
+                itemCount: c.episodes.length,
+                itemBuilder: (context, index) => FilledButton.tonal(
+                  style: FilledButton.styleFrom(
+                    padding: EdgeInsets.zero,
+                    backgroundColor: index == c.currentIndex
+                        ? const Color(0xffef5038)
+                        : const Color(0xff2c2c30),
+                    foregroundColor:
+                        c.watchedEpisodes.contains(index) &&
+                            index != c.currentIndex
+                        ? Colors.white54
+                        : Colors.white,
                   ),
-                ],
-              ],
-            ),
-          ),
-          Wrap(
-            spacing: 4,
-            runSpacing: 4,
-            children: [
-              if (c.onOpenSeriesDetail != null)
-                TextButton(
-                  onPressed: c.onOpenSeriesDetail,
-                  child: const Text('作品详情'),
-                ),
-              if (c.onComments != null)
-                TextButton(
-                  onPressed: c.onComments,
-                  child: Text('评论 ${c.commentCount}'),
-                ),
-              if (c.onOpenOfflineCache != null)
-                TextButton(
-                  onPressed: c.onOpenOfflineCache,
-                  child: const Text('下载'),
-                ),
-              if (c.onOpenListenMode != null)
-                TextButton(
-                  onPressed: c.onOpenListenMode,
-                  child: const Text('听剧'),
-                ),
-              if (c.onOpenRelatedSeries != null)
-                TextButton(
-                  onPressed: c.onOpenRelatedSeries,
-                  child: const Text('同系列'),
-                ),
-            ],
-          ),
-          const Padding(
-            padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            child: Text('选集', style: TextStyle(fontWeight: FontWeight.bold)),
-          ),
-          // 长剧（如 600+ 集）逐行翻太慢：给一段 50 集的区间跳集，
-          // 外加一枚随时回到当前集的定位 chip。排布用流式换行：旧版横向
-          // 滚动列表在 304 宽面板里只露得出前两三枚，第 4 段起被切且没有
-          // 任何可横滑的提示（滚轮在这一行还是竖向、滑不动），等于不存
-          // 在；换行后全部段一目了然，长剧多占几行是已知取舍。
-          if (c.episodes.length > _catalogSegmentSize)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
-              child: Wrap(
-                spacing: 6,
-                runSpacing: 6,
-                children: [
-                  ActionChip(
-                    avatar: const Icon(Icons.my_location, size: 14),
-                    label: const Text('当前集'),
-                    labelStyle: const TextStyle(fontSize: 12),
-                    visualDensity: VisualDensity.compact,
-                    materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                    onPressed: () =>
-                        _scrollCatalogTo(c.currentIndex, animate: true),
+                  onPressed: () => c.onSelectEpisode(index),
+                  child: Text(
+                    c.episodes[index].hasKnownIndex ? '${index + 1}' : '当前',
                   ),
-                  for (
-                    var start = 0;
-                    start < c.episodes.length;
-                    start += _catalogSegmentSize
-                  )
-                    ChoiceChip(
-                      label: Text(
-                        '${start + 1}-${math.min(start + _catalogSegmentSize, c.episodes.length)}',
-                      ),
-                      labelStyle: const TextStyle(fontSize: 12),
-                      selected:
-                          c.currentIndex >= start &&
-                          c.currentIndex < start + _catalogSegmentSize,
-                      visualDensity: VisualDensity.compact,
-                      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                      onSelected: (_) => _scrollCatalogTo(start, animate: true),
-                    ),
-                ],
-              ),
-            ),
-          Expanded(
-            child: GridView.builder(
-              controller: _catalogController,
-              padding: const EdgeInsets.fromLTRB(
-                _catalogGridPadding,
-                0,
-                _catalogGridPadding,
-                16,
-              ),
-              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: _catalogColumns,
-                mainAxisSpacing: _catalogSpacing,
-                crossAxisSpacing: _catalogSpacing,
-                childAspectRatio: _catalogAspectRatio,
-              ),
-              itemCount: c.episodes.length,
-              itemBuilder: (context, index) => FilledButton.tonal(
-                style: FilledButton.styleFrom(
-                  padding: EdgeInsets.zero,
-                  backgroundColor: index == c.currentIndex
-                      ? const Color(0xffef5038)
-                      : const Color(0xff2c2c30),
-                  foregroundColor:
-                      c.watchedEpisodes.contains(index) &&
-                          index != c.currentIndex
-                      ? Colors.white54
-                      : Colors.white,
-                ),
-                onPressed: () => c.onSelectEpisode(index),
-                child: Text(
-                  c.episodes[index].hasKnownIndex ? '${index + 1}' : '当前',
                 ),
               ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     ),
   );

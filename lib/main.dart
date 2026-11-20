@@ -1,5 +1,6 @@
 import 'services/audio_downloader.dart';
 import 'widgets/desktop_app_frame.dart';
+import 'widgets/desktop_shell_scope.dart';
 import 'services/native_player.dart';
 import 'services/desktop_platform.dart';
 import 'services/platform_capabilities.dart';
@@ -345,6 +346,7 @@ class _FqAppState extends State<FqApp> {
   final _audioRoutes = AudioFloatingRoutes(
     defaultBottomInset: isWindowsDesktop ? 0 : 72,
   );
+  final _desktopRoutes = DesktopRouteObserver();
   // Desktop fullscreen reparents the content; keep the playback owner alive.
   final _audioScopeKey = GlobalKey();
   final _navigatorKey = isMediaDesktop
@@ -390,7 +392,10 @@ class _FqAppState extends State<FqApp> {
                   valueListenable: _styleStore,
                   builder: (context, style, _) => MaterialApp(
                     navigatorKey: _navigatorKey,
-                    navigatorObservers: [_audioRoutes],
+                    navigatorObservers: [
+                      _audioRoutes,
+                      if (isWindowsDesktop) _desktopRoutes,
+                    ],
                     builder: (context, child) {
                       final palette = HomePalette.of(context);
                       final playback = AudioPlaybackScope(

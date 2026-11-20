@@ -1,6 +1,7 @@
 import 'package:material_ui/material_ui.dart';
 
 import '../../services/app_style_tokens.dart';
+import '../../services/desktop_platform.dart';
 
 import 'home_archive.dart';
 import 'home_design.dart';
@@ -29,9 +30,11 @@ const double homeHeaderGap = 12;
 const double homeSectionGap = 20;
 
 /// Bottom clearance above the floating navigation bar: bar 64 + its 8dp
-/// padding + the system inset + 24dp of breathing room.
-double homeBottomClearance(BuildContext context) =>
-    64 + 8 + MediaQuery.paddingOf(context).bottom + 24;
+/// padding + the system inset + 24dp of breathing room (desktop shell omits
+/// the bottom bar).
+double homeBottomClearance(BuildContext context) => isWindowsDesktop
+    ? MediaQuery.paddingOf(context).bottom + 24
+    : 64 + 8 + MediaQuery.paddingOf(context).bottom + 24;
 
 /// 宽屏（≥900dp）上一格卡片的目标宽度：列数由它反推，不再按断点给固定列数。
 ///

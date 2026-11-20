@@ -20,6 +20,7 @@ import '../services/chapter_cache_store.dart';
 import '../services/shell_visibility.dart';
 import '../services/classic_shelf_layout.dart';
 import '../services/connectivity_status.dart';
+import '../services/desktop_platform.dart';
 import '../services/imported_book_store.dart';
 import '../services/haptic_preferences.dart';
 import '../services/library_store.dart';
@@ -31,6 +32,7 @@ import '../services/shelf_store.dart';
 import '../services/shelf_view_store.dart';
 import '../services/update_check_gate.dart';
 import '../widgets/bookshelf_card.dart';
+import '../widgets/desktop_shell_scope.dart';
 import '../widgets/home/home_chip.dart';
 import '../widgets/home/home_design.dart';
 import '../widgets/shelf/book_collection_tiles.dart';
@@ -605,7 +607,46 @@ class _LibraryPageState extends State<LibraryPage>
   @override
   Widget build(BuildContext context) {
     final classic = AppStyleTokens.of(context).isClassic;
+    final inDesktopFrame =
+        isWindowsDesktop && DesktopShellScope.hasFrameOf(context);
     final topInset = featurePadding(context).top;
+    final archiveContent = ShelfPerformanceScope(
+      shelf3d: ShelfViewStore.instance.state.shelf3d,
+      child: Column(
+        children: [
+          if (inDesktopFrame)
+            _desktopArchiveHeader(context)
+          else ...[
+            Padding(
+              padding: EdgeInsets.fromLTRB(24, topInset, 24, 0),
+              child: _editing ? _editBar(context) : _tabSegments(context),
+            ),
+            const SizedBox(height: 8),
+          ],
+          Expanded(
+            child: TabSwipeArea(
+              index: _tab,
+              count: _tabTitles.length,
+              onSelect: _selectTab,
+              onProgress: (value) {
+                if (_tabProgress.value != value) {
+                  _tabProgress.value = value;
+                }
+              },
+              // 编辑态里横向拖动留给列表自身（多选/滑动删除的起手）。
+              enabled: !_editing,
+              child: RefreshIndicator(
+                onRefresh: () async {
+                  await _refreshUpdates(force: true);
+                  await MultiDeviceSyncService.instance.sync();
+                },
+                child: _content(context),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
     return PopScope<Object?>(
       // 编辑态拦下系统返回 / 侧滑：先退出编辑态，而不是把整页 pop 掉。
       // 书架页是 RootShell 保活容器（移动端 Stack+Offstage / 桌面
@@ -617,44 +658,16 @@ class _LibraryPageState extends State<LibraryPage>
       },
       child: classic
           ? _classicPage(context)
+          : inDesktopFrame
+          ? Scaffold(
+              backgroundColor: HomePalette.of(context).canvas,
+              bottomNavigationBar: _editing ? _editBottomBar(context) : null,
+              body: archiveContent,
+            )
           : WenkuPage(
               header: _header(context),
               bottomNavigationBar: _editing ? _editBottomBar(context) : null,
-              child: ShelfPerformanceScope(
-                shelf3d: ShelfViewStore.instance.state.shelf3d,
-                child: Column(
-                  children: [
-                    Padding(
-                      padding: EdgeInsets.fromLTRB(24, topInset, 24, 0),
-                      child: _editing
-                          ? _editBar(context)
-                          : _tabSegments(context),
-                    ),
-                    const SizedBox(height: 8),
-                    Expanded(
-                      child: TabSwipeArea(
-                        index: _tab,
-                        count: _tabTitles.length,
-                        onSelect: _selectTab,
-                        onProgress: (value) {
-                          if (_tabProgress.value != value) {
-                            _tabProgress.value = value;
-                          }
-                        },
-                        // 编辑态里横向拖动留给列表自身（多选/滑动删除的起手）。
-                        enabled: !_editing,
-                        child: RefreshIndicator(
-                          onRefresh: () async {
-                            await _refreshUpdates(force: true);
-                            await MultiDeviceSyncService.instance.sync();
-                          },
-                          child: _content(context),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
+              child: archiveContent,
             ),
     );
   }

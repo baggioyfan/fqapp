@@ -125,6 +125,7 @@ class _ComicReaderPageState extends State<ComicReaderPage>
   bool _progressReady = false;
   bool _appActive = true;
   bool _sessionActive = false;
+  bool _desktopSidebarOpen = true;
   DateTime _readStart = DateTime.now();
   Timer? _saveTimer;
   // 小米公平运行内存 KILL 广播的刷盘注销函数，见 reader_page.dart。
@@ -198,24 +199,73 @@ class _ComicReaderPageState extends State<ComicReaderPage>
   @override
   Widget build(BuildContext context) {
     if (!isWindowsDesktop) return _buildSurface(context);
-    return LayoutBuilder(
-      builder: (context, bounds) => Row(
-        children: [
-          if (bounds.maxWidth >= 1000)
-            DesktopChapterSidebar(
-              chapters: widget.chapters,
-              currentIndex: _chapterIndex,
-              onSelected: (index) => _changeChapter(index),
+    final palette = HomePalette.of(context);
+    return ValueListenableBuilder<bool>(
+      valueListenable: DesktopPlatform.fullscreen,
+      builder: (context, fullscreen, _) => LayoutBuilder(
+        builder: (context, bounds) {
+          final showSidebar =
+              bounds.maxWidth >= 1000 && _desktopSidebarOpen && !fullscreen;
+          return ColoredBox(
+            color: palette.canvas,
+            child: Row(
+              children: [
+                if (showSidebar)
+                  DesktopChapterSidebar(
+                    chapters: widget.chapters,
+                    currentIndex: _chapterIndex,
+                    onCollapse: () =>
+                        setState(() => _desktopSidebarOpen = false),
+                    onSelected: (index) => _changeChapter(index),
+                  ),
+                Expanded(
+                  child: Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      Center(
+                        child: ConstrainedBox(
+                          constraints: const BoxConstraints(maxWidth: 1000),
+                          child: _buildSurface(context),
+                        ),
+                      ),
+                      if (bounds.maxWidth >= 1000 &&
+                          !_desktopSidebarOpen &&
+                          !fullscreen)
+                        Positioned(
+                          top: 12,
+                          left: 12,
+                          child: DecoratedBox(
+                            decoration: BoxDecoration(
+                              color: palette.surface.withValues(alpha: 0.94),
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(color: palette.line),
+                            ),
+                            child: IconButton(
+                              key: const Key('comic-desktop-sidebar-toggle'),
+                              tooltip: '展开目录',
+                              visualDensity: VisualDensity.compact,
+                              constraints: const BoxConstraints.tightFor(
+                                width: 34,
+                                height: 32,
+                              ),
+                              padding: EdgeInsets.zero,
+                              onPressed: () =>
+                                  setState(() => _desktopSidebarOpen = true),
+                              icon: Icon(
+                                LucideIcons.panel_left_open,
+                                size: 16,
+                                color: palette.ink,
+                              ),
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              ],
             ),
-          Expanded(
-            child: Center(
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 1000),
-                child: _buildSurface(context),
-              ),
-            ),
-          ),
-        ],
+          );
+        },
       ),
     );
   }

@@ -68,6 +68,7 @@ mixin _ReaderPageFields on State<ReaderPage> {
   Future<void>? _bookmarkNavigationTask;
   bool _progressPreviewActive = false;
   bool _readerPanelOpen = false;
+  bool _desktopSidebarOpen = true;
   double? _pendingChapterPreview;
   bool _chapterPreviewScheduled = false;
   int? _previewLoadGeneration;

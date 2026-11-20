@@ -35,6 +35,109 @@ mixin _LibraryShelfChrome on _LibraryPageActions {
     ],
   );
 
+  Widget _desktopArchiveHeader(BuildContext context) {
+    final palette = HomePalette.of(context);
+    return Container(
+      padding: const EdgeInsets.fromLTRB(24, 12, 24, 10),
+      decoration: BoxDecoration(
+        color: palette.canvas,
+        border: Border(bottom: BorderSide(color: palette.line)),
+      ),
+      child: _editing
+          ? _editBar(context)
+          : LayoutBuilder(
+              builder: (context, constraints) {
+                final showLabels = constraints.maxWidth >= 720;
+                return Row(
+                  children: [
+                    Text(
+                      '书架',
+                      style: TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.w700,
+                        color: palette.ink,
+                      ),
+                    ),
+                    const SizedBox(width: 20),
+                    Expanded(
+                      child: Align(
+                        alignment: Alignment.centerLeft,
+                        child: ConstrainedBox(
+                          constraints: const BoxConstraints(maxWidth: 320),
+                          child: _tabSegments(context),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    _desktopShelfAction(
+                      key: const Key('library-import-button'),
+                      icon: CupertinoIcons.arrow_down_doc,
+                      label: '导入图书',
+                      showLabel: showLabels,
+                      palette: palette,
+                      onPressed: _importLocalBook,
+                    ),
+                    const SizedBox(width: 8),
+                    GlassMenuAnchor(
+                      child: Builder(
+                        builder: (anchor) => _desktopShelfAction(
+                          key: const Key('library-more-button'),
+                          icon: CupertinoIcons.ellipsis,
+                          label: '更多',
+                          showLabel: showLabels,
+                          palette: palette,
+                          onPressed: () => _openMoreMenu(anchor),
+                        ),
+                      ),
+                    ),
+                  ],
+                );
+              },
+            ),
+    );
+  }
+
+  Widget _desktopShelfAction({
+    required Key key,
+    required IconData icon,
+    required String label,
+    required bool showLabel,
+    required HomePalette palette,
+    required VoidCallback onPressed,
+  }) {
+    final button = OutlinedButton(
+      key: key,
+      onPressed: onPressed,
+      style: OutlinedButton.styleFrom(
+        foregroundColor: palette.ink,
+        backgroundColor: palette.surface,
+        side: BorderSide(color: palette.line),
+        padding: EdgeInsets.symmetric(horizontal: showLabel ? 12 : 8),
+        minimumSize: const Size(34, 34),
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 16, color: palette.ink),
+          if (showLabel) ...[
+            const SizedBox(width: 6),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w500,
+                color: palette.ink,
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+    return Tooltip(message: label, child: button);
+  }
+
   /// 一级 tab：上游 `WenkuControls.segments` 三段（书架 / 浏览历史 / 收藏）。
   Widget _tabSegments(BuildContext context) => WenkuControls.segments<int>(
     context,

@@ -6,6 +6,7 @@ import '../services/api_client.dart';
 import '../services/desktop_platform.dart';
 import '../services/user_facing_error.dart';
 import '../widgets/category/category_dim_rail.dart';
+import '../widgets/desktop_shell_scope.dart';
 import '../widgets/home/home_design.dart';
 import '../widgets/home/home_feed_states.dart';
 import 'search_page.dart';
@@ -317,8 +318,16 @@ class _TopBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = HomePalette.of(context);
-    return SizedBox(
+    final inDesktopFrame =
+        isWindowsDesktop && DesktopShellScope.hasFrameOf(context);
+    return Container(
       height: 48,
+      decoration: isWindowsDesktop
+          ? BoxDecoration(
+              color: palette.canvas,
+              border: Border(bottom: BorderSide(color: palette.line)),
+            )
+          : null,
       child: Row(
         children: [
           // 桌面壳层顶栏已经有「← 什锦铺」，这里再放一个返回键就是两个
@@ -370,12 +379,13 @@ class _TopBar extends StatelessWidget {
                     },
                   ),
           ),
-          IconButton(
-            key: const Key('category_search'),
-            icon: Icon(LucideIcons.search, size: 20, color: palette.ink),
-            tooltip: '搜索',
-            onPressed: onSearch,
-          ),
+          if (!inDesktopFrame)
+            IconButton(
+              key: const Key('category_search'),
+              icon: Icon(LucideIcons.search, size: 20, color: palette.ink),
+              tooltip: '搜索',
+              onPressed: onSearch,
+            ),
         ],
       ),
     );

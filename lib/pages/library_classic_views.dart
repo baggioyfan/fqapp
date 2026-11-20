@@ -201,101 +201,132 @@ mixin _LibraryClassicViews on _LibraryClassicChrome {
   }
 
   Widget _classicGrid(List<_ShelfEntry> entries, int tab) => LayoutBuilder(
-    builder: (context, constraints) => GridView.builder(
-      physics: const AlwaysScrollableScrollPhysics(),
-      key: PageStorageKey('classic-shelf-grid-$tab'),
-      padding: const EdgeInsets.fromLTRB(
-        ShelfTokens.screenPadding,
-        ShelfTokens.spaceXS,
-        ShelfTokens.screenPadding,
-        ShelfTokens.contentBottomInset,
-      ),
-      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: ShelfTokens.gridColumns,
-        crossAxisSpacing: ShelfTokens.gridSpacing,
-        mainAxisSpacing: ShelfTokens.gridRunSpacing,
-        childAspectRatio: shelfGridChildAspectRatio(
-          context,
-          availableWidth: constraints.maxWidth,
+    builder: (context, constraints) {
+      final columns = isWindowsDesktop
+          ? ((constraints.maxWidth - ShelfTokens.screenPadding * 2) / 168)
+                .floor()
+                .clamp(ShelfTokens.gridColumns, 8)
+          : ShelfTokens.gridColumns;
+      return GridView.builder(
+        physics: const AlwaysScrollableScrollPhysics(),
+        key: PageStorageKey('classic-shelf-grid-$tab'),
+        padding: EdgeInsets.fromLTRB(
+          ShelfTokens.screenPadding,
+          ShelfTokens.spaceXS,
+          ShelfTokens.screenPadding,
+          isWindowsDesktop ? 24.0 : ShelfTokens.contentBottomInset,
         ),
+        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+          crossAxisCount: columns,
+          crossAxisSpacing: ShelfTokens.gridSpacing,
+          mainAxisSpacing: ShelfTokens.gridRunSpacing,
+          childAspectRatio: shelfGridChildAspectRatio(
+            context,
+            availableWidth: constraints.maxWidth,
+            columns: columns,
+          ),
+        ),
+        itemCount: entries.length,
+        itemBuilder: (context, index) {
+          final entry = entries[index];
+          return BookshelfGridCard(
+            key: ValueKey('shelf-grid-${entry.selectionKey}'),
+            item: entry.item,
+            badgeText: entry.badgeText,
+            infoText: entry.infoText,
+            editing: _editing,
+            selected: _selected.contains(entry.selectionKey),
+            onTap: () => _tap(entry),
+            onLongPress: () => _longPress(entry),
+          );
+        },
+      );
+    },
+  );
+
+  Widget _classicDoubleGrid(List<_ShelfEntry> entries, int tab) =>
+      LayoutBuilder(
+        builder: (context, constraints) {
+          final columns = isWindowsDesktop
+              ? ((constraints.maxWidth - ShelfTokens.screenPadding * 2) / 340)
+                    .floor()
+                    .clamp(2, 4)
+              : 2;
+          return GridView.builder(
+            physics: const AlwaysScrollableScrollPhysics(),
+            key: PageStorageKey('classic-shelf-double-$tab'),
+            padding: EdgeInsets.fromLTRB(
+              ShelfTokens.screenPadding,
+              ShelfTokens.spaceXS,
+              ShelfTokens.screenPadding,
+              isWindowsDesktop ? 24.0 : ShelfTokens.contentBottomInset,
+            ),
+            gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: columns,
+              crossAxisSpacing: ShelfTokens.gridSpacing,
+              mainAxisSpacing: ShelfTokens.gridSpacing,
+              childAspectRatio: shelfDoubleChildAspectRatio(
+                context,
+                availableWidth: constraints.maxWidth,
+                columns: columns,
+              ),
+            ),
+            itemCount: entries.length,
+            itemBuilder: (context, index) {
+              final entry = entries[index];
+              return BookshelfDoubleCard(
+                key: ValueKey('shelf-double-${entry.selectionKey}'),
+                item: entry.item,
+                badgeText: entry.badgeText,
+                subtitleText: entry.subtitleText,
+                editing: _editing,
+                selected: _selected.contains(entry.selectionKey),
+                onTap: () => _tap(entry),
+                onLongPress: () => _longPress(entry),
+              );
+            },
+          );
+        },
+      );
+
+  Widget _classicList(List<_ShelfEntry> entries, int tab) {
+    final list = ListView.separated(
+      physics: const AlwaysScrollableScrollPhysics(),
+      key: PageStorageKey('classic-shelf-list-$tab'),
+      padding: EdgeInsets.only(
+        left: isWindowsDesktop ? 16 : 0,
+        right: isWindowsDesktop ? 16 : 0,
+        top: ShelfTokens.spaceXS,
+        bottom: isWindowsDesktop ? 24.0 : ShelfTokens.contentBottomInset,
       ),
       itemCount: entries.length,
+      separatorBuilder: (context, index) => Divider(
+        height: .5,
+        thickness: .5,
+        color: HomePalette.of(context).line,
+      ),
       itemBuilder: (context, index) {
         final entry = entries[index];
-        return BookshelfGridCard(
-          key: ValueKey('shelf-grid-${entry.selectionKey}'),
+        return BookshelfListCard(
+          key: ValueKey('shelf-list-${entry.selectionKey}'),
           item: entry.item,
-          badgeText: entry.badgeText,
-          infoText: entry.infoText,
+          progressText: entry.readingText,
+          metaText: entry.metaText,
+          progress: entry.progress,
           editing: _editing,
           selected: _selected.contains(entry.selectionKey),
           onTap: () => _tap(entry),
           onLongPress: () => _longPress(entry),
         );
       },
-    ),
-  );
-
-  Widget _classicDoubleGrid(List<_ShelfEntry> entries, int tab) =>
-      LayoutBuilder(
-        builder: (context, constraints) => GridView.builder(
-          physics: const AlwaysScrollableScrollPhysics(),
-          key: PageStorageKey('classic-shelf-double-$tab'),
-          padding: const EdgeInsets.fromLTRB(
-            ShelfTokens.screenPadding,
-            ShelfTokens.spaceXS,
-            ShelfTokens.screenPadding,
-            ShelfTokens.contentBottomInset,
-          ),
-          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-            crossAxisCount: 2,
-            crossAxisSpacing: ShelfTokens.gridSpacing,
-            mainAxisSpacing: ShelfTokens.gridSpacing,
-            childAspectRatio: shelfDoubleChildAspectRatio(
-              context,
-              availableWidth: constraints.maxWidth,
-            ),
-          ),
-          itemCount: entries.length,
-          itemBuilder: (context, index) {
-            final entry = entries[index];
-            return BookshelfDoubleCard(
-              key: ValueKey('shelf-double-${entry.selectionKey}'),
-              item: entry.item,
-              badgeText: entry.badgeText,
-              subtitleText: entry.subtitleText,
-              editing: _editing,
-              selected: _selected.contains(entry.selectionKey),
-              onTap: () => _tap(entry),
-              onLongPress: () => _longPress(entry),
-            );
-          },
-        ),
-      );
-
-  Widget _classicList(List<_ShelfEntry> entries, int tab) => ListView.separated(
-    physics: const AlwaysScrollableScrollPhysics(),
-    key: PageStorageKey('classic-shelf-list-$tab'),
-    padding: const EdgeInsets.only(
-      top: ShelfTokens.spaceXS,
-      bottom: ShelfTokens.contentBottomInset,
-    ),
-    itemCount: entries.length,
-    separatorBuilder: (context, index) =>
-        Divider(height: .5, thickness: .5, color: HomePalette.of(context).line),
-    itemBuilder: (context, index) {
-      final entry = entries[index];
-      return BookshelfListCard(
-        key: ValueKey('shelf-list-${entry.selectionKey}'),
-        item: entry.item,
-        progressText: entry.readingText,
-        metaText: entry.metaText,
-        progress: entry.progress,
-        editing: _editing,
-        selected: _selected.contains(entry.selectionKey),
-        onTap: () => _tap(entry),
-        onLongPress: () => _longPress(entry),
-      );
-    },
-  );
+    );
+    if (!isWindowsDesktop) return list;
+    return Align(
+      alignment: Alignment.topCenter,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 1080),
+        child: list,
+      ),
+    );
+  }
 }

@@ -17,6 +17,7 @@ import '../services/desktop_platform.dart';
 import '../services/search_history_store.dart';
 import '../services/user_facing_error.dart';
 import '../widgets/app_ui/app_ui_scope.dart';
+import '../widgets/desktop_shell_scope.dart';
 import '../widgets/home/home_design.dart';
 import '../widgets/home/home_media_card.dart';
 import '../widgets/home/home_shelf.dart';
@@ -305,6 +306,7 @@ class _SearchPageState extends State<SearchPage> {
   @override
   void initState() {
     super.initState();
+    if (isWindowsDesktop) DesktopShellState.enterSearch();
     // 首帧就停在该页签：分区入口（短剧/漫剧）进来的搜索不该先闪「综合」。
     _tabIndex = _categories.indexOf(widget.initialCategory);
     _scrollController.addListener(_onScroll);
@@ -1009,6 +1011,7 @@ class _SearchPageState extends State<SearchPage> {
 
   @override
   void dispose() {
+    if (isWindowsDesktop) DesktopShellState.exitSearch();
     ++_requestGeneration;
     ++_suggestGeneration;
     _activeRequest?.cancel();
@@ -1048,7 +1051,7 @@ class _SearchPageState extends State<SearchPage> {
             alignment: Alignment.topCenter,
             child: ConstrainedBox(
               constraints: BoxConstraints(
-                maxWidth: isWindowsDesktop ? double.infinity : 840,
+                maxWidth: isWindowsDesktop ? 1180 : 840,
               ),
               // Upstream pads the whole search plane by the tab height, so
               // the scroll viewport starts below the search capsule and rows
@@ -1076,9 +1079,7 @@ class _SearchPageState extends State<SearchPage> {
   Widget _header(BuildContext context) => Align(
     alignment: Alignment.topCenter,
     child: ConstrainedBox(
-      constraints: BoxConstraints(
-        maxWidth: isWindowsDesktop ? double.infinity : 840,
-      ),
+      constraints: BoxConstraints(maxWidth: isWindowsDesktop ? 1180 : 840),
       child: Column(
         children: [
           SizedBox(
@@ -1502,7 +1503,7 @@ class _SearchPageState extends State<SearchPage> {
               // 与首页同一个阅读宽度：非 Windows 压到 840dp 并居中。
               child: ConstrainedBox(
                 constraints: BoxConstraints(
-                  maxWidth: isWindowsDesktop ? double.infinity : 840,
+                  maxWidth: isWindowsDesktop ? 1180 : 840,
                 ),
                 child: _classicContent(context, feed),
               ),

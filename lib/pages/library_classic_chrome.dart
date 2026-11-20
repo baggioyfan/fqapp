@@ -87,18 +87,20 @@ mixin _LibraryClassicChrome on _LibraryShelfViews {
             ),
           ),
         ),
-        IconButton(
-          key: const Key('library-search-button'),
-          tooltip: '搜索',
-          onPressed: _openSearch,
-          style: IconButton.styleFrom(
-            foregroundColor: palette.ink,
-            padding: const EdgeInsets.all(8),
-            minimumSize: const Size(48, 48),
+        if (!(isWindowsDesktop && DesktopShellScope.hasFrameOf(context))) ...[
+          IconButton(
+            key: const Key('library-search-button'),
+            tooltip: '搜索',
+            onPressed: _openSearch,
+            style: IconButton.styleFrom(
+              foregroundColor: palette.ink,
+              padding: const EdgeInsets.all(8),
+              minimumSize: const Size(48, 48),
+            ),
+            icon: const Icon(LucideIcons.search, size: 21),
           ),
-          icon: const Icon(LucideIcons.search, size: 21),
-        ),
-        const SizedBox(width: 6),
+          const SizedBox(width: 6),
+        ],
         PopupMenuButton<_ClassicMenuAction>(
           key: const Key('library-more-button'),
           tooltip: '更多',

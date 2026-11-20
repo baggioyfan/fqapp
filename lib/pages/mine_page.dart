@@ -8,8 +8,10 @@ import '../models/media_item.dart';
 import '../models/reading_stats.dart';
 import '../services/app_style_tokens.dart';
 import '../services/book_open_preferences.dart';
+import '../services/desktop_platform.dart';
 import '../services/library_store.dart';
 import '../services/media_history_store.dart';
+import '../widgets/desktop_shell_scope.dart';
 import '../widgets/home/home_design.dart';
 import '../widgets/home/home_shelf.dart';
 import '../widgets/mine/classic_mine_entries.dart';
@@ -117,9 +119,157 @@ class _MinePageState extends State<MinePage> {
   @override
   Widget build(BuildContext context) {
     final style = AppStyleTokens.of(context);
+    final inDesktopFrame =
+        isWindowsDesktop && DesktopShellScope.hasFrameOf(context);
     if (style.isClassic) {
       final palette = HomePalette.of(context);
       final today = DateUtils.dateOnly(DateTime.now());
+      if (isWindowsDesktop) {
+        return Scaffold(
+          backgroundColor: palette.canvas,
+          appBar: inDesktopFrame
+              ? null
+              : AppBar(
+                  title: const Text('我的'),
+                  centerTitle: false,
+                  backgroundColor: palette.canvas,
+                  surfaceTintColor: Colors.transparent,
+                  scrolledUnderElevation: 0,
+                  actions: [
+                    IconButton(
+                      key: const ValueKey('classic-mine-settings'),
+                      tooltip: '应用设置',
+                      icon: const Icon(LucideIcons.settings, size: 21),
+                      onPressed: () => Navigator.push(
+                        context,
+                        MaterialPageRoute<void>(
+                          builder: (_) => const SettingsPage(),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 4),
+                  ],
+                ),
+          body: LayoutBuilder(
+            builder: (context, constraints) {
+              final wide = constraints.maxWidth >= 960;
+              final desktopTopBar = inDesktopFrame
+                  ? Padding(
+                      padding: const EdgeInsets.only(bottom: 12),
+                      child: Row(
+                        children: [
+                          Text(
+                            '我的',
+                            style: TextStyle(
+                              fontSize: 22,
+                              fontWeight: FontWeight.w700,
+                              color: palette.ink,
+                            ),
+                          ),
+                          const Spacer(),
+                          IconButton(
+                            key: const ValueKey('classic-mine-settings'),
+                            tooltip: '应用设置',
+                            icon: Icon(
+                              LucideIcons.settings,
+                              size: 20,
+                              color: palette.ink,
+                            ),
+                            onPressed: () => Navigator.push(
+                              context,
+                              MaterialPageRoute<void>(
+                                builder: (_) => const SettingsPage(),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    )
+                  : const SizedBox.shrink();
+              if (wide) {
+                return ListView(
+                  key: const PageStorageKey('my-page-classic'),
+                  padding: const EdgeInsets.fromLTRB(24, 16, 24, 24),
+                  children: [
+                    Center(
+                      child: ConstrainedBox(
+                        constraints: const BoxConstraints(maxWidth: 1180),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            desktopTopBar,
+                            Row(
+                              key: const Key('windows-mine-two-column'),
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Expanded(
+                                  flex: 6,
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.stretch,
+                                    children: [
+                                      ClassicMineSummary(
+                                        stats: _stats,
+                                        today: today,
+                                      ),
+                                      ClassicMineHeatmap(
+                                        stats: _stats,
+                                        today: today,
+                                      ),
+                                      ClassicMineTopBooks(
+                                        rank: _stats.rank,
+                                        onOpen: _openEntry,
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                const SizedBox(width: 24),
+                                const Expanded(
+                                  flex: 4,
+                                  child: ClassicMineEntries(),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                );
+              }
+              return ListView(
+                key: const PageStorageKey('my-page-classic'),
+                padding: EdgeInsets.fromLTRB(
+                  16,
+                  inDesktopFrame ? 16 : 0,
+                  16,
+                  homeBottomClearance(context),
+                ),
+                children: [
+                  Center(
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 760),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          desktopTopBar,
+                          ClassicMineSummary(stats: _stats, today: today),
+                          ClassicMineHeatmap(stats: _stats, today: today),
+                          ClassicMineTopBooks(
+                            rank: _stats.rank,
+                            onOpen: _openEntry,
+                          ),
+                          const ClassicMineEntries(),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              );
+            },
+          ),
+        );
+      }
       return Scaffold(
         backgroundColor: palette.canvas,
         appBar: AppBar(
@@ -150,6 +300,110 @@ class _MinePageState extends State<MinePage> {
             ClassicMineTopBooks(rank: _stats.rank, onOpen: _openEntry),
             const ClassicMineEntries(),
           ],
+        ),
+      );
+    }
+    if (isWindowsDesktop) {
+      final palette = HomePalette.of(context);
+      final statsEntry = FeatureEntry(
+        key: const ValueKey('mine-statistics'),
+        title: '统计',
+        subtitle: '阅读记录、藏书与阅读时长',
+        icon: CupertinoIcons.chart_bar,
+        onTap: () => Navigator.push(
+          context,
+          MaterialPageRoute<void>(
+            builder: (_) => const ReadingStatisticsPage(),
+          ),
+        ),
+      );
+      Widget buildDesktopBody() => LayoutBuilder(
+        builder: (context, constraints) {
+          final wide = constraints.maxWidth >= 920;
+          if (wide) {
+            return ListView(
+              key: const PageStorageKey('my-page'),
+              padding: const EdgeInsets.fromLTRB(24, 16, 24, 24),
+              children: [
+                Center(
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 1120),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        if (inDesktopFrame) ...[
+                          const ArchiveMasthead(
+                            title: '我的',
+                            code: '04 / PERSONAL ARCHIVE',
+                          ),
+                          const SizedBox(height: 16),
+                        ],
+                        Row(
+                          key: const Key('windows-mine-two-column'),
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Expanded(
+                              flex: 5,
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.stretch,
+                                children: [
+                                  const _LocalIdentityPanel(),
+                                  SizedBox(height: style.sectionGap),
+                                  statsEntry,
+                                ],
+                              ),
+                            ),
+                            const SizedBox(width: 20),
+                            const Expanded(flex: 6, child: MineEntries()),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            );
+          }
+          return Align(
+            alignment: Alignment.topCenter,
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 760),
+              child: ListView(
+                key: const PageStorageKey('my-page'),
+                padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
+                children: [
+                  if (inDesktopFrame) ...[
+                    const ArchiveMasthead(
+                      title: '我的',
+                      code: '04 / PERSONAL ARCHIVE',
+                    ),
+                    const SizedBox(height: 16),
+                  ],
+                  const _LocalIdentityPanel(),
+                  SizedBox(height: style.sectionGap),
+                  statsEntry,
+                  SizedBox(height: style.entryGap),
+                  const MineEntries(),
+                ],
+              ),
+            ),
+          );
+        },
+      );
+      if (inDesktopFrame) {
+        return Scaffold(
+          backgroundColor: palette.canvas,
+          body: buildDesktopBody(),
+        );
+      }
+      return WenkuPage(
+        header: const Align(
+          alignment: Alignment.centerLeft,
+          child: ArchiveMasthead(title: '我的', code: '04 / PERSONAL ARCHIVE'),
+        ),
+        child: Padding(
+          padding: EdgeInsets.only(top: featurePadding(context).top),
+          child: buildDesktopBody(),
         ),
       );
     }
