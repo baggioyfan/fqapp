@@ -1279,6 +1279,18 @@ fn playable_url_text(url: &str) -> bool {
     url.starts_with("http://") || url.starts_with("https://") || url.starts_with("/src/")
 }
 
+/// 取流请求里声明的「设备档位」，它决定上游下发哪一套编码。
+///
+/// 2026-11-20 实测（真上游，同一集 `7703930971434798105`，逐台设备逐档位）：
+/// `device_level = 3` 时，注册设备拿到的五档全是 `bytevc2`（H.266，字节自研
+/// 编码，Android 播放链路上没有解码器），只有 id 全零那种非法设备才回落到
+/// `bytevc1`（h265_hvc1）；换成 4/5/6 之后，**每一台设备**都拿到 bytevc1 的
+/// 1080p/720p/540p/480p/360p 五档。这说明码流不是按设备身份分流的 —— 之前
+/// 那些「同一集时好时坏」是上游在灰度把片源换成 H.266，3 档被判进了灰度名单。
+///
+/// 所以这里不再靠重掷设备碰运气：直接按高档位声明，拿 H.265。
+const PLAYBACK_DEVICE_LEVEL: i64 = 5;
+
 /// The door the upstream moved to on 2026-11-16.
 ///
 /// The older playback doors now answer `HTTP 200` with a zero-byte body - a
@@ -1584,7 +1596,7 @@ fn v5_playback_body(video_id: &str) -> ApiResult<Vec<u8>> {
     let plain = serde_json::to_vec(&json!({
         "biz_param": {
             "detail_page_version": 0,
-            "device_level": 3,
+            "device_level": PLAYBACK_DEVICE_LEVEL,
             "disable_digg_stat": false,
             "disable_video_relate_book": false,
             "need_all_video_definition": true,
@@ -2887,7 +2899,7 @@ fn video_detail_body(
     has_platform: bool,
 ) -> ApiResult<Vec<u8>> {
     let mut biz_param = Map::new();
-    biz_param.insert("device_level".to_string(), json!(3));
+    biz_param.insert("device_level".to_string(), json!(PLAYBACK_DEVICE_LEVEL));
     biz_param.insert("need_all_video_definition".to_string(), json!(true));
     biz_param.insert("need_mp4_align".to_string(), json!(false));
     biz_param.insert("source".to_string(), json!(source));
@@ -2925,7 +2937,7 @@ fn handle_pseries<'a>(ctx: &'a Ctx, params: &'a Params) -> BoxFuture<'a, ApiResu
         let post_body = serde_json::to_vec(&json!({
             "biz_param": {
                 "detail_page_version": 0,
-                "device_level": 3,
+                "device_level": PLAYBACK_DEVICE_LEVEL,
                 "disable_digg_stat": false,
                 "need_all_video_definition": true,
                 "need_mp4_align": false,

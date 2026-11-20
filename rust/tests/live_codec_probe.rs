@@ -86,7 +86,39 @@ async fn probe_one(srv: &Server, video_id: &str) -> bool {
 #[ignore = "hits the live fanqie upstream"]
 async fn probe_stream_tiers() {
     let dir = TempDir::new("codec-live");
-    let srv = build_server(&dir, None, &[], &[], &pool_json(5)).await;
+    let pool_size = std::env::var("PROBE_POOL")
+        .ok()
+        .and_then(|n| n.parse::<usize>().ok())
+        .unwrap_or(5);
+    // PROBE_POOL_IDS 用「一台设备一个池」的方式逐台测：handler 有「优先已知可解
+    // 设备」的逻辑，一个池里放多台时只要第一台成功就永远试不到其余的。
+    let pool = match std::env::var("PROBE_POOL_IDS") {
+        Ok(raw) => {
+            let devices: Vec<serde_json::Value> = raw
+                .split(',')
+                .map(str::trim)
+                .filter(|id| !id.is_empty())
+                .enumerate()
+                .map(|(i, id)| {
+                    serde_json::json!({
+                        "device_id": id,
+                        "install_id": format!("{}", 9_000_000_000_000_000_000u64 + i as u64),
+                        "secret_key": format!("{:032x}", i),
+                        "platform": "android",
+                        "status": "active",
+                        "created_time": "2026-01-01 00:00:00",
+                        "last_used": "2026-01-01 00:00:00",
+                        "use_count": 0,
+                        "cdid": format!("cdid-{i}"),
+                    })
+                })
+                .collect();
+            serde_json::json!({ "android": devices, "last_update": "2026-01-01 00:00:00" })
+                .to_string()
+        }
+        Err(_) => pool_json(pool_size),
+    };
+    let srv = build_server(&dir, None, &[], &[], &pool).await;
 
     let mut ids: Vec<String> = Vec::new();
     if let Ok(one) = std::env::var("PROBE_ID") {

@@ -486,3 +486,46 @@ async fn a_pool_of_rejecting_devices_still_reaches_the_only_playable_one() {
         playback_requests(&upstream)
     );
 }
+
+/// 取流请求里声明的设备档位决定上游下发哪一套编码。
+///
+/// 2026-11-20 实测（真上游，同一集，逐台设备逐档位）：`device_level=3` 时注册
+/// 设备拿到的五档全是 bytevc2（H.266，播放链路上没有解码器），整集必然以
+/// 「该视频暂不支持播放」结束；4/5/6 时每一台设备都拿到 h265_hvc1 的五档。
+/// 所以这条钉住「请求体里必须是高档位」，免得以后有人按官方默认值把它改回 3
+/// —— 那会让所有剧集又变回播不了，而且看起来像是片源问题。
+#[tokio::test]
+async fn the_playback_request_declares_a_device_level_that_gets_h265() {
+    let upstream = MockUpstream::start(|req| {
+        if !req.path.contains("multi_video_model") {
+            return MockReply::json(json!({"data": {}}));
+        }
+        MockReply::json(json!({"data": {"video_model": {
+            "key_seed": "AAAA",
+            "video_list": {
+                "video_1": {"main_url": ALLOWED_URL, "codec_type": "h264", "spade_a": SPADE_A}
+            }
+        }}}))
+    })
+    .await;
+    let dir = TempDir::new("video-device-level");
+    let server = build_server(&dir, Some(upstream.origin.clone()), &[], &[], &pool_json(3)).await;
+
+    let (status, body) = request_video(&server, "video_id=level-episode&mode=stream").await;
+    assert_eq!(status, 200, "{body}");
+
+    let playback = upstream
+        .requests()
+        .into_iter()
+        .find(|request| request.path.contains("multi_video_model"))
+        .expect("a playback request");
+    let mut decoder = flate2::read::GzDecoder::new(playback.body.as_slice());
+    let mut plain = String::new();
+    std::io::Read::read_to_string(&mut decoder, &mut plain).expect("gzipped playback body");
+    let parsed: serde_json::Value = serde_json::from_str(&plain).expect("playback body json");
+    assert_eq!(
+        parsed["biz_param"]["device_level"].as_i64(),
+        Some(5),
+        "device_level=3 makes upstream serve bytevc2 (H.266), which this player cannot decode: {plain}"
+    );
+}
