@@ -125,10 +125,14 @@ extension _ReaderPageSelection on _ReaderPageState {
   /// 官方 D(): finger above the selection's vertical midpoint drags the start
   /// bound, below it the end bound.
   bool _dragIsStartBound(Offset global) {
-    final startTop = _selectionBoundGlobal(isStart: true)?.dy;
-    final endBottom = _selectionBoundGlobal(isStart: false)?.dy;
-    if (startTop == null || endBottom == null) return true;
-    return global.dy < (startTop + endBottom) / 2;
+    final start = _selectionBoundGlobal(isStart: true);
+    final end = _selectionBoundGlobal(isStart: false);
+    if (start == null || end == null) return true;
+    final columnWidth = _chapterLayout?.spec.width ?? 0;
+    if (columnWidth > 0 && (end.dx - start.dx).abs() > columnWidth) {
+      return global.dx < (start.dx + end.dx) / 2;
+    }
+    return global.dy < (start.dy + end.dy) / 2;
   }
 
   /// Global position of one bound's anchor — the start bound's line top or
@@ -141,12 +145,21 @@ extension _ReaderPageSelection on _ReaderPageState {
     final textOffset = isStart ? selection.start : selection.end - 1;
     final block = layout.blockForAnchor(textOffset, isStart: isStart);
     if (block == null) return null;
-    final entry = scope.geometry.entryFor(block.index);
+    final localOffset = _boundOffsetInBlock(
+      textOffset,
+      block,
+      isStart: isStart,
+    );
+    final line = lineForOffset(block, localOffset);
+    final entry = scope.geometry.entryFor(
+      block.index,
+      blockY: (line.top + line.bottom) / 2,
+    );
     if (entry == null) return null;
     final anchor = selectionAnchor(
       block: block,
       painter: entry.painter,
-      textOffset: _boundOffsetInBlock(textOffset, block, isStart: isStart),
+      textOffset: localOffset,
       isStart: isStart,
       columnWidth: layout.spec.width,
     );
