@@ -9,6 +9,7 @@ pub mod crypto;
 pub mod pool_crypto;
 pub mod register;
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
@@ -558,6 +559,25 @@ impl DevicePool {
                 .cloned()
         };
         picked.ok_or_else(|| format!("no alternate device besides {device_id}"))
+    }
+
+    /// Least-recently-used device that is not in `exclude`.
+    ///
+    /// 码流重掷要的是一台「还没问过」的设备：只排除上一台时，两台的
+    /// `last_used` 落在同一秒里会来回弹（同一份答复问两次），而池子里真正
+    /// 给得出可解档位的那台可能一直轮不到。按集合排除才能把池子扫一遍。
+    pub async fn get_excluding_set(&self, exclude: &HashSet<String>) -> Result<Device, String> {
+        let picked = {
+            let mut s = self.state.lock().await;
+            s.devices.sort_by(|a, b| a.last_used.cmp(&b.last_used));
+            s.devices
+                .iter()
+                .find(|device| {
+                    !exclude.contains(&device.device_id) && !device.secret_key.is_empty()
+                })
+                .cloned()
+        };
+        picked.ok_or_else(|| format!("no device left outside the excluded {} ids", exclude.len()))
     }
 
     /// Registers a fresh device and swaps it in for a failed one.

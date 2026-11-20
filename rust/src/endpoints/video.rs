@@ -318,6 +318,16 @@ impl RecoveryDevice {
         self.state.lock().await.device_id.clone()
     }
 
+    /// 松开钉住的恢复设备。
+    ///
+    /// 它被选来修「空载荷」，代表的是「这台设备还能出片」；但码流是另一回事 ——
+    /// 同一台设备可能一直只给 bytevc2。钉着它重掷只会把同一台问满整个额度
+    /// （实测平板上一条请求 9 次答复完全一样）。`attempted` 保持为 true，
+    /// 因此松开之后不会再去申请新身份注册，只是回到池子轮转。
+    async fn release(&self) {
+        self.state.lock().await.device_id = None;
+    }
+
     async fn record_attempt(
         &self,
         fetched: &FetchedVideoSource,
@@ -766,6 +776,9 @@ async fn run_stream_video_source(
     // 全档 bytevc2 有自己的一份重掷额度：它和网络抖动不是一类失败，不该占
     // 网络重试阶梯的位置，也不该被阶梯的长度卡死在两次。
     let mut codec_retries = 0usize;
+    // 这一条请求里已经因为「全档 bytevc2」被拒过的设备。重掷时按集合排除，
+    // 才不会在两台不可解的设备之间来回弹。
+    let mut codec_rejected_devices: HashSet<String> = HashSet::new();
 
     loop {
         let attempt_started = Instant::now();
@@ -775,8 +788,13 @@ async fn run_stream_video_source(
             source.name(),
             runtime.started.elapsed().as_millis(),
         );
-        if let Some(device_id) = recovery.current().await {
-            retry_pin = device_id;
+        // 恢复设备是为「空载荷」准备的（换一台刚注册的身份重试），但它不该盖掉
+        // 码流重掷刚挑好的设备：实测平板上一条请求里 9 次重掷全被钉回同一台，
+        // 9 次的答复自然一模一样，重掷等于空转。
+        if retry_pin.is_empty() {
+            if let Some(device_id) = recovery.current().await {
+                retry_pin = device_id;
+            }
         }
         if retry_pin.is_empty() {
             // 已知可解的设备优先：分流按设备给，先挑对的远比事后重掷便宜。
@@ -913,11 +931,16 @@ async fn run_stream_video_source(
             // 在同一秒里会被交回同一台（实测连打 9 次全落在同一台设备上），那
             // 等于根本没换。先挑已知可解的设备，没有就显式排除被拒的这一台。
             let rejected = fetched.device_id.clone().unwrap_or_default();
+            // 恢复设备的钉必须先松开，否则下一轮循环开头又把它盖回来。
+            recovery.release().await;
+            if !rejected.is_empty() {
+                codec_rejected_devices.insert(rejected.clone());
+            }
             retry_pin = match ctx.pool.preferred_codec_device_excluding(&rejected) {
                 Some(device_id) => device_id,
                 None => ctx
                     .pool
-                    .get_excluding(&rejected)
+                    .get_excluding_set(&codec_rejected_devices)
                     .await
                     .map(|device| device.device_id)
                     .unwrap_or_default(),

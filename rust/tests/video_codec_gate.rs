@@ -446,3 +446,43 @@ fn playback_requests(upstream: &MockUpstream) -> usize {
         .filter(|request| request.path.contains("multi_video_model"))
         .count()
 }
+
+/// 池子里只有一台给得出可解档位，其余全拒。重掷必须把池子扫一遍才能碰到它 ——
+/// 只排除「上一台」会出问题：两台设备的 `last_used` 落在同一秒时排序不倒，
+/// 排除 A 拿到 B、排除 B 又拿回 A，好设备永远轮不到（平板上实测就是这个：
+/// 一条请求 9 次重掷全落在同一台，答复一模一样）。
+#[tokio::test]
+async fn a_pool_of_rejecting_devices_still_reaches_the_only_playable_one() {
+    const GOOD_DEVICE: &str = "device_id=0000000000000004";
+    let upstream = MockUpstream::start(|req| {
+        if !req.path.contains("multi_video_model") {
+            return MockReply::json(json!({"data": {}}));
+        }
+        if req.query.contains(GOOD_DEVICE) {
+            return MockReply::json(json!({"data": {"video_model": {
+                "key_seed": "AAAA",
+                "video_list": {
+                    "video_1": {"main_url": ALLOWED_URL, "codec_type": "h264", "spade_a": SPADE_A}
+                }
+            }}}));
+        }
+        MockReply::json(json!({"data": {"video_model": {
+            "key_seed": "AAAA",
+            "video_list": {
+                "video_1": {"main_url": REJECTED_URL, "codec_type": "bytevc2"}
+            }
+        }}}))
+    })
+    .await;
+    let dir = TempDir::new("video-codec-sweep-pool");
+    let server = build_server(&dir, Some(upstream.origin.clone()), &[], &[], &pool_json(5)).await;
+
+    let (status, body) = request_video(&server, "video_id=one-episode&mode=stream").await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(body["video_url"], ALLOWED_URL, "{body}");
+    assert!(
+        playback_requests(&upstream) >= 5,
+        "a pool of rejecting devices must be swept before giving up, saw {} playback requests",
+        playback_requests(&upstream)
+    );
+}
