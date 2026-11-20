@@ -1359,7 +1359,8 @@ async fn fetch_playback_model(
     let mut reprobed = false;
 
     for round in 0..2u8 {
-        let plan = playback_routes::with_state(|state| state.plan(playback_routes::now_ms(), false));
+        let plan =
+            playback_routes::with_state(|state| state.plan(playback_routes::now_ms(), false));
         for route in plan {
             if attempts >= MAX_PLAYBACK_ATTEMPTS {
                 break;
@@ -1379,10 +1380,7 @@ async fn fetch_playback_model(
             if can_reprobe && crate::upstream::budget::retry_pause(SAME_DOOR_REPROBE_DELAY).await {
                 reprobed = true;
                 attempts += 1;
-                log::info!(
-                    "v5 trace event=door route={} result=reprobe",
-                    route.tag(),
-                );
+                log::info!("v5 trace event=door route={} result=reprobe", route.tag(),);
                 attempt = attempt_playback_route(
                     ctx,
                     video_id,
@@ -1440,8 +1438,7 @@ async fn fetch_playback_model(
         let can_rotate = round == 0
             && paced
             && (parked_now || due)
-            && crate::upstream::budget::remaining()
-                .map_or(true, |left| left > ROTATION_MIN_BUDGET);
+            && crate::upstream::budget::remaining().map_or(true, |left| left > ROTATION_MIN_BUDGET);
         if !can_rotate {
             break;
         }

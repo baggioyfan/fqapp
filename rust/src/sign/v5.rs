@@ -958,7 +958,10 @@ fn sign_playback_v5_with(
         let mut headers: Vec<(String, String)> = vec![
             ("x-khronos".to_string(), ts.to_string()),
             ("x-helios".to_string(), helios_v5(ts, rand_u32())),
-            ("x-medusa".to_string(), medusa_v5(&url, signed_body, ts, who)),
+            (
+                "x-medusa".to_string(),
+                medusa_v5(&url, signed_body, ts, who),
+            ),
         ];
 
         headers.push(("User-Agent".to_string(), V5_UA.to_string()));
