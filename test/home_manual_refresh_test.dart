@@ -51,6 +51,9 @@ void main() {
       ['a', 'b', 'c'],
       lastVid: 'b',
       tabIndex: _videoTabIndex,
+      // 响应会按分类重标 kind（视频流 → video），快照也得是同一个口径，
+      // 否则看到 `book:a` / `video:a` 两套键，去重形同虚设。
+      kind: 'video',
     );
     final harness = _Harness(
       cache,
@@ -164,23 +167,24 @@ Future<HomeFeedCache> _seededCache(
   List<String> ids, {
   required String lastVid,
   int tabIndex = _tabIndex,
+  String kind = 'book',
 }) async {
   final cache = await _emptyCache();
   await cache.save(
     tabIndex,
-    [for (final id in ids) _item(id)],
+    [for (final id in ids) _item(id, kind: kind)],
     hasMore: true,
     lastVid: lastVid,
   );
   return cache;
 }
 
-MediaItem _item(String id) => MediaItem(
+MediaItem _item(String id, {String kind = 'book'}) => MediaItem(
   id: id,
   title: id,
   cover: '',
   author: '',
   badge: '',
   ep: '',
-  kind: 'book',
+  kind: kind,
 );
