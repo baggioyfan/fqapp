@@ -242,8 +242,9 @@ Future<void> _loadLocalData() async {
     // AI 设置/缓存/反馈箱：失败只让 AI 功能退化，不能拖住阅读。
     optional(AiReadingController.instance.init),
     // 主题样式与 SharedPreferences 一并并行：两者都是启动链上的必要项，
-    // 但都不该排在并行段之后串行等。
-    spFuture.then<void>((_) {}),
+    // 不该排在并行段之后串行等。prefs 读失败即启动失败(失败页 + 重试);
+    // 样式 store 是可选外观偏好,内部吞错,读失败只回落默认外观(#421)。
+    spFuture,
     themeStyleFuture,
   ]);
   // 多端同步的网络或安全存储故障不阻塞本机阅读。旧 WebDAV 配置由统一服务只读接管，绝不在这里启动云端覆盖流程。
