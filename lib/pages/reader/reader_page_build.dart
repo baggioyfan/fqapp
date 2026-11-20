@@ -5,76 +5,106 @@ extension _ReaderPageBuild on _ReaderPageState {
   Widget _buildReader(BuildContext context) {
     if (!isWindowsDesktop) return _buildReaderSurface(context);
     return LayoutBuilder(
-      builder: (context, bounds) => ColoredBox(
-        color: _effectiveBackgroundColor,
-        child: Row(
-          children: [
-            if (bounds.maxWidth >= 1000)
-              DesktopChapterSidebar(
-                chapters: widget.chapters,
-                currentIndex: _index,
-                onSelected: (index) => unawaited(_jumpToChapter(index)),
-              ),
-            Expanded(
-              child: Center(
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 880),
-                  child: Stack(
-                    fit: StackFit.expand,
-                    children: [
-                      Focus(
-                        autofocus: true,
-                        onKeyEvent: (node, event) {
-                          if (event is! KeyDownEvent ||
-                              FocusManager.instance.primaryFocus?.context
-                                      ?.findAncestorWidgetOfExactType<
-                                        EditableText
-                                      >() !=
-                                  null) {
+      builder: (context, bounds) {
+        const sidebarWidth = 248.0;
+        final columnMode = _displayPreferences.columnMode;
+        final automaticSpreadWithoutSidebar =
+            _paged &&
+            columnMode == ReaderColumnMode.auto &&
+            columnMode.resolveColumns(Size(bounds.maxWidth, bounds.maxHeight)) >
+                1;
+        final sidebarWouldDisableAutomaticSpread =
+            automaticSpreadWithoutSidebar &&
+            columnMode.resolveColumns(
+                  Size(bounds.maxWidth - sidebarWidth, bounds.maxHeight),
+                ) ==
+                1;
+        final showSidebar =
+            bounds.maxWidth >= 1000 && !sidebarWouldDisableAutomaticSpread;
+        final viewport = Size(
+          bounds.maxWidth - (showSidebar ? sidebarWidth : 0),
+          bounds.maxHeight,
+        );
+        final wideSpread =
+            _paged &&
+            _displayPreferences.columnMode.resolveColumns(viewport) > 1;
+        return ColoredBox(
+          color: _effectiveBackgroundColor,
+          child: Row(
+            children: [
+              if (showSidebar)
+                DesktopChapterSidebar(
+                  key: const ValueKey('reader-desktop-chapter-sidebar'),
+                  width: sidebarWidth,
+                  chapters: widget.chapters,
+                  currentIndex: _index,
+                  onSelected: (index) => unawaited(_jumpToChapter(index)),
+                ),
+              Expanded(
+                child: Center(
+                  child: ConstrainedBox(
+                    constraints: BoxConstraints(
+                      maxWidth: wideSpread
+                          ? math.max(1440.0, bounds.maxHeight + 1)
+                          : 880,
+                    ),
+                    child: Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        Focus(
+                          autofocus: true,
+                          onKeyEvent: (node, event) {
+                            if (event is! KeyDownEvent ||
+                                FocusManager.instance.primaryFocus?.context
+                                        ?.findAncestorWidgetOfExactType<
+                                          EditableText
+                                        >() !=
+                                    null) {
+                              return KeyEventResult.ignored;
+                            }
+                            final key = event.logicalKey;
+                            if ([
+                              LogicalKeyboardKey.arrowRight,
+                              LogicalKeyboardKey.pageDown,
+                            ].contains(key)) {
+                              unawaited(_turnPage(1));
+                              return KeyEventResult.handled;
+                            }
+                            if ([
+                              LogicalKeyboardKey.arrowLeft,
+                              LogicalKeyboardKey.pageUp,
+                            ].contains(key)) {
+                              unawaited(_turnPage(-1));
+                              return KeyEventResult.handled;
+                            }
                             return KeyEventResult.ignored;
-                          }
-                          final key = event.logicalKey;
-                          if ([
-                            LogicalKeyboardKey.arrowRight,
-                            LogicalKeyboardKey.pageDown,
-                          ].contains(key)) {
-                            unawaited(_turnPage(1));
-                            return KeyEventResult.handled;
-                          }
-                          if ([
-                            LogicalKeyboardKey.arrowLeft,
-                            LogicalKeyboardKey.pageUp,
-                          ].contains(key)) {
-                            unawaited(_turnPage(-1));
-                            return KeyEventResult.handled;
-                          }
-                          return KeyEventResult.ignored;
-                        },
-                        child: Listener(
-                          onPointerSignal: _desktopScroll,
-                          child: _buildReaderSurface(context),
+                          },
+                          child: Listener(
+                            onPointerSignal: _desktopScroll,
+                            child: _buildReaderSurface(context),
+                          ),
                         ),
-                      ),
-                      Positioned.fill(
-                        child: IgnorePointer(
-                          child: ValueListenableBuilder<double>(
-                            valueListenable: DesktopPlatform.readerBrightness,
-                            builder: (_, brightness, _) => ColoredBox(
-                              color: Colors.black.withValues(
-                                alpha: 1 - brightness,
+                        Positioned.fill(
+                          child: IgnorePointer(
+                            child: ValueListenableBuilder<double>(
+                              valueListenable: DesktopPlatform.readerBrightness,
+                              builder: (_, brightness, _) => ColoredBox(
+                                color: Colors.black.withValues(
+                                  alpha: 1 - brightness,
+                                ),
                               ),
                             ),
                           ),
                         ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
                 ),
               ),
-            ),
-          ],
-        ),
-      ),
+            ],
+          ),
+        );
+      },
     );
   }
 

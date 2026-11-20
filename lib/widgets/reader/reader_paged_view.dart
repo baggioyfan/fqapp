@@ -1012,19 +1012,38 @@ class ReaderPageContent extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final columnStride = spec.width + spec.columnGap;
     final content = SizedBox(
-      width: spec.width,
+      width: spec.pageWidth,
       height: page.height,
       child: Stack(
         children: [
+          if (spec.columns > 1)
+            Positioned(
+              top: 0,
+              bottom: 0,
+              left: spec.width + spec.columnGap / 2,
+              width: 1,
+              child: IgnorePointer(
+                child: ColoredBox(
+                  key: const ValueKey('reader-column-divider'),
+                  color: (spec.bodyStyle.color ?? Colors.black).withValues(
+                    alpha: 0.08,
+                  ),
+                ),
+              ),
+            ),
           for (final fragment in page.fragments)
             Positioned(
               top: fragment.top,
-              left: 0,
-              right: 0,
+              left: fragment.column * columnStride,
+              width: spec.width,
               height: fragment.height,
               child: Builder(
                 builder: (context) {
+                  final keySuffix = fragment.column == 0
+                      ? ''
+                      : '-c${fragment.column}';
                   // Marks ride inside the block's own coordinate space (the
                   // OverflowBox child under the -sourceTop shift), so wash and
                   // underlines translate with the fragment and clip at its
@@ -1041,7 +1060,7 @@ class ReaderPageContent extends StatelessWidget {
                           fragment.block.lines.isNotEmpty
                       ? ReaderBlockMarkLayer(
                           key: ValueKey(
-                            'reader-block-marks-${fragment.block.index}',
+                            'reader-block-marks-${fragment.block.index}$keySuffix',
                           ),
                           block: fragment.block,
                           spec: spec,
@@ -1078,7 +1097,7 @@ class ReaderPageContent extends StatelessWidget {
                             // Same key the scroll list uses, so both page modes
                             // expose one stable paragraph target.
                             key: ValueKey(
-                              'reader-paragraph-press-${fragment.block.index - 1}',
+                              'reader-paragraph-press-${fragment.block.index - 1}$keySuffix',
                             ),
                             behavior: HitTestBehavior.translucent,
                             onLongPressStart: onParagraphLongPress == null

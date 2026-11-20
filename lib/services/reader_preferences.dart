@@ -1,3 +1,5 @@
+import 'dart:ui' show Size;
+
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -24,6 +26,23 @@ enum ReaderInfoMode { hidden, compact, detailed }
 /// (覆盖), or appears instantly (无). See
 /// .agents/notes/implemented/feature/2026-09-11-reader-paragraph-bubble.md
 enum ReaderPageTurnStyle { cover, slide, curl, none }
+
+/// Column layout for paged reading:
+/// [auto] switches to a two-column spread on tablet/desktop landscape
+/// viewports; [single] forces one column; [dual] uses two columns whenever
+/// the viewport is wide enough to fit two readable columns.
+enum ReaderColumnMode {
+  auto,
+  single,
+  dual;
+
+  int resolveColumns(Size viewport) => switch (this) {
+    ReaderColumnMode.single => 1,
+    ReaderColumnMode.dual => viewport.width >= 420 ? 2 : 1,
+    ReaderColumnMode.auto =>
+      viewport.width >= 840 && viewport.width > viewport.height ? 2 : 1,
+  };
+}
 
 @immutable
 class ReaderPreferences {
@@ -53,6 +72,7 @@ class ReaderPreferences {
   static const _justifyTextKey = 'reader_justify_text';
   static const _pageModeKey = 'reader_page_mode';
   static const _pageTurnStyleKey = 'reader_page_turn_style';
+  static const _columnModeKey = 'reader_column_mode';
   static const _volumeKeyTurnKey = 'reader_volume_key_turn';
   static const _keepScreenOnKey = 'reader_keep_screen_on';
   static const _autoTurnSecondsKey = 'reader_auto_turn_seconds';
@@ -96,6 +116,7 @@ class ReaderPreferences {
   final bool justifyText;
   final ReaderPageMode pageMode;
   final ReaderPageTurnStyle pageTurnStyle;
+  final ReaderColumnMode columnMode;
   final bool volumeKeyTurn;
   final bool keepScreenOn;
   final int autoTurnSeconds;
@@ -210,6 +231,7 @@ class ReaderPreferences {
     this.justifyText = true,
     this.pageMode = ReaderPageMode.paged,
     this.pageTurnStyle = ReaderPageTurnStyle.slide,
+    this.columnMode = ReaderColumnMode.auto,
     this.volumeKeyTurn = false,
     this.keepScreenOn = false,
     this.autoTurnSeconds = 10,
@@ -258,6 +280,7 @@ class ReaderPreferences {
     bool? justifyText,
     ReaderPageMode? pageMode,
     ReaderPageTurnStyle? pageTurnStyle,
+    ReaderColumnMode? columnMode,
     bool? volumeKeyTurn,
     bool? keepScreenOn,
     int? autoTurnSeconds,
@@ -318,6 +341,7 @@ class ReaderPreferences {
       justifyText: justifyText ?? this.justifyText,
       pageMode: pageMode ?? this.pageMode,
       pageTurnStyle: pageTurnStyle ?? this.pageTurnStyle,
+      columnMode: columnMode ?? this.columnMode,
       volumeKeyTurn: volumeKeyTurn ?? this.volumeKeyTurn,
       keepScreenOn: keepScreenOn ?? this.keepScreenOn,
       autoTurnSeconds: autoTurnSeconds ?? this.autoTurnSeconds,
@@ -379,6 +403,7 @@ class ReaderPreferences {
       justifyText: justifyText,
       pageMode: pageMode,
       pageTurnStyle: pageTurnStyle,
+      columnMode: columnMode,
       volumeKeyTurn: volumeKeyTurn,
       keepScreenOn: keepScreenOn,
       autoTurnSeconds: autoTurnSeconds.isFinite
@@ -455,6 +480,10 @@ class ReaderPreferences {
       pageTurnStyle: ReaderPageTurnStyle.values.firstWhere(
         (value) => value.name == preferences.get(_pageTurnStyleKey),
         orElse: () => ReaderPageTurnStyle.slide,
+      ),
+      columnMode: ReaderColumnMode.values.firstWhere(
+        (value) => value.name == preferences.get(_columnModeKey),
+        orElse: () => ReaderColumnMode.auto,
       ),
       volumeKeyTurn: _boolean(preferences, _volumeKeyTurnKey) ?? false,
       keepScreenOn: _boolean(preferences, _keepScreenOnKey) ?? false,
@@ -541,6 +570,7 @@ class ReaderPreferences {
       preferences.setBool(_justifyTextKey, value.justifyText),
       preferences.setString(_pageModeKey, value.pageMode.name),
       preferences.setString(_pageTurnStyleKey, value.pageTurnStyle.name),
+      preferences.setString(_columnModeKey, value.columnMode.name),
       preferences.setBool(_volumeKeyTurnKey, value.volumeKeyTurn),
       preferences.setBool(_keepScreenOnKey, value.keepScreenOn),
       preferences.setInt(_autoTurnSecondsKey, value.autoTurnSeconds),

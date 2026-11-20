@@ -391,6 +391,20 @@ class _ReaderPreferencesPageState extends State<ReaderPreferencesPage>
                     ),
                   ),
                 ),
+              if (_value.pageMode == ReaderPageMode.paged)
+                _choiceRow(
+                  label: '页面分栏',
+                  choices: [
+                    _Choice('自动', _value.columnMode == ReaderColumnMode.auto),
+                    _Choice('单栏', _value.columnMode == ReaderColumnMode.single),
+                    _Choice('双栏', _value.columnMode == ReaderColumnMode.dual),
+                  ],
+                  onSelected: (index) => _apply(
+                    (value) => value.copyWith(
+                      columnMode: ReaderColumnMode.values[index],
+                    ),
+                  ),
+                ),
               _navRow(label: '字体', value: _fontLabel, onTap: _pickFont),
               _switchRow(
                 '段首缩进',

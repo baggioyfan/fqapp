@@ -117,12 +117,21 @@ extension _ReaderPageSelectionOverlay on _ReaderPageState {
     final textOffset = isStart ? selection.start : selection.end - 1;
     final block = layout.blockForAnchor(textOffset, isStart: isStart);
     if (block == null) return null;
-    final entry = scope.geometry.entryFor(block.index);
+    final localOffset = _boundOffsetInBlock(
+      textOffset,
+      block,
+      isStart: isStart,
+    );
+    final line = lineForOffset(block, localOffset);
+    final entry = scope.geometry.entryFor(
+      block.index,
+      blockY: (line.top + line.bottom) / 2,
+    );
     if (entry == null) return null;
     final caret = selectionCaret(
       block: block,
       painter: entry.painter,
-      textOffset: _boundOffsetInBlock(textOffset, block, isStart: isStart),
+      textOffset: localOffset,
       isStart: isStart,
       columnWidth: layout.spec.width,
     );
