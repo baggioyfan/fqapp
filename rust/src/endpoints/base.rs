@@ -120,8 +120,33 @@ impl Upstream {
         body: &[u8],
         pin_device: &str,
     ) -> ApiResult<(Vec<u8>, Device)> {
+        let pin = if pin_device.is_empty() {
+            None
+        } else {
+            Some(pin_device)
+        };
         self.up
-            .v5_playback(base, body, pin_device)
+            .v5_playback_with_device(base, body, pin)
+            .await
+            .map_err(map_client_error)
+    }
+
+    /// One signed `GET` on a door of the same player family as the v5 door
+    /// (the `video_tab` fallback). An empty body comes back as `Ok`, the caller
+    /// owns the recovery decision.
+    pub async fn v5_get_with_device(
+        &self,
+        base: &str,
+        extra: &[(&str, &str)],
+        pin_device: &str,
+    ) -> ApiResult<(Vec<u8>, Device)> {
+        let pin = if pin_device.is_empty() {
+            None
+        } else {
+            Some(pin_device)
+        };
+        self.up
+            .v5_get_with_device(base, extra, pin)
             .await
             .map_err(map_client_error)
     }
