@@ -60,6 +60,8 @@ void main() {
         ),
       ),
     );
+    // 等真实 Hive I/O 走完,不能用有界推进:骨架只在闸门挂起时在位,
+    // 闸门放行后 pumpAndSettle 自然静止(见 test/support/pump_until.dart)。
     await tester.pumpAndSettle();
     expect(find.text('无法读取本地数据'), findsOneWidget);
     expect(history.get('kept'), record);
