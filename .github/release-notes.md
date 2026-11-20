@@ -30,8 +30,8 @@ H.266（bytevc2）档位，而 Android 播放链路上没有 H.266 解码器。�
 ## 升级必读
 
 签名与 `v1.0.204-fq2` 及之后的各版本**相同**（正式证书 `7d5397aa…3cde7a`）；
-versionName `1.0.206` / versionCode `211`，比 `1.0.205`（`210`）大，可直接覆盖安装，
-书架、进度、时长都保留。
+versionName 仍是 `1.0.205`，versionCode 提到 `211`（比上一版 `210` 大）——与上游同名的版本靠
+code 递增区分，可直接覆盖安装，书架、进度、时长都保留。
 
 仍在更早 debug 签名（`13f6a184…d9ac`）上的机器必须卸载重装 —— 清单 `android:allowBackup="false"`，
 卸载会连书架、进度、时长一起清掉，先用旧版「设置 → 数据 → WebDAV 同步」推一次或导出备份。
@@ -66,7 +66,7 @@ versionName `1.0.206` / versionCode `211`，比 `1.0.205`（`210`）大，可直
 
 ## 校验
 
-- APK：`arm64-v8a`，versionName `1.0.206` / versionCode `211`，显示名「什锦铺」
+- APK：`arm64-v8a`，versionName `1.0.205` / versionCode `211`，显示名「什锦铺」
 - macOS：universal，要求 macOS 13+
 - 本版为全量重新编译：analyze 无告警 + 全量测试通过 + APK 签名与 16 KiB 对齐校验
   + 包内 Mach-O 架构校验
