@@ -28,6 +28,7 @@ class ReaderStatusBar extends StatelessWidget {
   final int? pageIndex;
   final int? pageCount;
   final bool compact;
+  final bool showProgress;
   final Widget? playerControl;
 
   const ReaderStatusBar({
@@ -41,6 +42,7 @@ class ReaderStatusBar extends StatelessWidget {
     this.pageIndex,
     this.pageCount,
     this.compact = false,
+    this.showProgress = true,
     this.playerControl,
   });
 
@@ -66,12 +68,14 @@ class ReaderStatusBar extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             if (paged && !compact) ...[
-              Text(
-                '第 ${chapterIndex + 1} / $chapterCount 章 · '
-                '本章 ${pageIndex == null ? '—' : pageIndex! + 1} / ${pageCount ?? '—'} 页',
-                key: const ValueKey('reader-page-number'),
-                textAlign: TextAlign.center,
-                style: textStyle,
+              _progressText(
+                Text(
+                  '第 ${chapterIndex + 1} / $chapterCount 章 · '
+                  '本章 ${pageIndex == null ? '—' : pageIndex! + 1} / ${pageCount ?? '—'} 页',
+                  key: const ValueKey('reader-page-number'),
+                  textAlign: TextAlign.center,
+                  style: textStyle,
+                ),
               ),
               const SizedBox(height: 4),
             ],
@@ -83,43 +87,54 @@ class ReaderStatusBar extends StatelessWidget {
   }
 
   // Starting/stopping narration must not resize the viewport mid-page-turn.
-  Widget _statusLine(BuildContext context, String time, TextStyle textStyle) =>
-      SizedBox(
-        height:
-            MediaQuery.textScalerOf(
-              context,
-            ).scale(20).clamp(20, double.infinity) +
-            12,
-        child: LayoutBuilder(
-          builder: (context, constraints) => Row(
-            children: [
-              Expanded(child: _clockLine(time, textStyle)),
-              if (playerControl != null)
-                ConstrainedBox(
-                  constraints: BoxConstraints(
-                    maxWidth: constraints.maxWidth * 0.65,
-                  ),
-                  child: playerControl,
-                )
-              else if (!compact && !paged)
-                Flexible(
-                  child: Text(
-                    '${chapterIndex + 1} / $chapterCount 章',
-                    style: textStyle,
-                  ),
-                ),
-              Expanded(
-                child: Text(
-                  '全书 ${(progress.clamp(0, 1) * 100).toStringAsFixed(1)}%',
-                  key: const ValueKey('reader-progress'),
-                  textAlign: TextAlign.end,
-                  style: textStyle,
-                ),
+  Widget _statusLine(
+    BuildContext context,
+    String time,
+    TextStyle textStyle,
+  ) => SizedBox(
+    height:
+        MediaQuery.textScalerOf(context).scale(20).clamp(20, double.infinity) +
+        12,
+    child: LayoutBuilder(
+      builder: (context, constraints) => Row(
+        children: [
+          Expanded(child: _clockLine(time, textStyle)),
+          if (playerControl != null)
+            ConstrainedBox(
+              constraints: BoxConstraints(
+                maxWidth: constraints.maxWidth * 0.65,
               ),
-            ],
+              child: playerControl,
+            )
+          else if (!compact && !paged)
+            Flexible(
+              child: _progressText(
+                Text('${chapterIndex + 1} / $chapterCount 章', style: textStyle),
+              ),
+            ),
+          Expanded(
+            child: _progressText(
+              Text(
+                '全书 ${(progress.clamp(0, 1) * 100).toStringAsFixed(1)}%',
+                key: const ValueKey('reader-progress'),
+                textAlign: TextAlign.end,
+                style: textStyle,
+              ),
+            ),
           ),
-        ),
-      );
+        ],
+      ),
+    ),
+  );
+
+  // Keep the footer's geometry so opening the controls cannot repaginate text.
+  Widget _progressText(Widget child) => Visibility(
+    visible: showProgress,
+    maintainState: true,
+    maintainAnimation: true,
+    maintainSize: true,
+    child: child,
+  );
 
   /// Upstream footer leading group: time, charging bolt, battery icon and
   /// percentage, all mute so they never compete with the article. Narrow /
