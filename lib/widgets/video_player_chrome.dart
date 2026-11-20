@@ -451,8 +451,7 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
   bool _clearScreen = false;
 
   /// 横屏防误触锁（官方 `fullscreen.b` 单例的本地等价）：锁定后画面手势、
-  /// 播放控件、选集/更多面板与清屏全部被吞；退出横屏或换播放器即解除
-  /// （官方 `ShortSeriesLandActivity.onDestroy` → `EXIST_LAND_ACTIVITY`）。
+  /// 播放控件、选集/更多面板与清屏全部被吞；退出横屏或关闭锁定配置时解除。
   bool _locked = false;
   bool _lockVisible = true;
   Timer? _lockHideTimer;
@@ -685,9 +684,7 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
     }
     if (oldWidget.player != widget.player) {
       _listenToPosition();
-      // 换播放器等于换 holder：官方 `d.release()` 会摘掉锁监听，本地等价是
-      // 撤销锁态，避免下一个剧集继承上一个的锁定。
-      _releaseLock();
+      // 切集/切清晰度会替换播放器，触摸锁属于播放页面，需跨集保留。
       _doubleTapGuard?.cancel();
     }
     if (oldWidget.landscapeLockEnabled && !widget.landscapeLockEnabled) {
@@ -956,8 +953,7 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
     }
   }
 
-  /// 退出横屏 / 换播放器：官方在 Activity 销毁时无条件解锁
-  /// （`EXIST_LAND_ACTIVITY`），本地等价是离开横屏与替换播放器。
+  /// 退出横屏或关闭锁定配置时解锁；播放器替换不改变页面的触摸锁。
   void _releaseLock() {
     _lockHideTimer?.cancel();
     if (_locked) _visible = true;

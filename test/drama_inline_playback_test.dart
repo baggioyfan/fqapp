@@ -281,7 +281,7 @@ void main() {
   testWidgets('inactive keeps the feed playing, hidden pauses it', (
     tester,
   ) async {
-    final session = _Session();
+    final session = _Session()..episodeCount = 3;
     await _mount(tester, session);
     final player = session.players.single;
     expect(player.isPlaying, isTrue);
@@ -291,6 +291,13 @@ void main() {
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
     await _flush(tester);
     expect(player.isPlaying, isFalse);
+    player.emitCompleted();
+    await _flush(tester);
+    expect(
+      session.players,
+      hasLength(1),
+      reason: 'a completion while hidden must not advance playback',
+    );
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
     await _flush(tester);
     expect(player.isPlaying, isTrue);

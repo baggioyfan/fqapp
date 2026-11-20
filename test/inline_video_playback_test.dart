@@ -270,17 +270,19 @@ void main() {
     );
   });
 
-  test('播下一集：旧解码器释放完成前不建新解码器', () async {
+  test('完成事件播下一集:释放、暂停与末集边界', () async {
     // 同一部剧换集时旧解码器作废重建，新的必须等旧的释放结束。否则两台原生
     // 播放器同时存活：Android 撞 MediaCodec 名额、桌面端撞媒体会话未关闭，
     // 表现为「播下一集时提示播放失败」。
     final releaseGate = Completer<void>();
     final players = <ControlledNativePlayer>[];
+    final store = ControlledReaderStore();
     final session = InlineVideoPlayback(
       directoryLoader: (id, tab) async => [
         [
           Chapter(itemId: '$id-1', title: '第 1 集', volumeName: '剧集'),
           Chapter(itemId: '$id-2', title: '第 2 集', volumeName: '剧集'),
+          Chapter(itemId: '$id-3', title: '第 3 集', volumeName: '剧集'),
         ],
       ],
       contentLoader: (itemId, tab) async => {
@@ -294,7 +296,7 @@ void main() {
         players.add(player);
         return player;
       },
-      historyStore: MemoryReaderStore(),
+      historyStore: store,
     );
     addTearDown(session.dispose);
 
@@ -303,7 +305,8 @@ void main() {
     expect(players, hasLength(1));
     expect(players.single.calls, contains('play'));
 
-    final next = session.activate(_series('a'), startEpisodeIndex: 1);
+    players.single.emitCompleted();
+    players.single.emitCompleted();
     await Future<void>.delayed(const Duration(milliseconds: 50));
     expect(players, hasLength(1), reason: '旧解码器还在释放中，新解码器不能开始创建');
     expect(players.single.calls, contains('dispose'));
@@ -314,7 +317,9 @@ void main() {
     );
 
     releaseGate.complete();
-    await next;
+    for (var i = 0; i < 20 && players.length < 2; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+    }
     expect(players, hasLength(2));
     expect(players[0].calls, contains('released'));
     expect(
@@ -324,5 +329,59 @@ void main() {
     expect(players[1].calls, contains('play'));
     expect(session.activeEpisodeIndex, 1);
     expect(session.activeVid.value, 'a-2');
+
+    // A direct desktop pause clears NativePlayer's play intent while the
+    // session's broader playback intent remains true.
+    await players[1].pause();
+    players[1].emitCompleted();
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    expect(players, hasLength(2));
+    expect(session.activeEpisodeIndex, 1);
+
+    await players[1].play();
+    players[1].emitCompleted();
+    for (var i = 0; i < 20 && players.length < 3; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+    }
+    expect(players, hasLength(3));
+    expect(
+      players[2].calls,
+      contains('create:https://example.invalid/a-3.mp4'),
+    );
+    expect(players[2].calls, contains('play'));
+    expect(session.activeEpisodeIndex, 2);
+
+    players[2].emitDuration(const Duration(seconds: 120));
+    players[2].emitCompleted();
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    expect(players, hasLength(3), reason: 'the last episode must stay stopped');
+    expect(session.activeEpisodeIndex, 2);
+    expect(session.playing.value, isFalse);
+    expect(session.wantsPlay, isTrue, reason: 'EOF must remain replayable');
+    expect(store.entry?['episodeId'], 'a-3');
+    expect(store.entry?['episode'], 2);
+    expect(
+      store.entry?['position'],
+      120.0,
+      reason: 'completion progress must be persisted before replay',
+    );
+
+    await session.resume();
+    expect(players[2].calls, contains('seek:0ms'));
+    expect(players[2].isPlaying, isTrue);
+    expect(session.position.value, Duration.zero);
+    expect(session.seeked.value, Duration.zero);
+
+    // Returning to the completed series exercises the pooled-player resume
+    // path, which must rewind before play instead of asking Media3 to resume
+    // at EOF.
+    players[2].emitCompleted();
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    await session.activate(_series('b'));
+    await session.activate(_series('a'));
+    expect(players[2].calls.where((call) => call == 'seek:0ms'), hasLength(2));
+    expect(players[2].isPlaying, isTrue);
+    expect(session.activeEpisodeIndex, 2);
+    expect(session.activeVid.value, 'a-3');
   });
 }

@@ -995,7 +995,7 @@ void main() {
   });
 
   testWidgets(
-    'landscape lock follows the official gate, position and release',
+    'landscape lock survives episode replacement and restores controls on exit',
     (tester) async {
       // 官方 \`LandLockOptV705.enable_lock\`（默认 false）：配置关闭时锁按钮
       // 根本不存在；开启后按钮在横屏右缘，点击切换锁定并吞掉画面手势，
@@ -1012,7 +1012,7 @@ void main() {
 
       // 第二段重新从竖屏起：上面那台把窗口转成了横屏，这里复原。
       await tester.binding.setSurfaceSize(null);
-      final locked = FakeNativePlayer()..isPlaying = true;
+      var locked = FakeNativePlayer()..isPlaying = true;
       await tester.pumpWidget(
         _app(locked, shortSeries: true, landscapeLockEnabled: true),
       );
@@ -1025,6 +1025,20 @@ void main() {
       // 锁定时控件条与锁按钮一起保留；这里先锁定。
       await tester.tap(find.byKey(const ValueKey('landscape-lock')));
       await tester.pump();
+      final previousEpisode = locked;
+      locked = FakeNativePlayer()..isPlaying = true;
+      await tester.pumpWidget(
+        _app(
+          locked,
+          shortSeries: true,
+          landscapeLockEnabled: true,
+          currentIndex: 1,
+        ),
+      );
+      await tester.pump();
+      expect(find.byKey(const ValueKey('landscape-play')), findsNothing);
+      expect(find.bySemanticsLabel('解锁屏幕'), findsOneWidget);
+      await previousEpisode.dispose();
       // 锁定后单击画面不暂停；可见锁会被收起。
       await tester.tap(find.byKey(const ValueKey('video-surface')));
       await tester.pump(const Duration(milliseconds: 400));
