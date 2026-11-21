@@ -524,9 +524,8 @@ impl UpstreamClient {
                 install_id: &dev.install_id,
                 cdid,
             };
-            let signed =
-                crate::sign::v5::sign_playback_v5_get(base, extra, &identity)
-                    .map_err(ClientError::Other)?;
+            let signed = crate::sign::v5::sign_playback_v5_get(base, extra, &identity)
+                .map_err(ClientError::Other)?;
 
             let target = self.effective_url(&signed.url);
             let headers = signed.headers;
