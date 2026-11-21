@@ -580,7 +580,7 @@ class _AppBootstrapState extends State<AppBootstrap> {
                   //
                   // 代价是「本地数据未就绪」态没有静止的一帧——测试里不能靠
                   // `pumpAndSettle()` 等它停下来（会卡到超时），要用有界推进
-                  // 推到目标出现为止（见 test/startup_gate_test.dart 的
+                  // 推到目标出现为止（见 test/support/pump_until.dart 的
                   // pumpUntilFound）。
                   child: AppStyleTokens.of(context).isClassic
                       ? const ClassicHomeSkeleton()
