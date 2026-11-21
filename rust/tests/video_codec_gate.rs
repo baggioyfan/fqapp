@@ -423,3 +423,86 @@ async fn stream_variants_do_not_merge_bytevc2_tiers() {
     assert_eq!(names, ["1080P", "360P"], "{body}");
     assert!(!body.to_string().contains(REJECTED_URL), "{body}");
 }
+
+/// Upstream splits tiers by device: the same episode can come back as
+/// `bytevc2` (no decoder on the playback path) on one identity and as `h265`
+/// on another. A first answer that is entirely undecodable must therefore not
+/// end the request — rotate once and ask again.
+#[tokio::test]
+async fn bytevc2_only_answer_retries_on_another_device_and_recovers() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let counter = calls.clone();
+    let rejected = json!({"data": {"video_model": {
+        "key_seed": "AAAA",
+        "video_list": {"video_0": {
+            "codec_type": "bytevc2",
+            "main_url": REJECTED_URL,
+            "vwidth": 720,
+            "vheight": 1280
+        }}
+    }}});
+    let allowed = json!({"data": {"video_model": {
+        "key_seed": "AAAA",
+        "video_list": [
+            {"codec_type": "h265_hvc1", "main_url": ALLOWED_URL, "vwidth": 720, "vheight": 1280}
+        ]
+    }}});
+    let upstream = MockUpstream::start(move |_| {
+        let nth = counter.fetch_add(1, Ordering::SeqCst);
+        MockReply::json(if nth == 0 {
+            rejected.clone()
+        } else {
+            allowed.clone()
+        })
+    })
+    .await;
+    let dir = TempDir::new("video-codec-retry");
+    let server = build_server(&dir, Some(upstream.origin.clone()), &[], &[], &pool_json(5)).await;
+
+    let (status, body) = request_video(&server, "mode=stream").await;
+
+    assert_eq!(status, 200, "换设备后应当拿到可播档位: {body}");
+    assert!(
+        body.to_string().contains(ALLOWED_URL),
+        "应当返回 h265 档: {body}"
+    );
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        2,
+        "第二台设备一次就该给出可播档位"
+    );
+}
+
+/// The retry is a single rotation, not a ladder: a source that is undecodable
+/// on every device must still fail with the same user-facing message, and must
+/// not spend the device pool chasing it.
+#[tokio::test]
+async fn bytevc2_only_answer_still_fails_after_one_retry() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let counter = calls.clone();
+    let rejected = json!({"data": {"video_model": {
+        "key_seed": "AAAA",
+        "video_list": {"video_0": {
+            "codec_type": "bytevc2",
+            "main_url": REJECTED_URL,
+            "vwidth": 720,
+            "vheight": 1280
+        }}
+    }}});
+    let upstream = MockUpstream::start(move |_| {
+        counter.fetch_add(1, Ordering::SeqCst);
+        MockReply::json(rejected.clone())
+    })
+    .await;
+    let dir = TempDir::new("video-codec-retry-fail");
+    let server = build_server(&dir, Some(upstream.origin.clone()), &[], &[], &pool_json(5)).await;
+
+    let (status, body) = request_video(&server, "mode=stream").await;
+
+    assert_rejected(status, &body, "换过设备仍只有 bytevc2");
+    assert!(
+        calls.load(Ordering::SeqCst) <= 6,
+        "换一台设备重取一次即可，不该把设备池当重试阶梯用: {} 次",
+        calls.load(Ordering::SeqCst)
+    );
+}
