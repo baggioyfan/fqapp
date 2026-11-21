@@ -203,6 +203,7 @@ class _ReaderMoreSettingsSheetState
       if (_shows(ReaderBehaviorCategory.page)) ...[
         if (_compactForm) const ReaderSettingsDivider(),
         const ReaderSettingsSectionHeader(title: '显示'),
+        _columnModeRow(),
         _infoModeRow(),
         ReaderSettingsSwitchRow(
           label: '系统状态栏',
@@ -493,6 +494,32 @@ class _ReaderMoreSettingsSheetState
             selected: value.autoTurnSeconds == seconds,
             onTap: () =>
                 _apply((current) => current.copyWith(autoTurnSeconds: seconds)),
+          ),
+      ],
+    ),
+  );
+
+  Widget _columnModeRow() => ReaderSettingsRow(
+    label: '页面分栏',
+    child: ReaderSettingsChipRow(
+      children: [
+        for (final mode in ReaderColumnMode.values)
+          ReaderSettingsChip(
+            key: ValueKey('reader-column-${mode.name}'),
+            label: switch (mode) {
+              ReaderColumnMode.auto => '自动',
+              ReaderColumnMode.single => '单栏',
+              ReaderColumnMode.dual => '双栏',
+            },
+            selected: value.columnMode == mode,
+            onTap: () => _apply(
+              (current) => current.copyWith(
+                columnMode: mode,
+                pageMode: mode == ReaderColumnMode.dual
+                    ? ReaderPageMode.paged
+                    : null,
+              ),
+            ),
           ),
       ],
     ),
