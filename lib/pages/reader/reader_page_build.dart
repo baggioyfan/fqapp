@@ -183,6 +183,7 @@ extension _ReaderPageBuild on _ReaderPageState {
                                     compact:
                                         _preferences.readingInfoMode ==
                                         ReaderInfoMode.compact,
+                                    showProgress: !_controlsVisible,
                                     status: _deviceStatus,
                                     progress: _chapterProgress(),
                                     chapterIndex: _index,

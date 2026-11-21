@@ -11,6 +11,7 @@ import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/pages/reader_page.dart';
 import 'package:fqapp/services/reader_device.dart';
 import 'package:fqapp/services/reader_preferences.dart';
+import 'package:fqapp/widgets/reader/reader_status_bar.dart';
 import 'package:fqapp/widgets/reader/settings/reader_settings_widgets.dart';
 
 import 'support/fakes.dart';
@@ -29,29 +30,48 @@ void main() {
   });
 
   testWidgets(
-    'menu animation preserves the viewport, paragraph and saved position',
+    'menu hides footer progress without moving the viewport or saved position',
     (tester) async {
       await _size(tester, const Size(390, 800));
-      final store = MemoryReaderStore();
-      await tester.pumpWidget(_app(_reader(store: store)));
-      await tester.pumpAndSettle();
-      final controller = _controller(tester);
-      controller.jumpTo(450);
-      await tester.pump(const Duration(milliseconds: 600));
-      await tester.pumpAndSettle();
-      final viewport = tester.getRect(_surface);
-      final paragraph = _firstVisibleParagraph(tester);
-      final paragraphRect = tester.getRect(find.byKey(paragraph));
-      for (var i = 0; i < 4; i++) {
-        await tester.tapAt(viewport.center);
-        await tester.pump(const Duration(milliseconds: 80));
-        expect(tester.getRect(_surface), viewport);
-        expect(controller.offset, 450);
+      for (final mode in ['detailed', 'compact']) {
+        setSingleChapterPrefs({
+          'reader_page_mode': 'scroll',
+          'reader_info_mode': mode,
+        });
+        final store = MemoryReaderStore();
+        await tester.pumpWidget(_app(_reader(store: store)));
         await tester.pumpAndSettle();
-        expect(tester.getRect(find.byKey(paragraph)), paragraphRect);
-        expect(store.entry?['position'], 450);
+        final controller = _controller(tester);
+        controller.jumpTo(450);
+        await tester.pump(const Duration(milliseconds: 600));
+        await tester.pumpAndSettle();
+        final viewport = tester.getRect(_surface);
+        final paragraph = _firstVisibleParagraph(tester);
+        final paragraphRect = tester.getRect(find.byKey(paragraph));
+        expect(
+          tester
+              .widget<ReaderStatusBar>(find.byType(ReaderStatusBar))
+              .showProgress,
+          isTrue,
+        );
+        for (var i = 0; i < 4; i++) {
+          await tester.tapAt(viewport.center);
+          await tester.pump(const Duration(milliseconds: 80));
+          expect(tester.getRect(_surface), viewport);
+          expect(controller.offset, 450);
+          expect(
+            tester
+                .widget<ReaderStatusBar>(find.byType(ReaderStatusBar))
+                .showProgress,
+            i.isOdd,
+          );
+          await tester.pumpAndSettle();
+          expect(tester.getRect(find.byKey(paragraph)), paragraphRect);
+          expect(store.entry?['position'], 450);
+          expect(find.byKey(const ValueKey('reader-clock')), findsOneWidget);
+        }
+        await tester.pumpWidget(const SizedBox.shrink());
       }
-      await tester.pumpWidget(const SizedBox.shrink());
     },
   );
 
