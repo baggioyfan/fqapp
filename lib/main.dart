@@ -235,8 +235,9 @@ Future<void> _loadLocalData() async {
     // 听书音频离线记录箱：与短剧箱分开，同样只在就绪时才查离线命中。
     optional(HiveAudioDownloadStore.instance.warmUp),
     // 主题样式与 SharedPreferences 一并并行：两者都是启动链上的必要项，
-    // 但都不该排在并行段之后串行等。
-    spFuture.then<void>((_) {}),
+    // 不该排在并行段之后串行等。prefs 读失败即启动失败(失败页 + 重试);
+    // 样式 store 是可选外观偏好,内部吞错,读失败只回落默认外观(#421)。
+    spFuture,
     themeStyleFuture,
   ]);
   // WebDAV 为可选功能；网络或安全存储故障不阻塞本机阅读。
