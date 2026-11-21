@@ -1,8 +1,9 @@
 //! Upstream request signing.
 //!
-//! Every primitive is byte-exact against the golden vectors in
-//! `rust/testdata/vectors.json`, which were produced by an independent
-//! reference implementation rather than this crate.
+//! The original request-signing primitives are byte-exact against
+//! `rust/testdata/vectors.json`, produced by an independent reference
+//! implementation. The v5 playback signer documents its own separate source
+//! contract in `v5.rs`; that legacy fixture does not cover v5.
 
 pub mod abogus;
 pub mod argus;

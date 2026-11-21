@@ -404,9 +404,8 @@ impl UpstreamClient {
             };
             let identity = crate::sign::v5::V5Identity {
                 device_id: &dev.device_id,
-                iid: &dev.install_id,
+                install_id: &dev.install_id,
                 cdid,
-                ..Default::default()
             };
             if let Some(trace) = super::playback_trace::current() {
                 log::info!(
@@ -419,26 +418,15 @@ impl UpstreamClient {
                     !dev.registered_version_code.is_empty(),
                 );
             }
-            let signed = match crate::sign::v5::sign_playback_v5(
-                base,
-                &identity,
-                Some(body),
-                crate::timeutil::now_millis(),
-            ) {
-                Some(signed) => signed,
-                None => {
-                    return Err(ClientError::Other(
-                        "v5 signing found no branch-12 ticket".to_string(),
-                    ))
-                }
-            };
+            // The signer emits the whole envelope (timestamp, Helios, Medusa,
+            // UA, Accept, and - for a body - Content-Type/Encoding and the
+            // body digest); adding a second Content-Type here would send a
+            // duplicate header and trip the door.
+            let signed = crate::sign::v5::sign_playback_v5(base, body, &identity)
+                .map_err(ClientError::Other)?;
 
             let target = self.effective_url(&signed.url);
-            let mut headers = signed.headers;
-            headers.push((
-                "Content-Type".to_string(),
-                "application/json; charset=utf-8".to_string(),
-            ));
+            let headers = signed.headers;
             let attempt = super::playback_trace::with_device(&dev.device_id, async {
                 self.http
                     .request_with_limit(
@@ -533,23 +521,12 @@ impl UpstreamClient {
             };
             let identity = crate::sign::v5::V5Identity {
                 device_id: &dev.device_id,
-                iid: &dev.install_id,
+                install_id: &dev.install_id,
                 cdid,
-                ..Default::default()
             };
-            let signed = match crate::sign::v5::sign_playback_v5_get(
-                base,
-                extra,
-                &identity,
-                crate::timeutil::now_millis(),
-            ) {
-                Some(signed) => signed,
-                None => {
-                    return Err(ClientError::Other(
-                        "v5 GET signing found no branch-12 ticket".to_string(),
-                    ))
-                }
-            };
+            let signed =
+                crate::sign::v5::sign_playback_v5_get(base, extra, &identity)
+                    .map_err(ClientError::Other)?;
 
             let target = self.effective_url(&signed.url);
             let headers = signed.headers;

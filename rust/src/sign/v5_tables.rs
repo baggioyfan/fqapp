@@ -1,11 +1,12 @@
-//! Wire tables for the v5 (04.10.03) signature.
+//! Wire tables for the v04.10.03 playback signature.
 //!
-//! Extracted verbatim from hongguoTV `V5Constants.kt` / `VendorConstants.kt`
-//! (GPL-3.0-only). Keep byte order exactly as published: `SBOX_HEX` decodes to
-//! 1024 bytes and `AesV3` slices it into four 256-byte words.
+//! Extracted from `N3urda/hongguoTV` (`V5Constants.kt` /
+//! `VendorConstants.kt`, GPL-3.0-only) at
+//! `18c37c2afd0567520135abcae312352542f09083`, and cross-checked with
+//! `beilunyang/openhongguo` PR 13 at `788103f6`. `SBOX` and `HASH_TABLE` are
+//! protocol data; neither contains a credential.
 
-/// 1024-byte substitution box, four 256-byte words (`ts & 3` selects one).
-pub(super) const SBOX_HEX: &str = concat!(
+const SBOX_HEX: &str = concat!(
     "53290fe9e51f316f90f74a7e034d367784ab49237cd0135cdc632c322fd3be0e2624a417ecd9151a7ff64f60730a87f9",
     "445ec6ada2f865d22b696c4188f24c0df37b75510b939f6bc2fe6883e68bc8c722181ba0bdb08c9871b50c9a16b46eea",
     "8eed20ba4b8a14e0fcf1468dbbef05a93e5a9d7dcf06898635c1fd99f5de287a80c594daaab19b6279fbd75070cb52eb",
@@ -30,70 +31,94 @@ pub(super) const SBOX_HEX: &str = concat!(
     "18496ecd76c35c798325590c2fb27a5e",
 );
 
-/// 64-entry expansion table consumed by `hash_f13_v5`.
-pub(super) const HASH_TABLE: [i32; 64] = [
-    0xebb64fafu32 as i32,
-    0x7aadcc2u32 as i32,
-    0xcf3187bfu32 as i32,
-    0xe01138ffu32 as i32,
-    0x6d0bfcffu32 as i32,
-    0x5a30a3beu32 as i32,
-    0xb41ad638u32 as i32,
-    0x34180eb8u32 as i32,
-    0xf233eb6fu32 as i32,
-    0xb1a584ccu32 as i32,
-    0xccc30dc7u32 as i32,
-    0x47d1db51u32 as i32,
-    0xd55653deu32 as i32,
-    0x70a84fa1u32 as i32,
-    0x57473c12u32 as i32,
-    0xf76f0288u32 as i32,
-    0x2c077f0au32 as i32,
-    0xda0dcad0u32 as i32,
-    0xfbb86f6cu32 as i32,
-    0xfdc4cf00u32 as i32,
-    0x688a020du32 as i32,
-    0xe676c6a6u32 as i32,
-    0x8cd6338bu32 as i32,
-    0x1a3c8d0eu32 as i32,
-    0xcce8b06bu32 as i32,
-    0x6ad0ed0bu32 as i32,
-    0xa0522717u32 as i32,
-    0xdc71ac83u32 as i32,
-    0x2285db71u32 as i32,
-    0xd5b4dda6u32 as i32,
-    0x736f8650u32 as i32,
-    0x6560306cu32 as i32,
-    0x617ce2a6u32 as i32,
-    0xe423417eu32 as i32,
-    0xa40e143u32 as i32,
-    0x544e4032u32 as i32,
-    0x88dffb2au32 as i32,
-    0x716c1ae0u32 as i32,
-    0x4c467a88u32 as i32,
-    0x5b23bb3u32 as i32,
-    0xe1d0b866u32 as i32,
-    0xbaa3dcb8u32 as i32,
-    0xae3374d3u32 as i32,
-    0xc3381a50u32 as i32,
-    0x1702f75bu32 as i32,
-    0xfe6da368u32 as i32,
-    0xf0b4cf48u32 as i32,
-    0x4e0ffbb8u32 as i32,
-    0x72aad10du32 as i32,
-    0x26c53a3du32 as i32,
-    0xf2bce0f6u32 as i32,
-    0xb4557581u32 as i32,
-    0x4a257fddu32 as i32,
-    0x8c3182a2u32 as i32,
-    0xab0b3b86u32 as i32,
-    0x3d5dfb14u32 as i32,
-    0x4f103634u32 as i32,
-    0xd37b52d7u32 as i32,
-    0x444eff16u32 as i32,
-    0xeb0a33d1u32 as i32,
-    0x6ca86f6eu32 as i32,
-    0x284ba7u32 as i32,
-    0x8387cfau32 as i32,
-    0x5fb37586u32 as i32,
+const fn nibble(value: u8) -> u8 {
+    match value {
+        b'0'..=b'9' => value - b'0',
+        b'a'..=b'f' => value - b'a' + 10,
+        b'A'..=b'F' => value - b'A' + 10,
+        _ => panic!("invalid hex digit in V5 table"),
+    }
+}
+
+const fn decode_hex<const N: usize>(input: &str) -> [u8; N] {
+    let input = input.as_bytes();
+    assert!(input.len() == N * 2, "wrong decoded V5 table length");
+    let mut output = [0u8; N];
+    let mut index = 0;
+    while index < N {
+        output[index] = (nibble(input[index * 2]) << 4) | nibble(input[index * 2 + 1]);
+        index += 1;
+    }
+    output
+}
+
+/// Four 256-byte substitution boxes; `timestamp & 3` selects one.
+pub(super) const SBOX: [u8; 1024] = decode_hex::<1024>(SBOX_HEX);
+
+/// The 64-word `V5Constants.kt` diffusion table used by the branch-12 hash.
+pub(super) const HASH_TABLE: [u32; 64] = [
+    0xebb6_4faf,
+    0x07aa_dcc2,
+    0xcf31_87bf,
+    0xe011_38ff,
+    0x6d0b_fcff,
+    0x5a30_a3be,
+    0xb41a_d638,
+    0x3418_0eb8,
+    0xf233_eb6f,
+    0xb1a5_84cc,
+    0xccc3_0dc7,
+    0x47d1_db51,
+    0xd556_53de,
+    0x70a8_4fa1,
+    0x5747_3c12,
+    0xf76f_0288,
+    0x2c07_7f0a,
+    0xda0d_cad0,
+    0xfbb8_6f6c,
+    0xfdc4_cf00,
+    0x688a_020d,
+    0xe676_c6a6,
+    0x8cd6_338b,
+    0x1a3c_8d0e,
+    0xcce8_b06b,
+    0x6ad0_ed0b,
+    0xa052_2717,
+    0xdc71_ac83,
+    0x2285_db71,
+    0xd5b4_dda6,
+    0x736f_8650,
+    0x6560_306c,
+    0x617c_e2a6,
+    0xe423_417e,
+    0x0a40_e143,
+    0x544e_4032,
+    0x88df_fb2a,
+    0x716c_1ae0,
+    0x4c46_7a88,
+    0x05b2_3bb3,
+    0xe1d0_b866,
+    0xbaa3_dcb8,
+    0xae33_74d3,
+    0xc338_1a50,
+    0x1702_f75b,
+    0xfe6d_a368,
+    0xf0b4_cf48,
+    0x4e0f_fbb8,
+    0x72aa_d10d,
+    0x26c5_3a3d,
+    0xf2bc_e0f6,
+    0xb455_7581,
+    0x4a25_7fdd,
+    0x8c31_82a2,
+    0xab0b_3b86,
+    0x3d5d_fb14,
+    0x4f10_3634,
+    0xd37b_52d7,
+    0x444e_ff16,
+    0xeb0a_33d1,
+    0x6ca8_6f6e,
+    0x0028_4ba7,
+    0x0838_7cfa,
+    0x5fb3_7586,
 ];

@@ -285,3 +285,31 @@ fn fallback_source_prefers_h264_on_equal_quality() {
     let (url, _) = expect_source(extract_fallback_video_source(map));
     assert_eq!(url, "https://example.test/h264.mp4");
 }
+
+#[test]
+fn reads_the_video_tab_grouped_shape() {
+    // `GET video_tab` 把模型挂深一层：`data.video_model_data.<video_id>.video_model`，
+    // 而且那一层是 JSON *字符串*（2026-11-21 真上游抓样）。player 门坏了之后
+    // 全靠这门出流，解析不到它就会表现为"上游无片源 / 网络异常"。
+    let video_id = "7706799298419117080";
+    let model = json!({
+        "status": 10,
+        "video_list": [
+            { "vwidth": 1920, "vheight": 1080, "main_url": "https://example.test/1080.mp4" },
+            { "vwidth": 640, "vheight": 360, "main_url": "https://example.test/360.mp4" }
+        ]
+    });
+    let raw = serde_json::to_vec(&json!({
+        "code": 0,
+        "message": "SUCCESS",
+        "data": { "video_model_data": { video_id: { "video_model": model.to_string() } } }
+    }))
+    .unwrap();
+    let parsed = ParsedVideoResponse::parse(&raw, Some(video_id)).expect("parse grouped shape");
+    assert_eq!(parsed.models.len(), 1);
+    assert!(video_data_is_usable(&parsed.root, Some(video_id)));
+    assert_eq!(
+        expect_source(extract_parsed_video_url(&parsed)).0,
+        "https://example.test/1080.mp4"
+    );
+}

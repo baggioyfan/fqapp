@@ -125,18 +125,23 @@ impl VideoSourceResolution {
 struct ParsedVideoResponse {
     root: Value,
     models: Vec<Map<String, Value>>,
+    requested_video_id: Option<String>,
 }
 
 impl ParsedVideoResponse {
-    fn parse(raw: &[u8]) -> ApiResult<Self> {
+    fn parse(raw: &[u8], requested_video_id: Option<&str>) -> ApiResult<Self> {
         let root: Value = serde_json::from_slice(raw)
             .map_err(|e| ApiError::Internal(format!("parse upstream json: {e}")))?;
         let models = root
             .get("data")
             .and_then(Value::as_object)
-            .map(|data| video_models(data).collect())
+            .map(|data| video_models(data, requested_video_id))
             .unwrap_or_default();
-        Ok(Self { root, models })
+        Ok(Self {
+            root,
+            models,
+            requested_video_id: requested_video_id.map(str::to_string),
+        })
     }
 }
 
@@ -685,7 +690,7 @@ async fn fetch_parsed_video_response(
             return None;
         }
     };
-    let parsed = match ParsedVideoResponse::parse(&raw) {
+    let parsed = match ParsedVideoResponse::parse(&raw, Some(video_id)) {
         Ok(parsed) => parsed,
         Err(error) => {
             log::warn!(
@@ -702,7 +707,7 @@ async fn fetch_parsed_video_response(
         );
         return None;
     }
-    if !video_data_is_usable(&parsed.root) {
+    if !video_data_is_usable(&parsed.root, Some(video_id)) {
         log::warn!(
             "video {video_id}: {source} body has no video payload: {}",
             body_envelope(&parsed.root)
@@ -1084,7 +1089,7 @@ async fn fetch_stream_video_source(
             retryable: true,
         };
     }
-    let parsed = match ParsedVideoResponse::parse(&raw) {
+    let parsed = match ParsedVideoResponse::parse(&raw, Some(video_id)) {
         Ok(parsed) => parsed,
         Err(error) => {
             log::warn!(
@@ -1112,10 +1117,24 @@ async fn fetch_stream_video_source(
             retryable: false,
         };
     }
-    let empty_playback = !video_data_is_usable(&parsed.root);
+    // 空体是身份级的拒绝，只有两种：0 字节（上面已返回），或 envelope 里连
+    // `data` 都没有（形状漂移）。一个能解析、`data` 也在、只是这一集没有可播
+    // 档位的响应，说明的是片源/门，不是这台设备被拒——把它记成 empty_playback
+    // 会去 quarantine 设备并立刻触发补池，注册预算（4 台/10 分钟）几下就烧光，
+    // 最后整池清空、连目录都拉不到（2026-11-21 平板实测「设备初始化失败」）。
+    let empty_playback = parsed
+        .root
+        .get("data")
+        .and_then(Value::as_object)
+        .is_none_or(|data| data.is_empty());
     if empty_playback {
         log::warn!(
-            "video {video_id}: {source_name} body has no video payload: {}",
+            "video {video_id}: {source_name} envelope has no data object: {}",
+            body_envelope(&parsed.root)
+        );
+    } else if !video_data_is_usable(&parsed.root, Some(video_id)) {
+        log::warn!(
+            "video {video_id}: {source_name} body has no playable variant: {}",
             body_envelope(&parsed.root)
         );
     }
@@ -1127,7 +1146,7 @@ async fn fetch_stream_video_source(
     }
 }
 
-fn video_data_is_usable(root: &Value) -> bool {
+fn video_data_is_usable(root: &Value, requested_video_id: Option<&str>) -> bool {
     let Some(data) = root
         .get("data")
         .and_then(Value::as_object)
@@ -1135,7 +1154,9 @@ fn video_data_is_usable(root: &Value) -> bool {
     else {
         return false;
     };
-    video_models(data).any(|model| video_model_has_candidate(&model))
+    video_models(data, requested_video_id)
+        .iter()
+        .any(video_model_has_candidate)
         || root
             .get("data")
             .is_some_and(|data| has_compatible_playable_url(data, 0))
@@ -1636,7 +1657,7 @@ async fn fetch_v5_video_model(
 /// Parses the multi_video_model response and extracts the best quality MP4 URL.
 #[cfg(test)]
 fn extract_video_url(raw: &[u8]) -> VideoSourceResolution {
-    let Ok(parsed) = ParsedVideoResponse::parse(raw) else {
+    let Ok(parsed) = ParsedVideoResponse::parse(raw, None) else {
         return VideoSourceResolution::NotFound;
     };
     extract_parsed_video_url(&parsed)
@@ -1845,7 +1866,7 @@ async fn resolve_stream_video_source_attempt(
         }
         FallbackResolution::NotFound { .. } => SourceAttemptResolution {
             resolution: VideoSourceResolution::NotFound,
-            retryable: !video_data_is_usable(&parsed.root),
+            retryable: !video_data_is_usable(&parsed.root, parsed.requested_video_id.as_deref()),
         },
     }
 }
@@ -2415,11 +2436,64 @@ pub(crate) fn decode_video_model_str(s: &str) -> Option<Map<String, Value>> {
     }
 }
 
-fn video_models(data: &Map<String, Value>) -> impl Iterator<Item = Map<String, Value>> + '_ {
+fn model_from_video_entry(entry: &Map<String, Value>) -> Option<Map<String, Value>> {
+    entry
+        .get("video_model")
+        .and_then(decode_video_model)
+        .or_else(|| entry.contains_key("video_list").then(|| entry.clone()))
+}
+
+/// Resolves the requested episode first, then falls back to the legacy
+/// response shapes used by audio and older video endpoints.
+///
+/// The `video_tab` door answers with the model one group deeper than the player
+/// door does (`data.video_model_data.<id>.video_model`), and it may hand the
+/// model over as a JSON *string*; both shapes have to resolve to the same list.
+fn video_models(
+    data: &Map<String, Value>,
+    requested_video_id: Option<&str>,
+) -> Vec<Map<String, Value>> {
+    if let Some(video_id) = requested_video_id.filter(|id| !id.is_empty()) {
+        if let Some(group) = data.get("1004").and_then(Value::as_object) {
+            return group
+                .get(video_id)
+                .and_then(Value::as_object)
+                .and_then(model_from_video_entry)
+                .into_iter()
+                .collect();
+        }
+        if let Some(model) = data
+            .get(video_id)
+            .and_then(Value::as_object)
+            .and_then(model_from_video_entry)
+        {
+            return vec![model];
+        }
+        for group in data.values().filter_map(Value::as_object) {
+            if let Some(model) = group
+                .get(video_id)
+                .and_then(Value::as_object)
+                .and_then(model_from_video_entry)
+            {
+                return vec![model];
+            }
+        }
+        return data
+            .get("video_model")
+            .and_then(decode_video_model)
+            .into_iter()
+            .collect();
+    }
+
     data.get("video_model")
+        .and_then(decode_video_model)
         .into_iter()
-        .chain(data.values().filter_map(|item| item.get("video_model")))
-        .filter_map(decode_video_model)
+        .chain(
+            data.values()
+                .filter_map(Value::as_object)
+                .filter_map(model_from_video_entry),
+        )
+        .collect()
 }
 
 fn decode_video_model(v: &Value) -> Option<Map<String, Value>> {
