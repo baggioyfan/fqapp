@@ -20,6 +20,7 @@ class AudioSkipPointsRows extends StatelessWidget {
 
   /// 可选秒数档位。
   static const options = <int>[0, 10, 15, 20, 30];
+  static const _maxSeconds = 24 * 60 * 60;
 
   @override
   Widget build(BuildContext context) {
@@ -89,7 +90,7 @@ class AudioSkipPointsRows extends StatelessWidget {
         ),
       ),
       subtitle: Text(
-        seconds == 0 ? '不跳过' : '开章跳 $seconds 秒',
+        seconds == 0 ? '不跳过' : '$title $seconds 秒',
         style: TextStyle(fontSize: 12.5, color: palette.muted),
       ),
       trailing: Row(
@@ -113,28 +114,92 @@ class AudioSkipPointsRows extends StatelessWidget {
     int current,
     ValueChanged<int> onPicked,
   ) async {
-    final picked = await showModalBottomSheet<int>(
+    var picked = await showModalBottomSheet<int>(
       context: context,
       showDragHandle: true,
       builder: (context) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ListTile(title: Text(title)),
-            for (final value in options)
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(title: Text(title)),
+              for (final value in options)
+                ListTile(
+                  title: Text(value == 0 ? '关闭（不跳过）' : '$value 秒'),
+                  trailing: value == current
+                      ? const Icon(LucideIcons.check, color: HomePalette.accent)
+                      : null,
+                  onTap: () => Navigator.pop(context, value),
+                ),
               ListTile(
-                title: Text(value == 0 ? '关闭（不跳过）' : '$value 秒'),
-                trailing: value == current
-                    ? const Icon(LucideIcons.check, color: HomePalette.accent)
-                    : null,
-                onTap: () => Navigator.pop(context, value),
+                title: const Text('自定义秒数'),
+                subtitle: options.contains(current) ? null : Text('$current 秒'),
+                trailing: options.contains(current)
+                    ? null
+                    : const Icon(LucideIcons.check, color: HomePalette.accent),
+                onTap: () => Navigator.pop(context, -1),
               ),
-            const SizedBox(height: 8),
-          ],
+              const SizedBox(height: 8),
+            ],
+          ),
         ),
       ),
     );
+    if (picked == -1) {
+      if (!context.mounted) return;
+      picked = await _customSeconds(context, title, current);
+    }
     if (picked == null) return;
     onPicked(picked);
+  }
+
+  Future<int?> _customSeconds(BuildContext context, String title, int current) {
+    final formKey = GlobalKey<FormState>();
+    var input = '$current';
+    return showDialog<int>(
+      context: context,
+      builder: (context) {
+        void submit() {
+          if (formKey.currentState!.validate()) {
+            Navigator.pop(context, int.parse(input.trim()));
+          }
+        }
+
+        return AlertDialog(
+          title: Text('$title（秒）'),
+          scrollable: true,
+          content: Form(
+            key: formKey,
+            child: TextFormField(
+              initialValue: input,
+              autofocus: true,
+              keyboardType: TextInputType.number,
+              textInputAction: TextInputAction.done,
+              decoration: const InputDecoration(
+                labelText: '秒数',
+                helperText: '0–$_maxSeconds 秒，0 表示不跳过',
+                suffixText: '秒',
+              ),
+              onChanged: (value) => input = value,
+              validator: (value) {
+                final seconds = int.tryParse(value?.trim() ?? '');
+                if (seconds == null || seconds < 0 || seconds > _maxSeconds) {
+                  return '请输入 0–$_maxSeconds 的整数';
+                }
+                return null;
+              },
+              onFieldSubmitted: (_) => submit(),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('取消'),
+            ),
+            TextButton(onPressed: submit, child: const Text('确定')),
+          ],
+        );
+      },
+    );
   }
 }
