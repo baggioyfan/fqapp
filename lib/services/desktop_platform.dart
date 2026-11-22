@@ -855,6 +855,12 @@ Media desktopPlaybackMedia(String uri, Object? startPositionMs) {
 @visibleForTesting
 void requestVideoControllerFrame() => WidgetsBinding.instance.scheduleFrame();
 
+/// 诊断构建开关：`--dart-define=FQAPP_PLAYER_DIAGNOSTICS=true` 时把 mpv 日志
+/// 放宽到 info 级写进应用日志，用来排查「某些剧集播不了」。产品构建不开。
+const desktopPlayerDiagnostics = bool.fromEnvironment(
+  'FQAPP_PLAYER_DIAGNOSTICS',
+);
+
 class _DesktopPlayer {
   _DesktopPlayer(this.id, this.emit) {
     video = VideoController(player);
@@ -874,12 +880,22 @@ class _DesktopPlayer {
       player.stream.completed.listen((v) => event('completed', v)),
       player.stream.width.listen((_) => _size()),
       player.stream.height.listen((_) => _size()),
-      player.stream.error.listen(
-        (_) => event('error', {
+      player.stream.error.listen((message) {
+        // 界面只给通用提示；原始错误（解码器、HTTP 状态、解密）留在日志里排查。
+        AppLog.w('desktop-player', 'id=$id mpv error: $message');
+        event('error', {
           'message': '媒体播放失败，请重试或切换清晰度',
           // 3 = 播放器在起播/解码阶段报错（创建已成功）。
           'errorCode': 3,
-        }),
+        });
+      }),
+      // 默认只有 error 级会到这里；诊断构建放宽到 info，能看到开流、
+      // 选轨、编码格式、硬解是否生效等起播过程。
+      player.stream.log.listen(
+        (log) => AppLog.d(
+          'mpv',
+          'id=$id [${log.prefix}] ${log.level}: ${log.text.trimRight()}',
+        ),
       ),
     ]);
     unawaited(
@@ -888,7 +904,11 @@ class _DesktopPlayer {
   }
   final int id;
   final void Function(Map<String, dynamic>) emit;
-  final player = Player();
+  final player = Player(
+    configuration: const PlayerConfiguration(
+      logLevel: desktopPlayerDiagnostics ? MPVLogLevel.info : MPVLogLevel.error,
+    ),
+  );
   late final VideoController video;
   final subscriptions = <StreamSubscription<dynamic>>[];
   final ready = Completer<void>();

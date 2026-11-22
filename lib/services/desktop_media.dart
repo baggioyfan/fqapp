@@ -62,10 +62,11 @@ class DesktopMediaException implements Exception {
 /// shape `NativePlaybackException.fromEvent` reads. Logs only the category.
 Map<String, Object> desktopOpenFailure(int playerId, Object error) {
   final failure = error is DesktopMediaException ? error : null;
-  AppLog.d(
+  AppLog.w(
     'desktop-player',
     'id=$playerId open failed kind=${failure?.kind ?? 'player'} '
-        'status=${failure?.httpStatus}',
+        'status=${failure?.httpStatus} '
+        'error=${error.runtimeType}: $error',
   );
   return {
     'message': '媒体加载失败，请检查网络或重试',
