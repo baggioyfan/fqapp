@@ -106,6 +106,8 @@ void main() {
         morePanelStyle: 1,
       );
       addTearDown(() => PlayerStyleConfig.instance = originalStyle);
+      PlayerPanelPreferences.resetVolumeForTesting();
+      addTearDown(PlayerPanelPreferences.resetVolumeForTesting);
       final player = await _mount(tester, shortSeries: true);
       player.emitPosition(const Duration(seconds: 35));
       await player.pause();
@@ -136,7 +138,8 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const ValueKey('player-rate-sheet-4')));
       await tester.pumpAndSettle();
-      expect(player.calls, ['volume:1.0', 'rate:2.0']);
+      // 关闭「默认静音」且从未选过音量：恢复到 50%，不是系统满音量。
+      expect(player.calls, ['volume:0.5', 'rate:2.0']);
       expect(player.isPlaying, isFalse);
       expect(player.position, const Duration(seconds: 35));
       expect(find.text('恢复'), findsOneWidget);

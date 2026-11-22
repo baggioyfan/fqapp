@@ -1,3 +1,4 @@
+import '../services/player_panel_preferences.dart';
 import '../services/player_preferences.dart';
 import '../models/media_item.dart';
 import 'dart:async';
@@ -66,7 +67,7 @@ class _DesktopVideoChromeState extends State<DesktopVideoChrome> {
         if (mounted) setState(() => _rate = value);
       }),
     );
-    _volume = c.defaultMute ? 0 : 1;
+    _volume = c.defaultMute ? 0 : PlayerPanelPreferences.volumeLevel;
   }
 
   void _bindPosition() {
@@ -696,8 +697,11 @@ class _DesktopVideoChromeState extends State<DesktopVideoChrome> {
                                     IconButton(
                                       tooltip: '静音',
                                       onPressed: () {
+                                        // 解除静音回到记住的档位，不跳到系统满音量。
                                         setState(
-                                          () => _volume = _volume == 0 ? 1 : 0,
+                                          () => _volume = _volume == 0
+                                              ? PlayerPanelPreferences.takeUnmuteLevel()
+                                              : 0,
                                         );
                                         unawaited(
                                           _applyVolume(_volume) ??

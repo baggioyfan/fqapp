@@ -35,6 +35,7 @@ import 'services/audio_download_store.dart';
 import 'services/audio_floating_routes.dart';
 import 'services/drama_cache_preferences.dart';
 import 'services/audio_preferences.dart';
+import 'services/player_panel_preferences.dart';
 import 'services/player_preferences.dart';
 import 'services/player_layout_preferences.dart';
 import 'services/backend_service.dart';
@@ -228,6 +229,8 @@ Future<void> _loadLocalData() async {
     // 解码器偏好必须先进内存：`NativePlayer.create` 在起播路径上直接读它，
     // 不能在那里再 await 读盘（见 DecoderPreferenceCache 的说明）。
     optional(DecoderPreferenceCache.load),
+    // 播放器独立音量同理：起播与解除静音直接读内存里的档位。
+    optional(PlayerPanelPreferences.loadVolumeLevel),
     // 离线缓存的记录箱启动即打开：播放器的离线命中只在 box 就绪时才查
     // （避免运行中途首次 openBox 失败产生游离异步错误）。可选数据，失败
     // 只退化为「本会话不查离线」。

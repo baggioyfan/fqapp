@@ -697,7 +697,8 @@ class InlineVideoPlayback {
     value = value.clamp(0, 1);
     _muted = value == 0;
     muted.value = _muted;
-    PlayerPanelPreferences.setDefaultMute(_muted);
+    // 记住这一档：解除静音和下一张卡/下一集都回到它，而不是系统满音量。
+    PlayerPanelPreferences.selectVolume(value);
     final player = _player;
     if (player != null && player.isCreated) {
       await player.setVolume(value);
@@ -708,10 +709,12 @@ class InlineVideoPlayback {
     _muted = !_muted;
     muted.value = _muted;
     PlayerPanelPreferences.setDefaultMute(_muted);
+    // 先定档位再看播放器：没有播放器时下一张卡也要用这一档起播。
+    final level = _muted ? 0.0 : PlayerPanelPreferences.takeUnmuteLevel();
     final player = _player;
     if (player == null || !player.isCreated) return;
     try {
-      await player.setVolume(_muted ? 0.0 : 1.0);
+      await player.setVolume(level);
     } catch (_) {
       // A player that refuses a volume change is on its way out.
     }
@@ -1052,7 +1055,7 @@ class InlineVideoPlayback {
       rate.value = _rate;
     }
     try {
-      await player.setVolume(_muted ? 0.0 : 1.0);
+      await player.setVolume(_muted ? 0.0 : PlayerPanelPreferences.volumeLevel);
     } catch (_) {
       // Volume is best effort: a player that rejects it still plays.
     }

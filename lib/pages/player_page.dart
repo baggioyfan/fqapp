@@ -254,7 +254,9 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
 
   /// 当前播放器音量（0..1）。「默认静音」只是起播时的二元初值；全屏竖滑调过
   /// 音量之后以这里为准，换集重建播放器也沿用它，不会再被默认静音打回 0/1。
-  double _volume = PlayerPanelPreferences.defaultMute ? 0 : 1;
+  // 起播音量取记住的档位（静音时为 0）：换集重建播放器、进新播放页都沿用它，
+  // 不再每次回到满音量。见 `PlayerPanelPreferences.playbackVolume`。
+  double _volume = PlayerPanelPreferences.playbackVolume;
 
   PlayerHistory get _history =>
       PlayerHistory(widget.historyStore ?? LibraryStore.instance);
@@ -690,23 +692,33 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   }
 
   void _setDefaultMute(bool enabled) {
-    setState(() {
-      _defaultMute = enabled;
-      // 默认静音是「起播音量」：开启即静音、关闭即满音量，这就是官方的即时
-      // 反馈。手势调过的音量从这里被覆盖，回到二元语义。
-      _volume = enabled ? 0 : 1;
-    });
     PlayerPanelPreferences.setDefaultMute(enabled);
     // 官方默认静音是「起播时的音量」，切换时立刻作用到当前播放器，
     // 与官方「开启时默认静音/关闭默认静音」的即时反馈一致。
+    // 关闭静音回到记住的那一档，而不是满音量：mpv 的立方音量曲线下，从 0
+    // 直接跳到 1 会先炸一下耳朵（上游 6dbcb8fa）。
+    final level = enabled ? 0.0 : PlayerPanelPreferences.takeUnmuteLevel();
+    setState(() {
+      _defaultMute = enabled;
+      _volume = level;
+    });
     final player = _player;
     if (player != null) {
       unawaited(
-        player.setVolume(_volume).catchError((Object _) {
+        player.setVolume(level).catchError((Object _) {
           // 音量设置失败不影响播放，也不该冒泡到 onError。
         }),
       );
     }
+  }
+
+  /// 桌面音量条/快捷键：档位记进 [PlayerPanelPreferences]，换集后的新播放器
+  /// 沿用这一档；拖到 0 等同开启静音，拖离 0 等同解除静音。
+  Future<void> _setPlaybackVolume(double value) async {
+    PlayerPanelPreferences.selectVolume(value);
+    final mute = PlayerPanelPreferences.defaultMute;
+    if (mute != _defaultMute && mounted) setState(() => _defaultMute = mute);
+    await _player?.setVolume(value.clamp(0.0, 1.0).toDouble());
   }
 
   /// 官方开关落盘（`video_danmaku_switch_sp`）。开关状态就绪后才允许
@@ -2022,21 +2034,11 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       layoutMode: layoutMode,
       splitPanel: _buildSplitPanel(),
       player: _player,
-      // 音量面板改音量：先记在本页（换集重建播放器要靠它恢复），再落到当前
+      // 音量面板改音量：先记进偏好（换集重建播放器靠它恢复），再落到当前
       // 播放器上。失败不影响播放，和「默认静音」那条约定一致。
       // 注意：全屏竖滑不经过这里——上游用 PlaybackGestureLevels 直接调系统
       // 媒体音量（见 video_player_chrome 的 _applyGestureLevel）。
-      onPlaybackVolumeChanged: (value) async {
-        final clamped = value.clamp(0.0, 1.0).toDouble();
-        if (mounted && _volume != clamped) {
-          setState(() => _volume = clamped);
-        }
-        final player = _player;
-        if (player == null) return;
-        try {
-          await player.setVolume(clamped);
-        } catch (_) {}
-      },
+      onPlaybackVolumeChanged: _setPlaybackVolume,
       title: widget.title,
       episodes: widget.eps,
       currentIndex: _index,
@@ -2090,6 +2092,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       onFillScreenChanged: widget.shortSeries ? _setFillScreen : null,
       defaultMute: _defaultMute,
       onDefaultMuteChanged: widget.shortSeries ? _setDefaultMute : null,
+      onPlaybackVolumeChanged: _setPlaybackVolume,
       danmaku: _danmaku.entries,
       danmakuEnabled: _danmakuEnabled,
       onToggleDanmaku: widget.shortSeries ? _toggleDanmaku : null,
