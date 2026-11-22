@@ -487,6 +487,60 @@ async fn a_pool_of_rejecting_devices_still_reaches_the_only_playable_one() {
     );
 }
 
+/// 单档取流（`mode` 不带 stream）遇到全档 bytevc2 时，要换一台设备再问一次。
+///
+/// 上游按设备分发档位：同一集在 A 设备上全是 bytevc2（播放链路上没有解码器），
+/// 在 B 设备上是 h264。第一次就报「该视频暂不支持播放」，等于把「这台设备给的
+/// 档位解不了」当成「这一集播不了」——日志里那条错误连续出现上百次时，用户侧
+/// 表现就是整部剧都打不开。重试只做一次，且必须排除刚应答的那台设备。
+#[tokio::test]
+async fn single_mode_asks_another_device_before_declaring_codec_rejection() {
+    const GOOD_DEVICE: &str = "device_id=0000000000000001";
+    let upstream = MockUpstream::start(|req| {
+        if req.path == "/h264.mp4" {
+            return MockReply {
+                status: 200,
+                headers: vec![],
+                body: b"video fixture".to_vec(),
+            };
+        }
+        if !req.path.contains("multi_video_model") {
+            return MockReply::json(json!({"data": {}}));
+        }
+        if req.query.contains(GOOD_DEVICE) {
+            return MockReply::json(json!({"data": {"video_model": {
+                "key_seed": "AAAA",
+                "video_list": {
+                    "video_1": {"main_url": ALLOWED_URL, "codec_type": "h264", "spade_a": SPADE_A}
+                }
+            }}}));
+        }
+        MockReply::json(json!({"data": {"video_model": {
+            "key_seed": "AAAA",
+            "video_list": {
+                "video_1": {"main_url": REJECTED_URL, "codec_type": "bytevc2"}
+            }
+        }}}))
+    })
+    .await;
+    let dir = TempDir::new("video-codec-retry");
+    let server = build_server(&dir, Some(upstream.origin.clone()), &[], &[], &pool_json(2)).await;
+
+    let (status, body) = request_video(&server, "video_id=one-episode").await;
+    assert_eq!(status, 200, "{body}");
+    // 走到下载契约说明这一次解析拿到的是可播档位，而不是「暂不支持播放」。
+    assert_eq!(body["video_url"], "/src/episode.mp4", "{body}");
+    assert_eq!(
+        std::fs::read(dir.join("src/episode.mp4")).unwrap(),
+        b"video fixture"
+    );
+    assert!(
+        playback_requests(&upstream) >= 2,
+        "the second attempt has to leave the rejecting device, saw {} playback requests",
+        playback_requests(&upstream)
+    );
+}
+
 /// 取流请求里声明的设备档位决定上游下发哪一套编码。
 ///
 /// 2026-11-20 实测（真上游，同一集，逐台设备逐档位）：`device_level=3` 时注册

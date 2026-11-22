@@ -61,6 +61,14 @@ const VIDEO_RETRY_MIN_BUDGET: Duration = Duration::from_millis(250);
 const VIDEO_DEVICE_ROTATION_BUDGET: Duration = Duration::from_secs(6);
 const VIDEO_DEVICE_RETRY_RESERVE: Duration = Duration::from_secs(2);
 const VIDEO_DEVICE_SETTLE: Duration = Duration::from_millis(500);
+/// How much caller budget the one codec retry may spend on a replacement device.
+///
+/// Upstream splits tiers by device: the same episode can come back as `h265` on
+/// one identity and as `bytevc2` — which this build cannot decode — on another.
+/// One more fetch on a different device is worth a couple of round trips; a
+/// longer ladder is not, because the device pool and its registration budget are
+/// both bounded (see the empty-playback note in `handle_video`).
+const CODEC_RETRY_BUDGET: Duration = Duration::from_millis(2_500);
 /// The only playback door that still answers.
 ///
 /// The three older doors (`multi_video_model/v1` for phoenix/dragon batch and
@@ -534,22 +542,40 @@ fn handle_video<'a>(ctx: &'a Ctx, params: &'a Params) -> BoxFuture<'a, ApiResult
 
             (bodies, collected.resolution)
         } else {
+            // 这台设备是谁：`CodecRejected` 之后要换一台再问一次，而设备池按
+            // least-recently-used 派发，不排除刚应答的那台就会把请求又发回给它，
+            // 重试等于空转（同 `fetch_playback_model` 里的 pin 说明）。
+            let answering = std::sync::Mutex::new(String::new());
             let parsed = fetch_parsed_video_response("v5", &video_id, fetch_deadline, async {
-                fetch_v5_video_model(ctx, &video_id, "")
-                    .await
-                    .map(|(raw, _)| raw)
+                let (raw, device) = fetch_v5_video_model(ctx, &video_id, "").await?;
+                *answering.lock().unwrap_or_else(|error| error.into_inner()) = device;
+                Ok(raw)
             })
             .await
             .ok_or_else(|| ApiError::Internal("视频取流失败，请稍后重试".to_string()))?;
-            let parsed = Arc::new(parsed);
-            let resolved = resolve_video_source_until(
+            let (parsed, resolved) = match resolve_video_source_until(
                 ctx,
                 &video_id,
                 StreamVideoSource::V5,
-                parsed.as_ref(),
+                &parsed,
                 resolution_deadline,
             )
-            .await;
+            .await
+            {
+                VideoSourceResolution::CodecRejected => {
+                    let answering = answering
+                        .into_inner()
+                        .unwrap_or_else(|error| error.into_inner());
+                    match retry_codec_on_another_device(ctx, &video_id, &answering, work_deadline)
+                        .await
+                    {
+                        Some((retried, resolution)) => (retried, resolution),
+                        None => (parsed, VideoSourceResolution::CodecRejected),
+                    }
+                }
+                resolution => (parsed, resolution),
+            };
+            let parsed = Arc::new(parsed);
             fallback_bodies = new_fallback_body_cache();
             selected_source = StreamVideoSource::V5.name();
             (
@@ -1652,6 +1678,60 @@ async fn fetch_v5_video_model(
     pin_device: &str,
 ) -> ApiResult<(Vec<u8>, String)> {
     fetch_playback_model(ctx, video_id, pin_device).await
+}
+
+/// Asks one *other* device once when every tier came back in a codec this build
+/// cannot decode.
+///
+/// Returning 「该视频暂不支持播放」 on the first verdict is one step too early:
+/// upstream splits tiers by device, so a `bytevc2` answer says something about
+/// that identity, not about the episode. Exactly one retry — the device pool and
+/// its registration budget are bounded, so this is not a retry ladder.
+///
+/// Returns `None` when no replacement device is available or the retry produced
+/// nothing new; the caller then keeps the original `CodecRejected` verdict.
+async fn retry_codec_on_another_device(
+    ctx: &Ctx,
+    video_id: &str,
+    answering_device: &str,
+    work_deadline: Instant,
+) -> Option<(ParsedVideoResponse, VideoSourceResolution)> {
+    if answering_device.is_empty() {
+        return None;
+    }
+    let deadline = (Instant::now() + CODEC_RETRY_BUDGET).min(work_deadline);
+    if Instant::now() >= deadline {
+        return None;
+    }
+    let device = match ctx
+        .up
+        .rotate_playback_identity(Some(answering_device))
+        .await
+    {
+        Ok(device) => device,
+        Err(error) => {
+            log::warn!("video {video_id}: codec retry found no replacement device: {error}");
+            return None;
+        }
+    };
+    let retried = fetch_parsed_video_response("v5", video_id, deadline, async {
+        fetch_v5_video_model(ctx, video_id, &device.device_id)
+            .await
+            .map(|(raw, _)| raw)
+    })
+    .await?;
+    let resolution =
+        resolve_video_source_until(ctx, video_id, StreamVideoSource::V5, &retried, deadline).await;
+    log::info!(
+        "video {video_id}: codec retry on device={} result={}",
+        device.device_id,
+        match resolution {
+            VideoSourceResolution::Found(_, _) => "found",
+            VideoSourceResolution::CodecRejected => "codec_rejected",
+            VideoSourceResolution::NotFound => "not_found",
+        },
+    );
+    Some((retried, resolution))
 }
 
 /// Parses the multi_video_model response and extracts the best quality MP4 URL.
