@@ -1729,9 +1729,12 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       _ => null,
     };
     _loadTrace?.fail(errorCode: errorCode, httpStatusCode: httpStatusCode);
+    final issue = PlaybackIssue.fromError(error);
     // 首帧之前失败先静默重来（见 [_retryBeforeFirstFrame]）。放在 trace.fail
     // 之后：这一次尝试仍然如实记成失败，重试自己会开一条新的 trace。
-    if (_retryBeforeFirstFrame(error)) return;
+    // 编码不受支持是确定结论：静默重来只会再拿到同一种编码，直接给出原因
+    // （上游 19404f1d）。
+    if (issue.retryable && _retryBeforeFirstFrame(error)) return;
     _sources.invalidate(widget.eps[_index].itemId);
     _prefetchTimer?.cancel();
     _prefetchTimer = null;
@@ -1745,7 +1748,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       unawaited(NativePlayer.updateFloating(owner: owner, playing: false));
     }
     setState(() {
-      _error = PlaybackIssue.fromError(error);
+      _error = issue;
       _initVideo = false;
       _playing = false;
     });
@@ -2288,7 +2291,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
           PlayerErrorFeedback(
             key: const ValueKey('player-error'),
             issue: _error!,
-            onRetry: widget.eps.isEmpty ? null : retry,
+            onRetry: widget.eps.isEmpty || !_error!.retryable ? null : retry,
           ),
         if (_error == null && (waiting || _player!.buffering))
           PlayerLoadingFeedback(

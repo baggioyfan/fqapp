@@ -10,6 +10,7 @@ import 'package:fqapp/services/backend_service.dart';
 import 'package:fqapp/services/network_proxy_preferences.dart';
 import 'package:fqapp/services/backend_transport.dart';
 import 'package:fqapp/services/episode_source_cache.dart';
+import 'package:fqapp/services/playback_issue.dart';
 import 'package:fqapp/src/rust/api.dart' as rust;
 import 'package:fqapp/src/rust/frb_generated.dart';
 
@@ -330,7 +331,8 @@ void main() {
           isA<ApiException>().having(
             (error) => error.message,
             'message',
-            '该视频暂不支持播放',
+            // 播放页按这条文案识别「编码不受支持」，不再静默重试。
+            PlaybackIssue.unsupportedCodecError,
           ),
         ),
       );

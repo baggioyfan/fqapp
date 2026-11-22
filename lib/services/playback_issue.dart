@@ -20,6 +20,10 @@ enum PlaybackIssue {
   /// 暂时不可用」会让用户以为等一会儿就好，实际要换一份片源才行。
   unsupported('这一集暂时无法播放', '片源编码本机不支持，可以稍后重试，或先看其他剧集。'),
   decoding('视频解析失败', '视频格式可能不受支持，可以重试或切换其他剧集。'),
+  unsupportedCodec(
+    '该集暂不支持播放',
+    '这一集只提供当前客户端无法解码的视频编码（bytevc2），重试也无法播放，请先观看其他剧集。',
+  ),
   unknown('播放失败', '请重试，或切换其他剧集。'),
   empty('暂无可播放剧集', '返回后试试其他作品。');
 
@@ -28,7 +32,19 @@ enum PlaybackIssue {
 
   const PlaybackIssue(this.title, this.message);
 
+  /// Rust 核心编码门的拒绝文案（`rust/src/endpoints/video.rs` 的
+  /// `VideoSourceResolution::CodecRejected` 分支）：上游这一集只给了 bytevc2，
+  /// 没有可解码的版本。它和普通 500 同状态码，只能按文案区分；
+  /// `test/rust_host_integration_test.dart` 钉住了两侧一致。
+  static const unsupportedCodecError = '该视频暂不支持播放';
+
+  /// 结论是确定的：换地址、换档位重试都拿不到能解码的流。
+  bool get retryable => this != unsupportedCodec;
+
   static PlaybackIssue fromError(Object error) {
+    if (error is ApiException && error.message == unsupportedCodecError) {
+      return unsupportedCodec;
+    }
     if (error is TimeoutException) return timeout;
     if (error is NativePlaybackException) {
       final status = error.httpStatusCode;
