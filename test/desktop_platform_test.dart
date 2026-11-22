@@ -111,4 +111,24 @@ void main() {
       TargetPlatform.linux,
     }),
   );
+
+  // 续播：create 下发的 startPositionMs 必须落到 Media.start（mpv 起播前的
+  // start 属性），否则桌面端从 0 播，进度条和弹幕锚点却停在存档位置。
+  test('desktop player media carries the create resume position', () {
+    final resumed = desktopPlaybackMedia('https://cdn.test/v.mp4', 83250);
+    expect(resumed.uri, 'https://cdn.test/v.mp4');
+    expect(resumed.start, const Duration(milliseconds: 83250));
+    // CENC 代理 URL 走同一条起点：mpv 之后按 Range 读取。
+    expect(
+      desktopPlaybackMedia('http://127.0.0.1:4100/m/abc', 1500.0).start,
+      const Duration(milliseconds: 1500),
+    );
+    for (final none in <Object?>[null, 0, -20, '83250']) {
+      expect(
+        desktopPlaybackMedia('https://cdn.test/v.mp4', none).start,
+        isNull,
+        reason: '$none must start from the beginning',
+      );
+    }
+  });
 }
