@@ -2037,11 +2037,6 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       layoutMode: layoutMode,
       splitPanel: _buildSplitPanel(),
       player: _player,
-      // 音量面板改音量：先记进偏好（换集重建播放器靠它恢复），再落到当前
-      // 播放器上。失败不影响播放，和「默认静音」那条约定一致。
-      // 注意：全屏竖滑不经过这里——上游用 PlaybackGestureLevels 直接调系统
-      // 媒体音量（见 video_player_chrome 的 _applyGestureLevel）。
-      onPlaybackVolumeChanged: _setPlaybackVolume,
       title: widget.title,
       episodes: widget.eps,
       currentIndex: _index,
@@ -2095,6 +2090,10 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       onFillScreenChanged: widget.shortSeries ? _setFillScreen : null,
       defaultMute: _defaultMute,
       onDefaultMuteChanged: widget.shortSeries ? _setDefaultMute : null,
+      // 音量面板/桌面音量条改音量：档位记进偏好（换集重建播放器靠它恢复），
+      // 再落到当前播放器上。失败不影响播放，和「默认静音」那条约定一致。
+      // 注意：全屏竖滑不经过这里——上游用 PlaybackGestureLevels 直接调系统
+      // 媒体音量（见 video_player_chrome 的 _applyGestureLevel）。
       onPlaybackVolumeChanged: _setPlaybackVolume,
       danmaku: _danmaku.entries,
       danmakuEnabled: _danmakuEnabled,
