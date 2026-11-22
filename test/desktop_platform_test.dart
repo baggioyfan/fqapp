@@ -83,4 +83,32 @@ void main() {
       expect(selected, 3);
     },
   );
+
+  // 回归：Windows 短剧 feed 起播第一集时窗口只有静态封面，media_kit 的
+  // VideoController 等的 post-frame 回调没人请求帧，Player.open 一直挂起。
+  testWidgets(
+    'desktop player requests the frame media_kit waits for on an idle window',
+    (tester) async {
+      await tester.pumpWidget(const SizedBox.shrink());
+      expect(tester.binding.hasScheduledFrame, isFalse);
+
+      var controllerInitialized = false;
+      // Same deferral media_kit_video's VideoController constructor uses.
+      tester.binding.addPostFrameCallback((_) => controllerInitialized = true);
+      expect(
+        tester.binding.hasScheduledFrame,
+        isFalse,
+        reason: 'addPostFrameCallback alone never requests a frame',
+      );
+
+      requestVideoControllerFrame();
+      expect(tester.binding.hasScheduledFrame, isTrue);
+      await tester.pump();
+      expect(controllerInitialized, isTrue);
+    },
+    variant: TargetPlatformVariant({
+      TargetPlatform.windows,
+      TargetPlatform.linux,
+    }),
+  );
 }

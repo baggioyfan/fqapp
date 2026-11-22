@@ -823,10 +823,21 @@ String decodeGb18030(Uint8List bytes) {
     closeIconv(handle);
   }
 }
+/// 为刚建好的 media_kit [VideoController] 请求一帧。
+///
+/// `VideoController` 构造时用 `addPostFrameCallback` 推迟纹理创建，
+/// `Player.open` 又会等 `VideoController` 初始化完成；而 `addPostFrameCallback`
+/// 本身不请求帧。窗口静止时（例如 Windows 短剧 feed 起播第一集，画面上只有
+/// 一张静态封面），没有任何东西请求新帧，`open` 就一直挂着，直到鼠标划过
+/// 窗口触发重绘，或 Dart 侧 25 秒的创建超时报「播放失败」。后续集数不受影响，
+/// 因为正在播的视频会持续驱动帧。Windows 与 Linux 都会遇到。
+@visibleForTesting
+void requestVideoControllerFrame() => WidgetsBinding.instance.scheduleFrame();
 
 class _DesktopPlayer {
   _DesktopPlayer(this.id, this.emit) {
     video = VideoController(player);
+    requestVideoControllerFrame();
     void event(String type, dynamic value) {
       if (!disposed) emit({'playerId': id, 'type': type, 'value': value});
     }
