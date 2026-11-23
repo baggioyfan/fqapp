@@ -32,9 +32,6 @@ void main() {
       Hive.init(directory.path);
       history = await Hive.openBox<dynamic>('history');
       await Hive.openBox<dynamic>('read_time');
-      // 阅读时长的两张新表（按天 / 按书）同样在 LibraryStore.init 里开箱。
-      await Hive.openBox<dynamic>('read_time_daily_v2');
-      await Hive.openBox<dynamic>('read_time_books_v2');
       // 已看集 box 也在 LibraryStore.init 里开箱（F07），同样要预开，
       // 否则 openBox 落在 widget 测试的 fake-async 路径上不会完成。
       await Hive.openBox<dynamic>('watched_episodes');
@@ -63,6 +60,8 @@ void main() {
         ),
       ),
     );
+    // 等真实 Hive I/O 走完,不能用有界推进:骨架只在闸门挂起时在位,
+    // 闸门放行后 pumpAndSettle 自然静止(见 test/support/pump_until.dart)。
     await tester.pumpAndSettle();
     expect(find.text('无法读取本地数据'), findsOneWidget);
     expect(history.get('kept'), record);
@@ -214,9 +213,7 @@ void main() {
       expect(find.text('无法读取本地数据'), findsOneWidget);
       expect(tester.takeException(), isNull);
     } finally {
-      // 同步收尾：组件测试的模拟时钟只在 pump 时清空微任务队列，在这里
-      // await resetForTest() 会永久挂住（CI 表现为 Test 远超基线直到超时）。
-      AppLog.instance.resetForTestSync();
+      await AppLog.instance.resetForTest();
     }
   });
 }

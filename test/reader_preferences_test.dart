@@ -1,3 +1,5 @@
+import 'dart:ui' show Size;
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -75,6 +77,7 @@ void main() {
       fontPath: '/private/reader-fonts/test.font',
       fontName: '测试宋体.ttf',
       pageMode: ReaderPageMode.scroll,
+      columnMode: ReaderColumnMode.dual,
       continuousReading: false,
       showParagraphBubbles: false,
     );
@@ -98,6 +101,7 @@ void main() {
     expect(restored.fontPath, '/private/reader-fonts/test.font');
     expect(restored.fontName, '测试宋体.ttf');
     expect(restored.pageMode, ReaderPageMode.scroll);
+    expect(restored.columnMode, ReaderColumnMode.dual);
     expect(restored.continuousReading, isFalse);
     expect(restored.showParagraphBubbles, isFalse);
   });
@@ -118,6 +122,7 @@ void main() {
       'reader_follow_system_brightness': 3,
       'reader_brightness': 0,
       'reader_page_mode': 'unknown',
+      'reader_column_mode': 'unknown',
       'reader_continuous_reading': 'yes',
       'reader_show_paragraph_bubbles': 'yes',
     });
@@ -136,11 +141,20 @@ void main() {
     expect(restored.titleAlignment, ReaderTitleAlignment.start);
     expect(restored.showReadingInfo, isTrue);
     expect(restored.followSystemBrightness, isTrue);
-    expect(restored.brightness, 0, reason: '0 是合法值（面板最暗）：以前被规范化到 0.02，读回来又变亮');
+    expect(restored.brightness, 0.02);
     expect(restored.pageMode, ReaderPageMode.paged);
+    expect(restored.columnMode, ReaderColumnMode.auto);
     // A wrong-typed stored value falls back to the default (on).
     expect(restored.continuousReading, isTrue);
     expect(restored.showParagraphBubbles, isTrue);
+  });
+
+  test('column mode resolves single vs two-column spread by viewport', () {
+    expect(ReaderColumnMode.auto.resolveColumns(const Size(390, 844)), 1);
+    expect(ReaderColumnMode.auto.resolveColumns(const Size(780, 360)), 1);
+    expect(ReaderColumnMode.auto.resolveColumns(const Size(1120, 746)), 2);
+    expect(ReaderColumnMode.single.resolveColumns(const Size(1260, 840)), 1);
+    expect(ReaderColumnMode.dual.resolveColumns(const Size(600, 800)), 2);
   });
 
   test(
@@ -207,6 +221,28 @@ void main() {
       expect(restored.brightness, 0.7);
       expect(restored.followSystemBrightness, isFalse);
       expect(restored.titleAlignment, ReaderTitleAlignment.center);
+    },
+  );
+
+  test(
+    'desktop sidebar open defaults on and persists explicit choice',
+    () async {
+      final defaults = await ReaderPreferences.load();
+      expect(defaults.desktopSidebarOpen, isTrue);
+      expect(const ReaderPreferences().desktopSidebarOpen, isTrue);
+
+      await defaults.copyWith(desktopSidebarOpen: false).save();
+      final collapsed = await ReaderPreferences.load();
+      expect(collapsed.desktopSidebarOpen, isFalse);
+      expect(collapsed.copyWith(fontSize: 20).desktopSidebarOpen, isFalse);
+
+      await collapsed.copyWith(desktopSidebarOpen: true).save();
+      expect((await ReaderPreferences.load()).desktopSidebarOpen, isTrue);
+
+      SharedPreferences.setMockInitialValues({
+        'reader_desktop_sidebar_open': 'invalid',
+      });
+      expect((await ReaderPreferences.load()).desktopSidebarOpen, isTrue);
     },
   );
 }

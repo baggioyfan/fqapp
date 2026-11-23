@@ -478,9 +478,21 @@ void main() {
           lessThan(1),
         );
         expect(find.text('今日已读0分钟'), findsOneWidget);
+        // 手机工具栏用一个当前版式选择器替换常显的三段开关;三个选项仍然
+        // 可达,点开就是原来的选择。
+        final picker = find.byKey(const Key('shelf-layout-picker'));
+        expect(picker, findsOneWidget);
+        expect(
+          find.descendant(of: picker, matching: find.text('宫格')),
+          findsOneWidget,
+        );
+        await tester.tap(picker);
+        await tester.pumpAndSettle();
         for (final name in ['grid', 'double', 'list']) {
           expect(find.byKey(Key('shelf-layout-$name')), findsOneWidget);
         }
+        await tester.binding.handlePopRoute();
+        await tester.pumpAndSettle();
         // The underline is drawn once for the whole row now, so it can slide
         // between the tabs; it is 26dp wide and uses the accent colour.
         final underline = tester.widget<AnimatedPositioned>(
@@ -597,10 +609,32 @@ void main() {
         await tester.pumpAndSettle();
         final state = tester.state(find.byType(LibraryPage));
         final density = ShelfViewStore.instance.state.density;
+        for (final width in [512.0, 560.0, 599.0, 600.0]) {
+          final size = Size(width, 900);
+          await tester.binding.setSurfaceSize(size);
+          await tester.pumpWidget(_app(style, size: size));
+          await tester.pumpAndSettle();
+          expect(
+            find.byKey(const Key('shelf-layout-picker')),
+            width < 600 ? findsOneWidget : findsNothing,
+          );
+          if (width >= 600) {
+            for (final segment in ['grid', 'double', 'list']) {
+              expect(find.byKey(Key('shelf-layout-$segment')), findsOneWidget);
+            }
+          }
+          expect(tester.state(find.byType(LibraryPage)), same(state));
+          expect(tester.takeException(), isNull);
+        }
+        await tester.binding.setSurfaceSize(const Size(400, 900));
+        await tester.pumpWidget(_app(style));
+        await tester.pumpAndSettle();
         for (final (segment, layout) in [
           ('double', BookshelfLayout.doubleColumn),
           ('list', BookshelfLayout.list),
         ]) {
+          await tester.tap(find.byKey(const Key('shelf-layout-picker')));
+          await tester.pumpAndSettle();
           await tester.tap(find.byKey(Key('shelf-layout-$segment')));
           await tester.pumpAndSettle();
           await tester.runAsync(() => ClassicShelfLayout.instance.whenIdle());
@@ -1009,7 +1043,7 @@ void main() {
       await tester.pumpWidget(const SizedBox.shrink());
     });
 
-    testWidgets('320dp + 2x 字号下工具栏同一行不溢出，长分组名只省略', (tester) async {
+    testWidgets('320dp + 2x 字号下紧凑工具栏按需换行不溢出，长分组名只省略', (tester) async {
       await tester.binding.setSurfaceSize(const Size(320, 800));
       addTearDown(() => tester.binding.setSurfaceSize(null));
       late String group;
@@ -1041,9 +1075,19 @@ void main() {
       expect(label.maxLines, 1);
       expect(label.overflow, TextOverflow.ellipsis);
       expect(find.text('今日已读0分钟'), findsOneWidget);
+      final picker = find.byKey(const Key('shelf-layout-picker'));
+      expect(picker, findsOneWidget);
+      expect(
+        find.descendant(of: picker, matching: find.text('宫格')),
+        findsOneWidget,
+      );
+      await tester.tap(picker);
+      await tester.pumpAndSettle();
       for (final name in ['grid', 'double', 'list']) {
         expect(find.byKey(Key('shelf-layout-$name')), findsOneWidget);
       }
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
       expect(tester.takeException(), isNull);
       await tester.pumpWidget(const SizedBox.shrink());
     });

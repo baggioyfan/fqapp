@@ -21,9 +21,7 @@ void main() {
   testWidgets('root, nested navigator and overlays share one live style', (
     tester,
   ) async {
-    // fork 的 AppThemeStyleStore 默认 classic（界面锁定经典主题），
-    // 这些用例验的是 scope/overlay 的版式切换机制，故显式从 archive 起始。
-    final store = AppThemeStyleStore()..value = AppThemeStyle.archive;
+    final store = AppThemeStyleStore();
     addTearDown(store.dispose);
     final navigatorKey = GlobalKey<NavigatorState>();
     final nestedKey = GlobalKey<NavigatorState>();
@@ -83,9 +81,7 @@ void main() {
   testWidgets('only display readers rebuild; scope ignores animated tokens', (
     tester,
   ) async {
-    // fork 的 AppThemeStyleStore 默认 classic（界面锁定经典主题），
-    // 这些用例验的是 scope/overlay 的版式切换机制，故显式从 archive 起始。
-    final store = AppThemeStyleStore()..value = AppThemeStyle.archive;
+    final store = AppThemeStyleStore();
     addTearDown(store.dispose);
     final builds = <String, int>{};
 
@@ -127,9 +123,7 @@ void main() {
   testWidgets('discrete style switches before the theme animation settles', (
     tester,
   ) async {
-    // fork 的 AppThemeStyleStore 默认 classic（界面锁定经典主题），
-    // 这些用例验的是 scope/overlay 的版式切换机制，故显式从 archive 起始。
-    final store = AppThemeStyleStore()..value = AppThemeStyle.archive;
+    final store = AppThemeStyleStore();
     addTearDown(store.dispose);
     await tester.pumpWidget(
       AppUiHost(

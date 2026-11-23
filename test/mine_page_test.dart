@@ -185,8 +185,9 @@ void main() {
     final today = DateUtils.dateOnly(DateTime.now());
     final stats = ReadingStats.from(
       history: const [],
-      readTimeDays: {readingDayKey(today): 0.0},
-      readTimeBooks: const {'zero-book': 0.0},
+      readTime: {
+        'zero-book': {readingDayKey(today): 0.0},
+      },
     );
     addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
     await tester.pumpWidget(
@@ -241,11 +242,6 @@ void main() {
     final page = await _openRankedTitle(tester, 'orphan-video');
     expect(page.item.id, 'orphan-video');
     expect(page.item.kind, 'video');
-    // 视频详情页会给每次目录请求挂一个 20 秒预算定时器，空目录还会再来一次
-    // （短剧重试 1 次）。这里没有注入 loader，两次都要走掉，否则测试结束时报
-    // pending timer。
-    await tester.pump(const Duration(seconds: 21));
-    await tester.pump(const Duration(seconds: 21));
   });
 
   testWidgets('全部 lists every ranked book and opens the tapped one', (

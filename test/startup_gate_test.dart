@@ -17,21 +17,13 @@ import 'package:fqapp/pages/cached_books_page.dart';
 import 'package:fqapp/pages/home_page.dart';
 import 'package:fqapp/widgets/home/home_skeleton.dart';
 
+import 'support/pump_until.dart';
+
 void main() {
   setUp(() => SharedPreferences.setMockInitialValues({}));
 
-  // 推进到 [finder] 命中为止。
-  //
-  // 单次 `pump()` 不够：本地数据就绪的回调是微任务，而 `pump()` 只在有帧被
-  // 调度时才重建界面，那一次 pump 只会把微任务跑掉、把重建排到下一帧。
-  //
-  // 这里用「还找不到就再 pump 一次」的有界循环：不会像 `pumpAndSettle()` 那样
-  // 被骨架自带的无限脉动卡到超时（骨架在位时它永远等不到静止）。
-  Future<void> pumpUntilFound(WidgetTester tester, Finder finder) async {
-    for (var i = 0; i < 10 && finder.evaluate().isEmpty; i++) {
-      await tester.pump();
-    }
-  }
+  // 启动态骨架是无限脉动，等闸门放行只能有界推进，不能 pumpAndSettle；
+  // 共享助手在 test/support/pump_until.dart，骨架相关用例沿用同一写法。
 
   testWidgets('本地数据就绪前只有骨架，没有整屏等待提示', (tester) async {
     final pending = Completer<void>();

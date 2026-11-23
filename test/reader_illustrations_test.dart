@@ -482,6 +482,9 @@ void main() {
     );
     await tester.pumpAndSettle();
     await _showImage(tester, index: 1);
+    // Paging saves the new anchor after the animation window.
+    await tester.pump(const Duration(milliseconds: 250));
+    await tester.pumpAndSettle();
     final anchor = store.entry!['textOffset'];
     await tester.binding.setSurfaceSize(const Size(760, 390));
     await tester.pumpAndSettle();

@@ -9,11 +9,11 @@ import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/pages/home_page.dart';
 import 'package:fqapp/pages/home_provider.dart';
 import 'package:fqapp/services/api_client.dart';
-import 'package:fqapp/widgets/home/classic_home_skeleton.dart';
+import 'package:fqapp/widgets/home/home_archive.dart';
 import 'package:fqapp/widgets/home/home_design.dart';
-import 'package:fqapp/widgets/home/home_hero.dart';
+import 'package:fqapp/widgets/home/home_masthead.dart';
 import 'package:fqapp/widgets/home/home_rank_shelf.dart';
-import 'package:fqapp/widgets/home/home_shelf.dart';
+import 'package:fqapp/widgets/home/home_skeleton.dart';
 
 void main() {
   testWidgets(
@@ -303,10 +303,9 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('home_category_1')));
     await tester.pumpAndSettle();
 
-    // 区块的卡片并进当前分类的书架，标题用分类名，不用区块名。
-    // 真分页之后标签条自己就显示着「经典」，兜底网格不再重复一个分区头
-    // （上游 _fallbackGrid 的 withHeader 只给推荐页和带继续阅读的行留）。
-    expect(find.byType(HomeSectionHeader), findsNothing);
+    // 区块的卡片并进当前分类的书架；但这张网格就是页面第一段，不再用分类名
+    // 当分区头——顶栏已经选中「经典」，再写一遍是重复。
+    expect(find.byType(HomeSectionLabel), findsNothing);
     expect(find.text('经典必读'), findsNothing);
     expect(find.text('经典书一'), findsWidgets);
     // 旧管线的东西不该出现。
@@ -422,9 +421,7 @@ void main() {
       );
       await tester.pumpAndSettle();
       // 顶栏在窄屏大字号下也要放得下：店名不换行、两个圆形入口不溢出。
-      // 经典版式的顶栏没有店名，只有搜索框 + 分类入口；窄屏大字号下
-      // 放得下搜索框即可。
-      expect(find.text(HomeHero.searchHint), findsOneWidget);
+      expect(find.text(HomeMasthead.brand), findsOneWidget);
       expect(
         tester.getRect(find.byKey(const Key('home_search_button'))).right,
         lessThanOrEqualTo(320),
@@ -562,7 +559,7 @@ void main() {
     await tester.pump();
     expect(offsets, [0, 1]);
     // Cold first load paints the `cmc.xml` skeleton, not a spinner.
-    expect(find.byType(ClassicHomeSkeleton), findsOneWidget);
+    expect(find.byType(HomeSkeleton), findsOneWidget);
     expect(find.text('暂无内容'), findsNothing);
 
     secondPage.complete(
@@ -571,7 +568,7 @@ void main() {
     await tester.pump();
     await tester.pump();
     expect(offsets, [0, 1]);
-    expect(find.byType(ClassicHomeSkeleton), findsOneWidget);
+    expect(find.byType(HomeSkeleton), findsOneWidget);
     await tester.pump(const Duration(milliseconds: 500));
     await tester.pumpAndSettle();
     expect(offsets, [0, 1, 2]);

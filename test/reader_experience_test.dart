@@ -86,6 +86,62 @@ void main() {
   });
 
   group('paged view turn styles', () {
+    for (final pair in [
+      (ReaderPageTurnStyle.curl, ReaderPageTurnStyle.slide),
+      (ReaderPageTurnStyle.slide, ReaderPageTurnStyle.cover),
+      (ReaderPageTurnStyle.cover, ReaderPageTurnStyle.slide),
+    ]) {
+      testWidgets(
+        'switch ${pair.$1.name} to ${pair.$2.name} cancels the old turn',
+        (tester) async {
+          final style = ValueNotifier(pair.$1);
+          final layout = _layout();
+          var page = 0;
+          final key = GlobalKey<ReaderPagedViewState>();
+          await tester.pumpWidget(
+            MaterialApp(
+              home: Scaffold(
+                body: ValueListenableBuilder<ReaderPageTurnStyle>(
+                  valueListenable: style,
+                  builder: (_, value, _) => ReaderPagedView(
+                    key: key,
+                    layout: layout,
+                    pageIndex: page,
+                    hasPreviousChapter: false,
+                    hasNextChapter: false,
+                    onPageChanged: (value) => page = value,
+                    onBoundary: (_) async {},
+                    onDragStart: () {},
+                    turnStyle: value,
+                    backgroundColor: Colors.white,
+                  ),
+                ),
+              ),
+            ),
+          );
+          var completed = false;
+          final oldTurn = key.currentState!
+              .turnPage(1)
+              .then((_) => completed = true);
+          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 40));
+          style.value = pair.$2;
+          await tester.pump();
+          await tester.pump();
+          expect(completed, isTrue);
+          await oldTurn;
+          expect(key.currentState!.isTurning, isFalse);
+          final next = key.currentState!.turnPage(1);
+          await tester.pumpAndSettle();
+          await next;
+          expect(key.currentState!.currentPage, 1);
+          expect(tester.takeException(), isNull);
+          await tester.pumpWidget(const SizedBox.shrink());
+          style.dispose();
+        },
+      );
+    }
+
     Future<ReaderPagedViewState> pump(
       WidgetTester tester,
       ReaderPageTurnStyle style, {
@@ -122,6 +178,22 @@ void main() {
       }
       state = tester.state<ReaderPagedViewState>(find.byType(ReaderPagedView));
       return state;
+    }
+
+    for (final style in [
+      ReaderPageTurnStyle.slide,
+      ReaderPageTurnStyle.cover,
+    ]) {
+      testWidgets('${style.name} prepares the next page before the turn', (
+        tester,
+      ) async {
+        final pager = await pump(tester, style);
+        expect(pager.currentPage, 0);
+        expect(
+          find.byKey(const ValueKey('reader-text-page-1'), skipOffstage: false),
+          findsOneWidget,
+        );
+      });
     }
 
     testWidgets('none turns instantly while slide animates', (tester) async {

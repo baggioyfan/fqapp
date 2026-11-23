@@ -270,18 +270,12 @@ void main() {
     });
   });
 
-  test('archive styles point at system font families', () {
-    // 首页不再打包思源宋体 / Roboto Mono：衬线取系统族（Android `serif`、
-    // macOS/iOS `Songti SC`），等宽取 `monospace` / `Menlo`。这里钉住
-    // 「不再指向 Home Serif / Home Mono」且系统兜底链仍完整。
+  test('archive styles use the bundled font families', () {
     final serif = homeSerifStyle(size: 15, color: Colors.white);
-    expect(serif.fontFamily, anyOf('serif', 'Songti SC'));
-    expect(serif.fontFamily, isNot('Home Serif'));
-    expect(serif.fontFamilyFallback, homeSerifFallback);
+    expect(serif.fontFamily, 'Home Serif');
     expect(serif.fontWeight, FontWeight.w700);
     final code = homeCodeStyle(const HomePalette(false));
-    expect(code.fontFamily, anyOf('monospace', 'Menlo'));
-    expect(code.fontFamily, isNot('Home Mono'));
+    expect(code.fontFamily, 'Home Mono');
     expect(code.fontWeight, FontWeight.w500);
   });
 

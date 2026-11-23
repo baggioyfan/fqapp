@@ -153,7 +153,7 @@ void main() {
       );
     });
 
-    testWidgets('开始阅读 opens the shuqi reader with scoped history', (tester) async {
+    testWidgets('开始阅读 opens the source-scoped shuqi reader', (tester) async {
       final observer = _RouteObserver();
       final store = await _pumpShuqi(tester, observer: observer);
       addTearDown(store.dispose);
@@ -171,10 +171,13 @@ void main() {
         isNotNull,
         reason: 'the reader must not fall back to the global history store',
       );
-      // 书旗现在把进度写进本机历史（`shuqi:` 作用域），不再丢弃写入。
-      await readerStore!.addHistory({'id': 'shuqi:34078', 'kind': 'book'});
-      await readerStore.updateProgress('shuqi:34078', 0, 0.5);
-      expect(await readerStore.historyEntry('shuqi:34078'), isNotNull);
+      expect(reader.shelfItem!.source, 'shuqi');
+      expect(reader.shelfItem!.id, '34078');
+      await tester.pumpAndSettle();
+      final saved = await readerStore!.historyEntry('shuqi:34078');
+      expect(saved!['source'], 'shuqi');
+      expect(saved['contentId'], '34078');
+      expect(saved['chapterId'], '2180322');
 
       await tester.pumpWidget(const SizedBox.shrink());
       await tester.pumpAndSettle();
@@ -391,7 +394,6 @@ Future<AppThemeStyleStore> _pumpShuqi(
   List<String>? calls,
 }) async {
   final store = AppThemeStyleStore();
-  final history = MemoryReaderStore();
   await store.select(AppThemeStyle.classic);
   await _size(tester);
   await tester.pumpWidget(
@@ -401,9 +403,6 @@ Future<AppThemeStyleStore> _pumpShuqi(
       observers: observer == null ? const [] : [observer],
       home: ShuqiDetailPage(
         bookId: '34078',
-        // 详情页要读本机历史判「继续阅读」；测试进程里 LibraryStore 没 init，
-        // 注内存实现把历史隔离掉。
-        readerStore: history,
         bookLoader: (_) async {
           calls?.add('book:34078');
           return _shuqiBook;
@@ -412,6 +411,8 @@ Future<AppThemeStyleStore> _pumpShuqi(
           calls?.add('toc:34078');
           return _shuqiToc;
         },
+        readerStore: MemoryReaderStore(),
+        chapterLoader: (chapter) async => '${chapter.title}\n书旗正文。',
       ),
     ),
   );

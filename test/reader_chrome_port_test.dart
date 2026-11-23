@@ -148,38 +148,80 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
-  testWidgets('状态栏窄屏大字时保留时间与进度，不撑破布局', (tester) async {
+  testWidgets('状态栏窄屏大字可隐藏进度并保留时间和布局', (tester) async {
     tester.view.physicalSize = const Size(280, 600);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
-    await tester.pumpWidget(
-      MaterialApp(
-        home: MediaQuery(
-          data: const MediaQueryData(
-            size: Size(280, 600),
-            textScaler: TextScaler.linear(2),
-          ),
-          child: Scaffold(
-            body: ReaderStatusBar(
-              preset: ReaderThemePreset.light,
-              status: ReaderDeviceStatus(
-                time: DateTime(2026, 10, 30, 9, 5),
-                battery: 64,
+    for (final compact in [false, true]) {
+      for (final paged in [false, true]) {
+        var showProgress = true;
+        late StateSetter updateFooter;
+        await tester.pumpWidget(
+          MaterialApp(
+            home: MediaQuery(
+              data: const MediaQueryData(
+                size: Size(280, 600),
+                textScaler: TextScaler.linear(2),
               ),
-              progress: 0.42,
-              chapterIndex: 0,
-              chapterCount: 20,
+              child: Scaffold(
+                body: StatefulBuilder(
+                  builder: (context, setState) {
+                    updateFooter = setState;
+                    return ReaderStatusBar(
+                      preset: ReaderThemePreset.light,
+                      status: ReaderDeviceStatus(
+                        time: DateTime(2026, 10, 30, 9, 5),
+                        battery: 64,
+                      ),
+                      progress: 0.42,
+                      chapterIndex: 0,
+                      chapterCount: 20,
+                      compact: compact,
+                      paged: paged,
+                      showProgress: showProgress,
+                    );
+                  },
+                ),
+              ),
             ),
           ),
-        ),
-      ),
-    );
-    await tester.pump();
-    expect(tester.takeException(), isNull);
-    expect(find.byKey(const ValueKey('reader-clock')), findsOneWidget);
-    expect(find.byKey(const ValueKey('reader-progress')), findsOneWidget);
-    expect(find.byKey(const ValueKey('reader-battery')), findsNothing);
+        );
+        await tester.pump();
+        final footerRect = tester.getRect(find.byType(ReaderStatusBar));
+        final clockRect = tester.getRect(
+          find.byKey(const ValueKey('reader-clock')),
+        );
+        for (final visible in [false, true]) {
+          updateFooter(() => showProgress = visible);
+          await tester.pump();
+          expect(tester.takeException(), isNull);
+          expect(tester.getRect(find.byType(ReaderStatusBar)), footerRect);
+          expect(
+            tester.getRect(find.byKey(const ValueKey('reader-clock'))),
+            clockRect,
+          );
+          expect(find.byKey(const ValueKey('reader-battery')), findsNothing);
+          for (final key in [
+            'reader-progress',
+            if (paged && !compact) 'reader-page-number',
+          ]) {
+            final visibility = tester.widget<Visibility>(
+              find
+                  .ancestor(
+                    of: find.byKey(ValueKey(key)),
+                    matching: find.byType(Visibility),
+                  )
+                  .first,
+            );
+            expect(visibility.visible, visible);
+            expect(visibility.maintainSize, isTrue);
+            expect(visibility.maintainSemantics, isFalse);
+          }
+        }
+        await tester.pumpWidget(const SizedBox.shrink());
+      }
+    }
   });
 }
 

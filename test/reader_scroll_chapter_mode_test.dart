@@ -213,7 +213,12 @@ void main() {
       final pager = tester.widget<ReaderPagedView>(
         find.byType(ReaderPagedView),
       );
+      final beforeTurn = store.entry!['textOffset'];
       pager.onPageChanged(2);
+      await tester.pumpAndSettle();
+      // Animated paging defers storage until the turn has settled.
+      expect(store.entry!['textOffset'], beforeTurn);
+      await tester.pump(const Duration(milliseconds: 250));
       await tester.pumpAndSettle();
       final anchor = store.entry!['textOffset'];
       sheet.onChanged(
