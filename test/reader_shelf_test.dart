@@ -124,10 +124,11 @@ void main() {
     expect(find.text('已加入书架'), findsOneWidget);
     expect(tester.widget<ComicChromeButton>(button).tooltip, '已在书架');
 
-    // 提示走 SnackBar（duration 2s），外加漫画页进度保存的 500ms 防抖；两者
-    // 都是待触发的定时器，用例结束前推进过去，否则 fake-async 以
-    // timersPending 收尾报错。
-    await tester.pump(const Duration(milliseconds: 2500));
+    // 这里挂着三个定时器：加入书架提示的 SnackBar（2s）、漫画页进度保存的
+    // 500ms 防抖，以及 ShelfStore.toggle 之后 WebdavAutoSync.markDirty 的
+    // 5s 同步防抖。用例结束前全部推进过去，否则 fake-async 以 timersPending
+    // 收尾报错。
+    await tester.pump(const Duration(seconds: 6));
   });
 }
 
