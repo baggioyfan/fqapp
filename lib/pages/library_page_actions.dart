@@ -637,12 +637,10 @@ mixin _LibraryPageActions on _LibraryPageStateBase {
     );
     if (!confirmed || !mounted) return;
     final targets = [
+      // fork 的 removeHistoryEntries 只认 (kind, contentId) 两个字段（见其注释），
+      // 上游这里多带一个 source；在调用前映射掉，不改库的匹配语义。
       for (final entry in selected)
-        (
-          contentId: entry.contentId,
-          kind: entry.item.kind,
-          source: entry.item.source,
-        ),
+        (contentId: entry.contentId, kind: entry.item.kind),
     ];
     final removed = {for (final entry in selected) entry.selectionKey};
     // Same optimistic update as 移出书架: the rows leave the screen now, and a
