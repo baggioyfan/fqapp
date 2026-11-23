@@ -125,10 +125,12 @@ async fn missing_or_invalid_seed_cannot_hide_codec_rejection() {
 async fn mixed_variants_keep_h264_preference_across_response_shapes() {
     // Put H.264 first: blindly taking the last array entry would pick bytevc2,
     // and filtering without ranking would pick H.265 at the same quality.
+    // 选流闸把「整批带画质元数据、但宽或高为 0」的档判成没有可用流描述，
+    // 所以每条变体都要写明 vheight，只写 vwidth 会被整批滤掉。
     let variants = vec![
-        json!({"main_url": ALLOWED_URL, "codec_type": "h264", "vwidth": 720}),
-        json!({"main_url": "https://example.invalid/h265.mp4", "codec_type": "h265", "vwidth": 720}),
-        json!({"main_url": REJECTED_URL, "codec_type": "bytevc2", "vwidth": 1080}),
+        json!({"main_url": ALLOWED_URL, "codec_type": "h264", "vwidth": 720, "vheight": 1280}),
+        json!({"main_url": "https://example.invalid/h265.mp4", "codec_type": "h265", "vwidth": 720, "vheight": 1280}),
+        json!({"main_url": REJECTED_URL, "codec_type": "bytevc2", "vwidth": 1080, "vheight": 1920}),
     ];
     for (name, payload) in response_shapes(variants) {
         let upstream = MockUpstream::start(move |_| MockReply::json(payload.clone())).await;
