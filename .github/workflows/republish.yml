@@ -114,11 +114,19 @@ jobs:
           done
           [ ${#assets[@]} -gt 0 ] || { echo 'dist 里没有可发布的资产'; exit 1; }
 
-          gh release create "$TAG" \
-            -R "$GITHUB_REPOSITORY" \
-            --target "$sha" \
-            --title "$TAG" \
-            --notes-file "$notes" \
-            "${assets[@]}"
+          # Release 已存在时改为「补传资产 + 重写正文」：macOS runner 会连续
+          # 拿不到，只能先用其余平台发出去，等它编出来再补这一趟。
+          if gh release view "$TAG" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $TAG 已存在：补传资产并重写正文"
+            gh release upload "$TAG" -R "$GITHUB_REPOSITORY" --clobber "${assets[@]}"
+            gh release edit "$TAG" -R "$GITHUB_REPOSITORY" --notes-file "$notes"
+          else
+            gh release create "$TAG" \
+              -R "$GITHUB_REPOSITORY" \
+              --target "$sha" \
+              --title "$TAG" \
+              --notes-file "$notes" \
+              "${assets[@]}"
+          fi
           gh release view "$TAG" -R "$GITHUB_REPOSITORY" --json url,assets \
             --jq '"\(.url)", (.assets[] | "  \(.name) \(.size) B")'
