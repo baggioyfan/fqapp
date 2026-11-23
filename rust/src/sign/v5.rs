@@ -564,7 +564,11 @@ fn medusa(
         ),
         (17, Field::Sint(ts as i64)),
         string_field(20, "none"),
-        (21, Field::Sint(377)),
+        // Wire field 21: official App/SDK send 624 (zigzag => 312). The old
+        // value 377 makes upstream answer HTTP 200 with an empty body; a
+        // same-request A/B in `N3urda/hongguoTV` #107 restored both failing
+        // samples by changing only this field.
+        (21, Field::Sint(312)),
         bytes_field(23, &environment),
         string_field(
             24,
