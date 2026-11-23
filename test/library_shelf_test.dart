@@ -369,19 +369,21 @@ void main() {
 
       await tester.runAsync(() async {
         await tester.tap(find.byKey(const Key('shelf-remove-action')));
-        // 移出要落盘（ShelfStore + 分组清理 + 导入书删除）才弹撤销条，耗时随
-        // 磁盘波动；固定 50ms 在慢机上不够，SnackBar 还没排上就被断言了。
-        for (var i = 0; i < 100 && ShelfStore.instance.records().isNotEmpty; i++) {
-          await Future<void>.delayed(const Duration(milliseconds: 20));
-        }
-        await Future<void>.delayed(const Duration(milliseconds: 50));
       });
-      // SnackBar 入场只用短 pump 推进：pumpAndSettle 会快进 4s 计时把撤销条冲掉。
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 300));
-      expect(ShelfStore.instance.records(), isEmpty);
+      // 撤销条要等 removeKeys 之后的分组清理、导入书删除全部落地才排上：那是真实
+      // 磁盘 I/O，`ShelfStore.records()` 变空只是必要条件，页面自己的 await 还要
+      // 再续几拍。所以按帧轮询撤销条本身，而不是「等某个前置条件 + 补一段固定
+      // 延时」—— 后者在慢机上必挂（master 上曾连续两轮报找不到 shelf-undo-button）。
       final undo = find.byKey(const Key('shelf-undo-button'));
+      await _pumpUntilShown(tester, undo);
+      expect(ShelfStore.instance.records(), isEmpty);
       expect(undo, findsOneWidget);
+
+      // 轮询命中时入场动画可能还没走完，此时命中区与布局位置对不上，tap 会打在
+      // 空白处；入场固定 250ms，这里推 300ms 走完。不能 pumpAndSettle：那会一路
+      // 推进 4s 的存活计时，把撤销条冲掉。
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.pump();
 
       await tester.runAsync(() async {
         await tester.tap(undo);
@@ -410,19 +412,18 @@ void main() {
       await tester.pumpAndSettle();
       await tester.runAsync(() async {
         await tester.tap(find.byKey(const Key('shelf-remove-action')));
-        // 同上：等真正的落盘完成，撤销条才会排上。
-        for (var i = 0; i < 100 && ShelfStore.instance.records().isNotEmpty; i++) {
-          await Future<void>.delayed(const Duration(milliseconds: 20));
-        }
-        await Future<void>.delayed(const Duration(milliseconds: 50));
       });
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 300));
-      expect(find.byKey(const Key('shelf-undo-button')), findsOneWidget);
+      // 同上一例：轮询撤销条本身，别等前置条件再补固定延时。
+      final undo = find.byKey(const Key('shelf-undo-button'));
+      await _pumpUntilShown(tester, undo);
+      expect(undo, findsOneWidget);
 
+      // 轮询一命中就退出，入场动画多半没走完；SnackBar 的存活计时从入场结束才
+      // 开始算，所以先 settle 掉入场，再推 4s。
+      await tester.pumpAndSettle();
       await tester.pump(const Duration(seconds: 4));
       await tester.pumpAndSettle();
-      expect(find.byKey(const Key('shelf-undo-button')), findsNothing);
+      expect(undo, findsNothing);
       expect(find.textContaining('已移出'), findsNothing);
       expect(ShelfStore.instance.records(), isEmpty);
       expect(tester.takeException(), isNull);
@@ -1252,6 +1253,24 @@ Future<void> _settlePageWrite(
     await tester.pump();
   }
   await tester.pumpAndSettle();
+}
+
+/// 交替「真实一帧 + 16ms 假时钟」直到 [finder] 命中，命中即退出。
+///
+/// 与 [_settlePageWrite] 的区别是收尾**不** settle：SnackBar 的 4s 存活计时会
+/// 被 settle 一口气推完，撤销条还没轮到断言就消失了。帧数上限取 120
+/// （≈1.9s 假时钟），保证轮询本身吃不掉那 4s。
+Future<void> _pumpUntilShown(
+  WidgetTester tester,
+  Finder finder, {
+  int maxFrames = 120,
+}) async {
+  for (var i = 0; i < maxFrames && finder.evaluate().isEmpty; i++) {
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 10)),
+    );
+    await tester.pump(const Duration(milliseconds: 16));
+  }
 }
 
 /// Opens the view sheet and picks one of the four modes.
