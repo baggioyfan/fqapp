@@ -76,20 +76,6 @@ mixin _LibraryClassicViews on _LibraryClassicChrome {
     );
   }
 
-  /// The classic root shell has a 64dp dock plus an 8dp gap and safe-area inset.
-  /// Only Windows uses the standalone desktop tabs without [ShellDock]; other
-  /// platforms retain the root dock. Edit mode also has its own bottom bar.
-  double get _classicEmptyBottomClearance {
-    if (_editing) return 0;
-    final hasRootDock =
-        kIsWeb || defaultTargetPlatform != TargetPlatform.windows;
-    if (!hasRootDock) return 0;
-    return _classicRootDockHeight +
-        _classicRootDockBottomGap +
-        MediaQuery.viewPaddingOf(context).bottom +
-        _classicRootDockBreathingRoom;
-  }
-
   Widget _classicContent(BuildContext context, int tab) {
     final entries = _visibleEntriesForTab(tab);
     if (entries.isEmpty) {
@@ -200,23 +186,35 @@ mixin _LibraryClassicViews on _LibraryClassicChrome {
     );
   }
 
+  /// The classic root shell has a 64dp dock plus an 8dp gap and safe-area inset.
+  /// Only Windows uses the standalone desktop tabs without [ShellDock]; other
+  /// platforms retain the root dock. Edit mode also has its own bottom bar.
+  double get _classicEmptyBottomClearance {
+    if (_editing) return 0;
+    final hasRootDock =
+        kIsWeb || defaultTargetPlatform != TargetPlatform.windows;
+    if (!hasRootDock) return 0;
+    return _classicRootDockHeight +
+        _classicRootDockBottomGap +
+        MediaQuery.viewPaddingOf(context).bottom +
+        _classicRootDockBreathingRoom;
+  }
+
   Widget _classicGrid(List<_ShelfEntry> entries, int tab) => LayoutBuilder(
     builder: (context, constraints) {
-      // 宽屏按可用宽度排：每格约 170dp，夹在 3–10 列；窄屏（手机）仍是固定 3 列。
-      // 「是不是宽屏」走全站统一口径 appIsWideLayout（窗口宽度 ≥ 840 或 Windows
-      // 桌面），与首页、短剧页一致 —— 之前用 isDesktopHost 只认 Windows/macOS，
-      // Android 平板书架恒 3 列，而隔壁短剧页早已按宽度铺开。
-      final columns = appIsWideLayout(context)
-          ? (constraints.maxWidth / 170).floor().clamp(3, 10)
+      final columns = isDesktopHost
+          ? ((constraints.maxWidth - ShelfTokens.screenPadding * 2) / 168)
+                .floor()
+                .clamp(ShelfTokens.gridColumns, 8)
           : ShelfTokens.gridColumns;
       return GridView.builder(
         physics: const AlwaysScrollableScrollPhysics(),
         key: PageStorageKey('classic-shelf-grid-$tab'),
-        padding: const EdgeInsets.fromLTRB(
+        padding: EdgeInsets.fromLTRB(
           ShelfTokens.screenPadding,
           ShelfTokens.spaceXS,
           ShelfTokens.screenPadding,
-          ShelfTokens.contentBottomInset,
+          isDesktopHost ? 24.0 : ShelfTokens.contentBottomInset,
         ),
         gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
           crossAxisCount: columns,
@@ -248,64 +246,87 @@ mixin _LibraryClassicViews on _LibraryClassicChrome {
 
   Widget _classicDoubleGrid(List<_ShelfEntry> entries, int tab) =>
       LayoutBuilder(
-        builder: (context, constraints) => GridView.builder(
-          physics: const AlwaysScrollableScrollPhysics(),
-          key: PageStorageKey('classic-shelf-double-$tab'),
-          padding: const EdgeInsets.fromLTRB(
-            ShelfTokens.screenPadding,
-            ShelfTokens.spaceXS,
-            ShelfTokens.screenPadding,
-            ShelfTokens.contentBottomInset,
-          ),
-          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-            crossAxisCount: 2,
-            crossAxisSpacing: ShelfTokens.gridSpacing,
-            mainAxisSpacing: ShelfTokens.gridSpacing,
-            childAspectRatio: shelfDoubleChildAspectRatio(
-              context,
-              availableWidth: constraints.maxWidth,
+        builder: (context, constraints) {
+          final columns = isDesktopHost
+              ? ((constraints.maxWidth - ShelfTokens.screenPadding * 2) / 340)
+                    .floor()
+                    .clamp(2, 4)
+              : 2;
+          return GridView.builder(
+            physics: const AlwaysScrollableScrollPhysics(),
+            key: PageStorageKey('classic-shelf-double-$tab'),
+            padding: EdgeInsets.fromLTRB(
+              ShelfTokens.screenPadding,
+              ShelfTokens.spaceXS,
+              ShelfTokens.screenPadding,
+              isDesktopHost ? 24.0 : ShelfTokens.contentBottomInset,
             ),
-          ),
-          itemCount: entries.length,
-          itemBuilder: (context, index) {
-            final entry = entries[index];
-            return BookshelfDoubleCard(
-              key: ValueKey('shelf-double-${entry.selectionKey}'),
-              item: entry.item,
-              badgeText: entry.badgeText,
-              subtitleText: entry.subtitleText,
-              editing: _editing,
-              selected: _selected.contains(entry.selectionKey),
-              onTap: () => _tap(entry),
-              onLongPress: () => _longPress(entry),
-            );
-          },
-        ),
+            gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: columns,
+              crossAxisSpacing: ShelfTokens.gridSpacing,
+              mainAxisSpacing: ShelfTokens.gridSpacing,
+              childAspectRatio: shelfDoubleChildAspectRatio(
+                context,
+                availableWidth: constraints.maxWidth,
+                columns: columns,
+              ),
+            ),
+            itemCount: entries.length,
+            itemBuilder: (context, index) {
+              final entry = entries[index];
+              return BookshelfDoubleCard(
+                key: ValueKey('shelf-double-${entry.selectionKey}'),
+                item: entry.item,
+                badgeText: entry.badgeText,
+                subtitleText: entry.subtitleText,
+                editing: _editing,
+                selected: _selected.contains(entry.selectionKey),
+                onTap: () => _tap(entry),
+                onLongPress: () => _longPress(entry),
+              );
+            },
+          );
+        },
       );
 
-  Widget _classicList(List<_ShelfEntry> entries, int tab) => ListView.separated(
-    physics: const AlwaysScrollableScrollPhysics(),
-    key: PageStorageKey('classic-shelf-list-$tab'),
-    padding: const EdgeInsets.only(
-      top: ShelfTokens.spaceXS,
-      bottom: ShelfTokens.contentBottomInset,
-    ),
-    itemCount: entries.length,
-    separatorBuilder: (context, index) =>
-        Divider(height: .5, thickness: .5, color: HomePalette.of(context).line),
-    itemBuilder: (context, index) {
-      final entry = entries[index];
-      return BookshelfListCard(
-        key: ValueKey('shelf-list-${entry.selectionKey}'),
-        item: entry.item,
-        progressText: entry.readingText,
-        metaText: entry.metaText,
-        progress: entry.progress,
-        editing: _editing,
-        selected: _selected.contains(entry.selectionKey),
-        onTap: () => _tap(entry),
-        onLongPress: () => _longPress(entry),
-      );
-    },
-  );
+  Widget _classicList(List<_ShelfEntry> entries, int tab) {
+    final list = ListView.separated(
+      physics: const AlwaysScrollableScrollPhysics(),
+      key: PageStorageKey('classic-shelf-list-$tab'),
+      padding: EdgeInsets.only(
+        left: isDesktopHost ? 16 : 0,
+        right: isDesktopHost ? 16 : 0,
+        top: ShelfTokens.spaceXS,
+        bottom: isDesktopHost ? 24.0 : ShelfTokens.contentBottomInset,
+      ),
+      itemCount: entries.length,
+      separatorBuilder: (context, index) => Divider(
+        height: .5,
+        thickness: .5,
+        color: HomePalette.of(context).line,
+      ),
+      itemBuilder: (context, index) {
+        final entry = entries[index];
+        return BookshelfListCard(
+          key: ValueKey('shelf-list-${entry.selectionKey}'),
+          item: entry.item,
+          progressText: entry.readingText,
+          metaText: entry.metaText,
+          progress: entry.progress,
+          editing: _editing,
+          selected: _selected.contains(entry.selectionKey),
+          onTap: () => _tap(entry),
+          onLongPress: () => _longPress(entry),
+        );
+      },
+    );
+    if (!isDesktopHost) return list;
+    return Align(
+      alignment: Alignment.topCenter,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 1080),
+        child: list,
+      ),
+    );
+  }
 }

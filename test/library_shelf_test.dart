@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:material_ui/material_ui.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hive_ce/hive.dart';
@@ -18,6 +19,8 @@ import 'package:fqapp/services/api_client.dart';
 import 'package:fqapp/services/chapter_cache_store.dart';
 import 'package:fqapp/services/connectivity_status.dart';
 import 'package:fqapp/services/library_store.dart';
+import 'package:fqapp/services/reader_underline_store.dart';
+import 'package:fqapp/services/secure_key_provider.dart';
 import 'package:fqapp/services/shelf_store.dart';
 import 'package:fqapp/services/shelf_view_store.dart';
 import 'package:fqapp/widgets/home/home_reading_row.dart';
@@ -27,10 +30,29 @@ import 'package:fqapp/widgets/wenku/wenku_reveal.dart';
 import 'support/fakes.dart';
 
 void main() {
-  TestWidgetsFlutterBinding.ensureInitialized();
+  final binding = TestWidgetsFlutterBinding.ensureInitialized();
+  const secureStorage = MethodChannel(
+    'plugins.it_nomads.com/flutter_secure_storage',
+  );
   late Directory directory;
 
   setUp(() async {
+    // These fixtures use plaintext boxes; an absent native store must not
+    // depend on the key provider's wall-clock retry cooldown.
+    binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      secureStorage,
+      (_) => throw PlatformException(code: 'unavailable'),
+    );
+    SecureKeyProvider.instance.resetForTest();
+    final underlineHiveReady = ReaderUnderlineStore.hiveReady;
+    addTearDown(() {
+      binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        secureStorage,
+        null,
+      );
+      SecureKeyProvider.instance.resetForTest();
+      ReaderUnderlineStore.hiveReady = underlineHiveReady;
+    });
     // Interaction tests use the plain list so every row is mounted without
     // scrolling past the 3D carousel; the default shelfList mode is asserted
     // explicitly in the four-mode test.
@@ -40,6 +62,9 @@ void main() {
     Hive.init(directory.path);
     await LibraryStore.instance.init();
     await ShelfStore.instance.init();
+    // Shelf/navigation fixtures do not initialize annotation storage. Keep
+    // its lazy I/O and singleton queue out of the widget fake-async zone.
+    ReaderUnderlineStore.hiveReady = false;
   });
 
   tearDown(() async {
@@ -342,31 +367,34 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('已选择 1 本'), findsOneWidget);
 
-      // 「移出书架」先落盘、清分组、删本地书，最后才弹撤销条；这些是真实
-      // 磁盘 I/O，CI 上远超一个固定延时，而写完成后的续跑落在真实事件循环
-      // 里，普通 pump() 推不动它。所以按帧轮询撤销条本身，每次轮询都开一次
-      // runAsync 让真实事件循环前进。
       await tester.runAsync(() async {
         await tester.tap(find.byKey(const Key('shelf-remove-action')));
       });
+      // 撤销条要等 removeKeys 之后的分组清理、导入书删除全部落地才排上：那是真实
+      // 磁盘 I/O，`ShelfStore.records()` 变空只是必要条件，页面自己的 await 还要
+      // 再续几拍。所以按帧轮询撤销条本身，而不是「等某个前置条件 + 补一段固定
+      // 延时」—— 后者在慢机上必挂（master 上曾连续两轮报找不到 shelf-undo-button）。
       final undo = find.byKey(const Key('shelf-undo-button'));
-      await _pumpUntil(tester, () => undo.evaluate().isNotEmpty);
+      await _pumpUntilShown(tester, undo);
       expect(ShelfStore.instance.records(), isEmpty);
       expect(undo, findsOneWidget);
 
-      // 撤销条是滑入的：入场动画没走完时它的实际命中区和布局位置对不上，
-      // tap 会打在空白处。入场固定 250ms，这里推 300ms 走完；不要用
-      // pumpAndSettle，那样会一路推进 4s 的存活计时把撤销条冲掉。
+      // 轮询命中时入场动画可能还没走完，此时命中区与布局位置对不上，tap 会打在
+      // 空白处；入场固定 250ms，这里推 300ms 走完。不能 pumpAndSettle：那会一路
+      // 推进 4s 的存活计时，把撤销条冲掉。
       await tester.pump(const Duration(milliseconds: 300));
       await tester.pump();
+
       await tester.runAsync(() async {
         await tester.tap(undo);
         await Future<void>.delayed(const Duration(milliseconds: 50));
       });
-      await _pumpUntil(
-        tester,
-        () => ShelfStore.instance.records().isNotEmpty,
-      );
+      for (var i = 0; i < 50 && ShelfStore.instance.records().isEmpty; i++) {
+        await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 10)),
+        );
+        await tester.pump();
+      }
       expect(ShelfStore.instance.records().map((record) => record.item.id), [
         'a',
       ]);
@@ -385,33 +413,23 @@ void main() {
       await tester.runAsync(() async {
         await tester.tap(find.byKey(const Key('shelf-remove-action')));
       });
-      // 撤销条要等 removeKeys 之后的分组清理、本地书删除都落地才出现，固定
-      // 延时在 CI 上会先于它们返回（曾连续两轮报「找不到 shelf-undo-button」）。
-      // 这里按帧轮询撤销条本身：假时钟总共只推进 960ms，不会提前吃掉 4s 的
-      // SnackBar 存活时间。
-      for (var i = 0; i < 60; i++) {
-        await tester.runAsync(
-          () => Future<void>.delayed(const Duration(milliseconds: 10)),
-        );
-        await tester.pump(const Duration(milliseconds: 16));
-        if (find.byKey(const Key('shelf-undo-button')).evaluate().isNotEmpty) {
-          break;
-        }
-      }
-      expect(find.byKey(const Key('shelf-undo-button')), findsOneWidget);
+      // 同上一例：轮询撤销条本身，别等前置条件再补固定延时。
+      final undo = find.byKey(const Key('shelf-undo-button'));
+      await _pumpUntilShown(tester, undo);
+      expect(undo, findsOneWidget);
 
-      // 轮询一命中就退出，入場动画可能还没走完；SnackBar 的 4s 计时要等动画
-      // 结束才启动，所以先 settle，否则下面的 pump(4s) 追不上它。
+      // 轮询一命中就退出，入场动画多半没走完；SnackBar 的存活计时从入场结束才
+      // 开始算，所以先 settle 掉入场，再推 4s。
       await tester.pumpAndSettle();
       await tester.pump(const Duration(seconds: 4));
       await tester.pumpAndSettle();
-      expect(find.byKey(const Key('shelf-undo-button')), findsNothing);
+      expect(undo, findsNothing);
       expect(find.textContaining('已移出'), findsNothing);
       expect(ShelfStore.instance.records(), isEmpty);
       expect(tester.takeException(), isNull);
     });
 
-    testWidgets('收藏 tab 只放短剧/漫剧，书架 tab 只放书籍', (tester) async {
+    testWidgets('书架 tab 收全部条目并用类型筛选区分，收藏 tab 只放短剧/漫剧', (tester) async {
       await tester.runAsync(() async {
         await ShelfStore.instance.add(_item('plain-book', title: '架上小说'));
         await ShelfStore.instance.add(
@@ -424,10 +442,27 @@ void main() {
       await tester.pumpWidget(_app());
       await tester.pumpAndSettle();
 
-      // 书架 tab：只有书，视频类不混进来。
+      // 书架 tab 默认「全部」：小说、短剧、漫剧都在同一页。
+      expect(find.text('架上小说'), findsWidgets);
+      expect(find.text('追的短剧'), findsWidgets);
+      expect(find.text('追的漫剧'), findsWidgets);
+
+      // 次级筛选按媒介切分。
+      await tester.tap(find.byKey(const Key('library-shelf-kind-book')));
+      await tester.pumpAndSettle();
       expect(find.text('架上小说'), findsWidgets);
       expect(find.text('追的短剧'), findsNothing);
       expect(find.text('追的漫剧'), findsNothing);
+
+      await tester.tap(find.byKey(const Key('library-shelf-kind-video')));
+      await tester.pumpAndSettle();
+      expect(find.text('追的短剧'), findsWidgets);
+      expect(find.text('架上小说'), findsNothing);
+
+      await tester.tap(find.byKey(const Key('library-shelf-kind-all')));
+      await tester.pumpAndSettle();
+      expect(find.text('架上小说'), findsWidgets);
+      expect(find.text('追的短剧'), findsWidgets);
 
       await tester.tap(find.text('收藏'));
       await tester.pumpAndSettle();
@@ -1220,21 +1255,21 @@ Future<void> _settlePageWrite(
   await tester.pumpAndSettle();
 }
 
-/// 按帧推进，直到 [done] 成立。
+/// 交替「真实一帧 + 16ms 假时钟」直到 [finder] 命中，命中即退出。
 ///
-/// 页面写盘完成后要接着跑 UI 回调（比如弹撤销条），那些续跑挂在真实事件
-/// 循环上；testWidgets 的测试体在 fake async 区里，单纯 pump() 不会推进它们。
-/// 这里每帧都开一次 runAsync，让真实 I/O 与它的续跑有机会落地。
-Future<void> _pumpUntil(
+/// 与 [_settlePageWrite] 的区别是收尾**不** settle：SnackBar 的 4s 存活计时会
+/// 被 settle 一口气推完，撤销条还没轮到断言就消失了。帧数上限取 120
+/// （≈1.9s 假时钟），保证轮询本身吃不掉那 4s。
+Future<void> _pumpUntilShown(
   WidgetTester tester,
-  bool Function() done, {
-  int maxFrames = 200,
+  Finder finder, {
+  int maxFrames = 120,
 }) async {
-  for (var frame = 0; frame < maxFrames && !done(); frame++) {
+  for (var i = 0; i < maxFrames && finder.evaluate().isEmpty; i++) {
     await tester.runAsync(
       () => Future<void>.delayed(const Duration(milliseconds: 10)),
     );
-    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 16));
   }
 }
 

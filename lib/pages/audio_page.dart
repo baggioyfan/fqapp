@@ -38,7 +38,6 @@ import '../services/reader_preferences.dart';
 import '../services/shelf_store.dart';
 import '../services/transient_retry.dart';
 import '../services/system_tts.dart';
-import '../services/webdav_auto_sync.dart';
 import '../widgets/audio/audio_offline_section.dart';
 import '../widgets/audio/audio_floating_player.dart';
 import '../widgets/audio/audio_advance_banner.dart';
@@ -56,6 +55,7 @@ import '../widgets/comment_emoji.dart';
 import '../widgets/comment_images.dart';
 import '../widgets/home/home_design.dart';
 import '../widgets/home/home_sheet.dart';
+import '../services/webdav_auto_sync.dart';
 import 'detail_page.dart';
 import 'reader_page.dart';
 import 'system_tts_settings_page.dart';
@@ -706,7 +706,10 @@ class _AudioPageState extends State<AudioPage> {
     final introSummary = detail?.abstract ?? '';
     final related = c._extras.related.isEmpty ? null : c._extras.related.first;
     // Windows 桌面端用独立版式；它只需要 tones，上面这些局部变量先算好并不吃亏。
-    if (isWindowsDesktop) return _desktopAudio(palette, chapter, tones);
+    if (isDesktopHost ||
+        (isLinuxDesktop && MediaQuery.sizeOf(context).width >= 700)) {
+      return _desktopAudio(palette, chapter, tones);
+    }
 
     // 官方整页底色/字色都取自封面（见 audio_page_theme.dart）；墨水屏固定
     // 纯黑白，不使用封面取色。
@@ -800,55 +803,70 @@ class _AudioPageState extends State<AudioPage> {
               ),
               SizedBox(
                 width: MediaQuery.sizeOf(context).width >= 1200 ? 360 : 280,
-                child: DefaultTabController(
-                  length: 2,
-                  child: Column(
-                    children: [
-                      const TabBar(
-                        tabs: [
-                          Tab(text: '章节目录'),
-                          Tab(text: '同步字幕'),
-                        ],
-                      ),
-                      Expanded(
-                        child: TabBarView(
-                          children: [
-                            DesktopChapterSidebar(
-                              chapters: c._chapters,
-                              currentIndex: c._index,
-                              onSelected: (index) =>
-                                  unawaited(c._openChapter(index)),
-                            ),
-                            ValueListenableBuilder<Duration>(
-                              valueListenable: c._position,
-                              builder: (context, position, _) {
-                                final track = c._subtitles;
-                                if (track.isEmpty) {
-                                  // 官方两种空态都走 `setStatusText`，文案统一。
-                                  return const Center(
-                                    child: Text(
-                                      '本章暂无同步字幕',
-                                      key: Key('audio-subtitle-page-empty'),
-                                    ),
-                                  );
-                                }
-                                // 高亮与自动滚动都在 `AudioSubtitleList`
-                                // 里：跟着朗读进度滚到当前句并标出它。
-                                return AudioSubtitleList(
-                                  track: track,
-                                  active: track.indexAt(position),
-                                  onSeek: c._ready
-                                      ? (startMs) => c._seekTo(
-                                          Duration(milliseconds: startMs),
-                                        )
-                                      : null,
-                                );
-                              },
-                            ),
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: palette.surface,
+                    border: Border(left: BorderSide(color: palette.line)),
+                  ),
+                  child: DefaultTabController(
+                    length: 2,
+                    child: Column(
+                      children: [
+                        TabBar(
+                          labelColor: palette.ink,
+                          unselectedLabelColor: palette.muted,
+                          indicatorColor: palette.eink
+                              ? palette.ink
+                              : HomePalette.accent,
+                          dividerColor: palette.line,
+                          tabs: const [
+                            Tab(text: '章节目录'),
+                            Tab(text: '同步字幕'),
                           ],
                         ),
-                      ),
-                    ],
+                        Expanded(
+                          child: TabBarView(
+                            children: [
+                              DesktopChapterSidebar(
+                                width: double.infinity,
+                                showBorder: false,
+                                backgroundColor: palette.surface,
+                                chapters: c._chapters,
+                                currentIndex: c._index,
+                                onSelected: (index) =>
+                                    unawaited(c._openChapter(index)),
+                              ),
+                              ValueListenableBuilder<Duration>(
+                                valueListenable: c._position,
+                                builder: (context, position, _) {
+                                  final track = c._subtitles;
+                                  if (track.isEmpty) {
+                                    // 官方两种空态都走 `setStatusText`，文案统一。
+                                    return const Center(
+                                      child: Text(
+                                        '本章暂无同步字幕',
+                                        key: Key('audio-subtitle-page-empty'),
+                                      ),
+                                    );
+                                  }
+                                  // 高亮与自动滚动都在 `AudioSubtitleList`
+                                  // 里：跟着朗读进度滚到当前句并标出它。
+                                  return AudioSubtitleList(
+                                    track: track,
+                                    active: track.indexAt(position),
+                                    onSeek: c._ready
+                                        ? (startMs) => c._seekTo(
+                                            Duration(milliseconds: startMs),
+                                          )
+                                        : null,
+                                  );
+                                },
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               ),
@@ -1176,7 +1194,11 @@ class _AudioPageState extends State<AudioPage> {
           const SizedBox(height: 6),
           FilledButton.icon(
             key: const ValueKey('audio-retry'),
-            onPressed: () => c._openChapter(c._index, restoreHistory: true),
+            onPressed: () => c._openChapter(
+              c._index,
+              restoreHistory: true,
+              toneId: c._toneId,
+            ),
             style: FilledButton.styleFrom(backgroundColor: HomePalette.accent),
             icon: const Icon(LucideIcons.refresh_cw, size: 16),
             label: const Text('重试'),

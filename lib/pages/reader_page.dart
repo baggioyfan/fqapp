@@ -95,6 +95,10 @@ import '../widgets/reader/reader_text_selection.dart';
 import '../widgets/reader/reader_theme.dart';
 import '../widgets/reader/settings/reader_settings_widgets.dart';
 import '../widgets/wenku/wenku_ui.dart';
+// 桌面沉浸式阅读：往 Fluent 外壳的窗口栏登记「返回 / 侧栏 / 全屏」，
+// 并在阅读页里接管整窗尺寸。阅读页是独立路由，import 必须挂在主文件上
+// （各 reader_page_*.dart 都是 part，不能自带 import）。
+import '../widgets/desktop_shell_scope.dart';
 import 'audio_page.dart';
 import 'text_replacement_page.dart';
 import 'detail_page.dart';

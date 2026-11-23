@@ -11,6 +11,28 @@ import 'package:fqapp/widgets/home/home_skeleton.dart';
 import 'package:hive_ce/hive.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+/// 推进到 [text] 出现为止：每次「走过一小段模拟时间」再「给一小段真实时间」。
+///
+/// 两样缺一不可：
+/// - `pump(Duration)` 才推进模拟时钟，启动闸门等的那批定时器/预算才不会永远不动
+///   （裸 `pump()` 只重建、不推时钟，闸门会一直卡着）；
+/// - `runAsync` 才给真实的 Hive I/O 一点 wall-clock。
+///
+/// 也不能用 `pumpAndSettle`：闸门挂起时在位的是首页骨架，它自带
+/// `repeat(reverse: true)` 的无限脉动，永远等不到静止，直接撞 10 分钟超时。
+Future<void> _waitForText(WidgetTester tester, String text) async {
+  final finder = find.text(text);
+  for (var i = 0; i < 80; i++) {
+    if (finder.evaluate().isNotEmpty) return;
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 10)),
+    );
+  }
+  // 走完还没出现就再 pump 一次，交给调用方的 expect 给出可读的失败信息。
+  await tester.pump();
+}
+
 void main() {
   testWidgets('retrying initialization retains existing Hive history', (
     tester,
@@ -32,9 +54,6 @@ void main() {
       Hive.init(directory.path);
       history = await Hive.openBox<dynamic>('history');
       await Hive.openBox<dynamic>('read_time');
-      // 阅读时长的两张新表（按天 / 按书）同样在 LibraryStore.init 里开箱。
-      await Hive.openBox<dynamic>('read_time_daily_v2');
-      await Hive.openBox<dynamic>('read_time_books_v2');
       // 已看集 box 也在 LibraryStore.init 里开箱（F07），同样要预开，
       // 否则 openBox 落在 widget 测试的 fake-async 路径上不会完成。
       await Hive.openBox<dynamic>('watched_episodes');
@@ -43,7 +62,12 @@ void main() {
     addTearDown(() async {
       await tester.pumpWidget(const SizedBox.shrink());
       await tester.runAsync(() async {
-        await Hive.close();
+        // 用例失败时初始化可能还挂着，Hive 的 in-flight 写入会让 close 永不返回；
+        // 收尾卡死会把一次失败放大成两次 10 分钟超时（同文件后续用例一起红）。
+        await Hive.close().timeout(
+          const Duration(seconds: 10),
+          onTimeout: () => const <void>[],
+        );
         if (directory.absolute.parent.path != tempRoot.path) {
           throw StateError('Temporary directory escaped its parent');
         }
@@ -63,13 +87,15 @@ void main() {
         ),
       ),
     );
-    // 等真实 Hive I/O 走完,不能用有界推进:骨架只在闸门挂起时在位,
-    // 闸门放行后 pumpAndSettle 自然静止(见 test/support/pump_until.dart)。
-    await tester.pumpAndSettle();
+    // 闸门挂起时在位的是首页骨架，它自带 repeat(reverse: true) 的无限脉动，
+    // pumpAndSettle 永远等不到静止；而这次初始化走的是真实 Hive I/O，要的是
+    // wall-clock 而不是帧。所以两头交替：给一小段真实时间让 I/O 跑，再 pump
+    // 一帧让微任务落地并重建界面。
+    await _waitForText(tester, '无法读取本地数据');
     expect(find.text('无法读取本地数据'), findsOneWidget);
     expect(history.get('kept'), record);
     await tester.tap(find.text('重试'));
-    await tester.pumpAndSettle();
+    await _waitForText(tester, 'ready');
     expect(find.text('ready'), findsOneWidget);
     expect(attempts, 2);
     expect(history.get('kept'), record);
@@ -216,8 +242,8 @@ void main() {
       expect(find.text('无法读取本地数据'), findsOneWidget);
       expect(tester.takeException(), isNull);
     } finally {
-      // 同步收尾：组件测试的模拟时钟只在 pump 时清空微任务队列，在这里
-      // await resetForTest() 会永久挂住（CI 表现为 Test 远超基线直到超时）。
+      // 组件测试里 await 版会永久挂住（见 AppLog.resetForTest 的注释）：
+      // 模拟时钟只在 pump 时清微任务，测试体最后一句之后不再有 pump。
       AppLog.instance.resetForTestSync();
     }
   });

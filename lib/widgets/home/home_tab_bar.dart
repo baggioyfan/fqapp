@@ -20,6 +20,10 @@ const homeCategories = [
 ];
 
 /// 六个媒介分类固定在顶部；保留名称和下划线，不再重复分区的编号层级。
+///
+/// 不要补「短篇」：`HomeNotifier.tabs` 只有 6 项，第 7 格点下去会落到
+/// `allTabs[6]`（短剧页的「视频」频道），拉到别的分类的流。
+/// `test/home_tab_alignment_test.dart` 守着这条。
 class HomeTabBar extends StatelessWidget {
   static const double sidePadding = 16;
   static const double tabSpacing = 22;
@@ -36,6 +40,7 @@ class HomeTabBar extends StatelessWidget {
   /// **只有经典主题（[ClassicHomeTabBar]）会消费它**：档案风格的标签条是
   /// 每个标签自己带一条下划线，横滑时不做跟手位移，这里仅透传、不参与布局。
   final double? progress;
+  final bool showBottomBorder;
 
   const HomeTabBar({
     super.key,
@@ -43,6 +48,7 @@ class HomeTabBar extends StatelessWidget {
     required this.onSelect,
     this.categories = homeCategories,
     this.progress,
+    this.showBottomBorder = true,
   });
 
   @override
@@ -62,7 +68,9 @@ class HomeTabBar extends StatelessWidget {
     return Container(
       decoration: BoxDecoration(
         color: palette.canvas,
-        border: Border(bottom: BorderSide(color: palette.line, width: 1)),
+        border: showBottomBorder
+            ? Border(bottom: BorderSide(color: palette.line, width: 1))
+            : null,
       ),
       child: SingleChildScrollView(
         scrollDirection: Axis.horizontal,

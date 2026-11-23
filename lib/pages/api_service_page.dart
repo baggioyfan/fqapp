@@ -452,7 +452,7 @@ class _ApiServicePageState extends State<ApiServicePage> {
               ),
             ),
 
-            if (isWindowsDesktop) ...[
+            if (isDesktopHost) ...[
               const SizedBox(height: 14),
               _proxySettingsPanel(),
             ],
@@ -696,7 +696,7 @@ class _ApiServicePageState extends State<ApiServicePage> {
               ),
             ),
 
-            if (isWindowsDesktop) ...[
+            if (isDesktopHost) ...[
               const SizedBox(height: 14),
               _proxySettingsPanel(),
             ],

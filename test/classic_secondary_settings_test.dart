@@ -136,6 +136,10 @@ void main() {
       // 让这条用例真正验证空态而不受进程级日志污染。
       AppLog.instance.clear();
       final store = await pumpStyled(tester, const LogViewerPage());
+      // 那些探测是定时器驱动的，settle 期间还会补记几条，进页面后再清一次；
+      // 页面监听 revision，清完会自动重建到空态。
+      AppLog.instance.clear();
+      await tester.pumpAndSettle();
 
       expect(find.byType(SettingsScaffold), findsOneWidget);
       expect(find.byType(WenkuPage), findsNothing);

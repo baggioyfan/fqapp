@@ -15,18 +15,26 @@ class DetailCoverTile extends StatelessWidget {
   /// 桌面两栏布局：封面放大。
   final bool desktop;
   final bool compact;
+  final bool horizontalDesktop;
 
   const DetailCoverTile({
     super.key,
     required this.item,
     this.desktop = false,
     this.compact = false,
+    this.horizontalDesktop = false,
   });
 
   @override
   Widget build(BuildContext context) {
     final palette = HomePalette.of(context);
-    final width = desktop ? (compact ? 112.0 : 168.0) : 92.0;
+    final width = desktop
+        ? (compact
+              ? 112.0
+              : horizontalDesktop
+              ? 142.0
+              : 168.0)
+        : 92.0;
     final height = desktop ? width * 4 / 3 : 128.0;
     return SizedBox(
       width: width,

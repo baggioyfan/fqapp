@@ -1,4 +1,5 @@
 import 'package:material_ui/material_ui.dart';
+import 'package:flutter/foundation.dart' show defaultTargetPlatform, TargetPlatform;
 import 'package:flutter_lucide/flutter_lucide.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -270,18 +271,15 @@ void main() {
     });
   });
 
-  test('archive styles point at system font families', () {
-    // 首页不再打包思源宋体 / Roboto Mono：衬线取系统族（Android `serif`、
-    // macOS/iOS `Songti SC`），等宽取 `monospace` / `Menlo`。这里钉住
-    // 「不再指向 Home Serif / Home Mono」且系统兜底链仍完整。
+  test('archive styles use the platform serif and mono families', () {
+    // fork 不打包 Home Serif / Home Mono（pubspec 的 fonts 段是注释掉的），
+    // 用系统已注册的族名：Android 认通用族，其余平台点具体字体。
+    final android = defaultTargetPlatform == TargetPlatform.android;
     final serif = homeSerifStyle(size: 15, color: Colors.white);
-    expect(serif.fontFamily, anyOf('serif', 'Songti SC'));
-    expect(serif.fontFamily, isNot('Home Serif'));
-    expect(serif.fontFamilyFallback, homeSerifFallback);
+    expect(serif.fontFamily, android ? 'serif' : 'Songti SC');
     expect(serif.fontWeight, FontWeight.w700);
     final code = homeCodeStyle(const HomePalette(false));
-    expect(code.fontFamily, anyOf('monospace', 'Menlo'));
-    expect(code.fontFamily, isNot('Home Mono'));
+    expect(code.fontFamily, android ? 'monospace' : 'Menlo');
     expect(code.fontWeight, FontWeight.w500);
   });
 

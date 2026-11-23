@@ -4,6 +4,27 @@ part of '../reader_page.dart';
 extension _ReaderPagePreferences on _ReaderPageState {
   bool get _paged => _preferences.pageMode == ReaderPageMode.paged;
 
+  bool get _ownsDesktopShell =>
+      isDesktopHost &&
+      mounted &&
+      widget.chapters.isNotEmpty &&
+      (_routeCurrent || _ideasSheetOpen || _readerPanelOpen);
+
+  void _setDesktopSidebarOpen(bool open) {
+    if (_preferences.desktopSidebarOpen == open) return;
+    _preferencesDirty = true;
+    _setState(() {
+      _preferences = _preferences.copyWith(desktopSidebarOpen: open);
+    });
+    _syncDesktopShell();
+    if (_preferencesReady) {
+      unawaited(_savePreferences());
+    }
+  }
+
+  void _toggleDesktopSidebar() =>
+      _setDesktopSidebarOpen(!_preferences.desktopSidebarOpen);
+
   /// 阅读器自己的书架条目（issue #103）：详情页传了原 item 就用它，否则按本页
   /// 已有的书籍字段兜底。书架 key 是 `kind:id`，这里固定 'book'——漫画走自己的
   /// 阅读器（kind 'manga'），两者在书架上本就是两条。
@@ -120,6 +141,7 @@ extension _ReaderPagePreferences on _ReaderPageState {
         _dayTheme = preferences.themePreset;
       }
     });
+    _syncDesktopShell();
     if (_controlsVisible) _loadReaderMenuData();
     _syncSystemBars();
     _syncVolumeKeyEnabled();
@@ -374,6 +396,7 @@ extension _ReaderPagePreferences on _ReaderPageState {
       // 刷新间隔改变时清零计数，避免沿用旧阈值导致久不刷新或立刻刷新。
       if (intervalChanged) _einkPageCounter = 0;
     });
+    _syncDesktopShell();
     _syncSystemBars();
     _syncVolumeKeyEnabled();
     unawaited(_device.keepScreenOn(_preferences.keepScreenOn));
@@ -383,6 +406,7 @@ extension _ReaderPagePreferences on _ReaderPageState {
 
   Future<void> _showTextReplacement() async {
     _readerPanelOpen = false;
+    _syncDesktopShell();
     _syncSystemBars();
     await Navigator.push<void>(
       context,
@@ -496,6 +520,9 @@ extension _ReaderPagePreferences on _ReaderPageState {
   }
 
   Future<void> _showDirectory() async {
+    // 皮肤决定目录的形状：经典一幅书面板，档案走玻璃目录（搜索 + 倒序 +
+    // 木纹行）。这里不能写死经典——[AppUiScope.of] 报的是真实皮肤，档案下
+    // 写死 classic 会让 ReaderDirectorySheet 整支（415 行）变成死代码。
     if (AppUiScope.isClassic(context)) return _showClassicBookPanel();
     _readerPanelOpen = true;
     _setControlsVisible(false);

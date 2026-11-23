@@ -7,7 +7,7 @@ import 'reader_tap_zones.dart';
 
 part 'reader_preferences_codec.dart';
 
-enum ReaderThemePreset { light, eyeCare, parchment, dark, eink }
+enum ReaderThemePreset { light, eyeCare, parchment, dark, eink, mistBlue }
 
 enum ReaderTitleAlignment { start, center }
 
@@ -91,6 +91,7 @@ class ReaderPreferences {
   static const _showParagraphBubblesKey = 'reader_show_paragraph_bubbles';
   static const _showVideoButtonKey = 'reader_show_video_button';
   static const _videoChapterSyncKey = 'reader_video_chapter_sync';
+  static const _desktopSidebarOpenKey = 'reader_desktop_sidebar_open';
 
   final double fontSize;
   final int fontWeight;
@@ -205,6 +206,7 @@ class ReaderPreferences {
   final bool showParagraphBubbles;
   final bool showVideoButton;
   final bool videoChapterSync;
+  final bool desktopSidebarOpen;
 
   const ReaderPreferences({
     this.fontSize = 18,
@@ -250,6 +252,7 @@ class ReaderPreferences {
     this.showParagraphBubbles = true,
     this.showVideoButton = true,
     this.videoChapterSync = true,
+    this.desktopSidebarOpen = true,
   }) : readingInfoMode = showReadingInfo == false
            ? ReaderInfoMode.hidden
            : readingInfoMode;
@@ -306,6 +309,7 @@ class ReaderPreferences {
     bool? showParagraphBubbles,
     bool? showVideoButton,
     bool? videoChapterSync,
+    bool? desktopSidebarOpen,
   }) {
     return ReaderPreferences(
       fontSize: fontSize ?? this.fontSize,
@@ -365,6 +369,7 @@ class ReaderPreferences {
       showParagraphBubbles: showParagraphBubbles ?? this.showParagraphBubbles,
       showVideoButton: showVideoButton ?? this.showVideoButton,
       videoChapterSync: videoChapterSync ?? this.videoChapterSync,
+      desktopSidebarOpen: desktopSidebarOpen ?? this.desktopSidebarOpen,
     ).normalized();
   }
 
@@ -395,7 +400,7 @@ class ReaderPreferences {
       showSystemStatusBar: showSystemStatusBar,
       showSystemNavigationBar: showSystemNavigationBar,
       followSystemBrightness: followSystemBrightness,
-      brightness: brightness.isFinite ? brightness.clamp(0, 1) : 0.5,
+      brightness: brightness.isFinite ? brightness.clamp(0.02, 1) : 0.5,
       fontPath: fontPath,
       fontName: fontPath.isEmpty ? '' : fontName,
       builtinSerifFont: builtinSerifFont,
@@ -424,6 +429,7 @@ class ReaderPreferences {
       showParagraphBubbles: showParagraphBubbles,
       showVideoButton: showVideoButton,
       videoChapterSync: videoChapterSync,
+      desktopSidebarOpen: desktopSidebarOpen,
     );
   }
 
@@ -519,6 +525,7 @@ class ReaderPreferences {
           _boolean(preferences, _showParagraphBubblesKey) ?? true,
       showVideoButton: _boolean(preferences, _showVideoButtonKey) ?? true,
       videoChapterSync: _boolean(preferences, _videoChapterSyncKey) ?? true,
+      desktopSidebarOpen: _boolean(preferences, _desktopSidebarOpenKey) ?? true,
     ).normalized();
   }
 
@@ -610,6 +617,7 @@ class ReaderPreferences {
       preferences.setBool(_showParagraphBubblesKey, value.showParagraphBubbles),
       preferences.setBool(_showVideoButtonKey, value.showVideoButton),
       preferences.setBool(_videoChapterSyncKey, value.videoChapterSync),
+      preferences.setBool(_desktopSidebarOpenKey, value.desktopSidebarOpen),
     ]);
   }
 }

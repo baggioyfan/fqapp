@@ -509,7 +509,15 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
 
-    expect(find.text('目录'), findsOneWidget);
+    // 底部工具栏的「目录」标签在弹层打开后仍留在树里（[ReaderChromeLayer]
+    // 只降不透明度、不卸载子树），所以标题必须限定在弹层内数，否则永远是两个。
+    expect(
+      find.descendant(
+        of: find.byType(ReaderSettingsSheetFrame),
+        matching: find.text('目录'),
+      ),
+      findsOneWidget,
+    );
     // 目录弹层走阅读设置面板的骨架，配色跟随当前 preset（默认浅色）。
     final frame = tester.widget<ReaderSettingsSheetFrame>(
       find.byType(ReaderSettingsSheetFrame),

@@ -209,7 +209,12 @@ void main() {
       await _openMenu(tester);
       await tester.tap(find.text('目录'));
       await tester.pumpAndSettle();
-      final directory = find.text('目录');
+      // 底部工具栏那颗「目录」在弹层打开后仍在树里（chrome 层只降不透明度），
+      // 所以按主题取色必须限定在弹层内的那个标题上。
+      final directory = find.descendant(
+        of: find.byType(ReaderSettingsSheetFrame),
+        matching: find.text('目录'),
+      );
       expect(
         Theme.of(tester.element(directory)).colorScheme.brightness,
         Brightness.dark,
@@ -251,24 +256,14 @@ void main() {
     expect(frame.preset, ReaderThemePreset.light);
     expect(find.text('听书方式'), findsOneWidget);
     final sheet = find.byType(ReaderSettingsSheetFrame);
-    // 面板只有引擎两项：「从本页播放」这种第二轴已经去掉，起点固定是当前页
-    // 第一段（见 reader_page_listening_launch.dart）。
+    // fork 的这张面板只问引擎（智能朗读 / 系统朗读）：起点由调用方决定，
+    // 没有上游那个「从本页听」的定位项。
     for (final icon in [LucideIcons.headphones, LucideIcons.mic]) {
       expect(
         find.descendant(of: sheet, matching: find.byIcon(icon)),
         findsOneWidget,
       );
     }
-    // 「从本页播放」这类第二起点轴不能回来：起点固定是当前页第一段
-    // （本地裁撤，见 2acdf7a）。上游把这一项加回来时靠上面的断言抓不到，
-    // 这里显式锁住。
-    expect(
-      find.descendant(
-        of: sheet,
-        matching: find.byIcon(LucideIcons.locate_fixed),
-      ),
-      findsNothing,
-    );
 
     await tester.tap(find.byTooltip('关闭'));
     await tester.pumpAndSettle();

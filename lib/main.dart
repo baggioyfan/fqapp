@@ -1,11 +1,14 @@
 import 'services/audio_downloader.dart';
 import 'widgets/desktop_app_frame.dart';
+import 'widgets/desktop_shell_scope.dart';
 import 'services/native_player.dart';
 import 'services/desktop_platform.dart';
 import 'services/platform_capabilities.dart';
 import 'services/platform_channel.dart';
 
 import 'package:material_ui/material_ui.dart';
+import 'package:flutter/foundation.dart'
+    show LicenseRegistry, LicenseEntryWithLineBreaks;
 import 'package:flutter/services.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
@@ -14,6 +17,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:hive_ce_flutter/hive_flutter.dart';
 
 import 'dart:async';
+
 
 import 'pages/home_page.dart';
 import 'pages/api_service_page.dart';
@@ -30,7 +34,6 @@ import 'services/app_theme_style.dart';
 import 'services/appearance_prewarm.dart';
 import 'services/app_style_tokens.dart';
 import 'services/api_client.dart';
-import 'services/webdav_sync_service.dart';
 import 'services/audio_download_store.dart';
 import 'services/audio_floating_routes.dart';
 import 'services/drama_cache_preferences.dart';
@@ -61,9 +64,6 @@ import 'services/shelf_store.dart';
 import 'services/shelf_view_store.dart';
 import 'services/swipe_guide_store.dart';
 import 'services/third_party_licenses.dart';
-import 'services/webdav_auto_sync.dart';
-import 'services/webdav_client.dart' show WebdavException;
-import 'services/webdav_sync_service.dart' show describeSyncReport;
 import 'widgets/lazy_indexed_stack.dart';
 import 'widgets/app_ui/app_ui_scope.dart';
 import 'widgets/shell_dock.dart';
@@ -101,8 +101,11 @@ Future<void> main() async {
 /// 这些都不决定界面能不能起来，所以失败只记日志（见 [main]）。
 Future<void> _prepareRuntime() async {
   registerPortedUiLicenses();
-  // fork：macOS 与 Windows 共用桌面装配，所以判 isDesktopHost 而不是
-  // isWindowsDesktop（macOS 壳层同样需要 DesktopPlatform 的窗口回调）。
+  LicenseRegistry.addLicense(() async* {
+    yield LicenseEntryWithLineBreaks(const [
+      'sync_storage',
+    ], await rootBundle.loadString('assets/licenses/sync_storage.txt'));
+  });
   if (isDesktopHost) await DesktopPlatform.instance.initialize();
   // 应用内日志：接管 debugPrint 与 FlutterError.onError，未处理异步异常由
   // [main] 的 runZonedGuarded 捕获；文件持久化异步开启，失败只退回内存模式。
@@ -127,34 +130,30 @@ Future<void> _prepareRuntime() async {
   RustLogSource.reader = BackendService.instance.readRustLog;
   if (isDesktopHost) {
     DesktopPlatform.instance.beforeClose = () async {
-      try {
-        await BossKeyService.instance.shutdown();
-      } catch (error, stack) {
-        AppLog.w('exit', '退出前注销老板键失败', error: error, stack: stack);
-      }
-      DramaDownloader.instance.pauseAll();
-      AudioDownloader.instance.pauseAll();
-      await FairMemoryService.instance.flushForExit();
-      try {
-        if (isDesktopHost) await NativePlayer.pauseOthers();
-      } catch (error, stack) {
-        // 退出路径继续往下走，但失败要留痕：否则「关闭后还有声音」无从查起。
-        AppLog.w('exit', '退出前暂停播放器失败', error: error, stack: stack);
-      }
-      try {
-        await BackendService.instance.stop();
-      } catch (error, stack) {
-        AppLog.w('exit', '退出前停止后端失败', error: error, stack: stack);
-      }
-      // 桌面没有「退到后台」，关窗口是最后一次可靠的上云机会，且必须在
-      // Hive.close() 之前（同步要读书架与进度）。给 5 秒上限：网络卡住时
-      // 宁可丢这一页进度，也不能让窗口关不掉。
-      await WebdavAutoSync.instance.flush().timeout(
-        const Duration(seconds: 5),
-        onTimeout: () => false,
-      );
-      await Hive.close();
-    };
+          try {
+            try {
+              await BossKeyService.instance.shutdown();
+            } catch (error, stack) {
+              AppLog.w('exit', '退出前注销老板键失败', error: error, stack: stack);
+            }
+            DramaDownloader.instance.pauseAll();
+            AudioDownloader.instance.pauseAll();
+            await FairMemoryService.instance.flushForExit();
+            try {
+              if (isDesktopHost) await NativePlayer.pauseOthers();
+            } catch (error, stack) {
+              // 退出路径继续往下走，但失败要留痕：否则「关闭后还有声音」无从查起。
+              AppLog.w('exit', '退出前暂停播放器失败', error: error, stack: stack);
+            }
+            try {
+              await BackendService.instance.stop();
+            } catch (error, stack) {
+              AppLog.w('exit', '退出前停止后端失败', error: error, stack: stack);
+            }
+          } finally {
+            await Hive.close();
+          }
+        };
   }
 }
 
@@ -243,9 +242,6 @@ Future<void> _loadLocalData() async {
     spFuture,
     themeStyleFuture,
   ]);
-  // WebDAV 为可选功能；网络或安全存储故障不阻塞本机阅读。
-  // fork 的同步由 WebdavAutoSync 单例承担（见退出路径的 flush），
-  // WebdavSyncService 是按需创建的服务，没有启动期的 init。
   // 听书后台播放开关：异步读取 SharedPreferences，失败退化为默认开启。
   unawaited(AudioPreferences.instance.load());
   // 短剧「边看边往后缓存」的开关与集数：同一条装配链里读，避免播放页
@@ -337,6 +333,7 @@ class _FqAppState extends State<FqApp> {
   final _audioRoutes = AudioFloatingRoutes(
     defaultBottomInset: isDesktopHost ? 0 : 72,
   );
+  final _desktopRoutes = DesktopRouteObserver();
   // Desktop fullscreen reparents the content; keep the playback owner alive.
   final _audioScopeKey = GlobalKey();
   final _navigatorKey = isDesktopHost
@@ -373,70 +370,91 @@ class _FqAppState extends State<FqApp> {
         return ValueListenableBuilder<bool>(
           valueListenable: einkModeNotifier,
           builder: (context, eink, _) {
-            // 墨水屏强制浅色纯黑白：深色反白在墨水屏上残影最重。
-            final effectiveMode = eink ? ThemeMode.light : mode;
-            // OLED 纯黑与深浅色是正交开关，所以壳层也要跟着它重建。
             return ValueListenableBuilder<bool>(
               valueListenable: oledModeNotifier,
               builder: (context, oled, _) {
-                return MaterialApp(
-                  navigatorKey: _navigatorKey,
-                  navigatorObservers: [_audioRoutes],
-                  builder: (context, child) {
-                    final palette = HomePalette.of(context);
-                    final playback = AudioPlaybackScope(
-                      key: _audioScopeKey,
-                      navigatorKey: _navigatorKey,
-                      recentListen: _loadRecentListenWhenReady,
-                      child: child ?? const SizedBox.shrink(),
-                    );
-                    // Routes without an AppBar need a live fallback above the
-                    // Navigator; the covered root route cannot paint its style.
-                    // Reader/video annotations still override this default.
-                    // One live presentation scope above the root Navigator, so
-                    // pushed routes, nested Navigators and every Overlay entry
-                    // read the same discrete style; see [AppUiScope].
-                    return AppUiScope(
-                      store: _styleStore,
-                      child: AnnotatedRegion<SystemUiOverlayStyle>(
-                        value:
-                            (palette.dark
-                                    ? SystemUiOverlayStyle.light
-                                    : SystemUiOverlayStyle.dark)
-                                .copyWith(
-                                  statusBarColor: palette.canvas,
-                                  systemNavigationBarColor: palette.canvas,
-                                  systemNavigationBarDividerColor:
-                                      palette.canvas,
-                                  systemNavigationBarIconBrightness:
-                                      palette.dark
-                                      ? Brightness.light
-                                      : Brightness.dark,
-                                ),
-                        child: AudioFloatingRouteScope(
-                          routes: _audioRoutes,
-                          child: isDesktopHost
-                              ? DesktopAppFrame(child: playback)
-                              : playback,
+                // 墨水屏强制浅色纯黑白：深色反白在墨水屏上残影最重。
+                final effectiveMode = eink ? ThemeMode.light : mode;
+                return ValueListenableBuilder<AppThemeStyle>(
+                  valueListenable: _styleStore,
+                  builder: (context, style, _) => MaterialApp(
+                    navigatorKey: _navigatorKey,
+                    navigatorObservers: [
+                      _audioRoutes,
+                      if (isDesktopHost) _desktopRoutes,
+                    ],
+                    builder: (context, child) {
+                      final palette = HomePalette.of(context);
+                      final playback = AudioPlaybackScope(
+                        key: _audioScopeKey,
+                        navigatorKey: _navigatorKey,
+                        recentListen: _loadRecentListenWhenReady,
+                        child: child ?? const SizedBox.shrink(),
+                      );
+                      // One live presentation scope above the root Navigator,
+                      // so pushed routes, nested Navigators and every Overlay
+                      // entry read the same discrete style. It is installed in
+                      // the builder (not in a page) on purpose; see
+                      // [AppUiScope].
+                      return AppUiScope(
+                        store: _styleStore,
+                        child: AnnotatedRegion<SystemUiOverlayStyle>(
+                          // Routes without an AppBar need a live fallback above
+                          // the Navigator; the covered root route cannot paint
+                          // its style. Reader/video annotations still override
+                          // this default.
+                          value:
+                              (palette.dark
+                                      ? SystemUiOverlayStyle.light
+                                      : SystemUiOverlayStyle.dark)
+                                  .copyWith(
+                                    statusBarColor: palette.canvas,
+                                    systemNavigationBarColor: palette.canvas,
+                                    systemNavigationBarDividerColor:
+                                        palette.canvas,
+                                    systemNavigationBarIconBrightness:
+                                        palette.dark
+                                        ? Brightness.light
+                                        : Brightness.dark,
+                                  ),
+                          child: AudioFloatingRouteScope(
+                            routes: _audioRoutes,
+                            child: isDesktopHost
+                                ? DesktopAppFrame(child: playback)
+                                : playback,
+                          ),
                         ),
-                      ),
-                    );
-                  },
-                  title: '什锦铺',
-                  debugShowCheckedModeBanner: false,
-                  // OLED 纯黑只在深色下生效（浅色时 createTheme 直接忽略）。
-                  theme: _theme(Brightness.light, eink: eink, oled: oled),
-                  darkTheme: _theme(Brightness.dark, eink: eink, oled: oled),
-                  themeMode: effectiveMode,
-                  // 全 App 文案是中文，系统文本菜单（复制/粘贴/全选）与 Material
-                  // 内置文案也必须跟着中文：缺 delegates 时一律回退英文（#79）。
-                  locale: const Locale('zh', 'CN'),
-                  supportedLocales: const [Locale('zh', 'CN'), Locale('en')],
-                  localizationsDelegates: GlobalMaterialLocalizations.delegates,
-                  home: AppBootstrap(
-                    backendStarter: BackendService.instance.start,
-                    initializer: _initializeData,
-                    child: const RootShell(),
+                      );
+                    },
+                    title: '什锦铺',
+                    debugShowCheckedModeBanner: false,
+                    // OLED 纯黑只在深色下生效（浅色时 createTheme 直接忽略）。
+                    theme: _theme(
+                      Brightness.light,
+                      eink: eink,
+                      oled: oled,
+                      style: style,
+                    ),
+                    darkTheme: _theme(
+                      Brightness.dark,
+                      eink: eink,
+                      oled: oled,
+                      style: style,
+                    ),
+                    themeMode: effectiveMode,
+                    // 全 App 文案是中文，系统文本菜单（复制/粘贴/全选）与 Material
+                    // 内置文案也必须跟着中文：缺 delegates 时一律回退英文（#79）。
+                    locale: const Locale('zh', 'CN'),
+                    supportedLocales: const [Locale('zh', 'CN'), Locale('en')],
+                    localizationsDelegates:
+                        GlobalMaterialLocalizations.delegates,
+                    home: AppBootstrap(
+                      backendStarter:
+                          widget.backendStarter ??
+                          BackendService.instance.start,
+                      initializer: _initializeData,
+                      child: RootShell(backendStarter: widget.backendStarter),
+                    ),
                   ),
                 );
               },
@@ -451,14 +469,12 @@ class _FqAppState extends State<FqApp> {
     Brightness brightness, {
     bool eink = false,
     bool oled = false,
+    AppThemeStyle style = AppThemeStyle.archive,
   }) => AppTheme.createTheme(
     brightness,
     einkMode: eink,
     oledMode: oled,
-    // fork 只保留经典版式。createTheme 的默认色板留在档案版（与上游一致，
-    // 让依赖默认值的测试回到上游语义），这里显式钉回经典 ——
-    // 运行时渲染与改动前逐字节等价。
-    style: AppThemeStyle.classic,
+    style: style,
   );
 }
 
@@ -607,8 +623,7 @@ class RootShell extends StatefulWidget {
   State<RootShell> createState() => _RootShellState();
 }
 
-class _RootShellState extends State<RootShell>
-    with WidgetsBindingObserver, TickerProviderStateMixin {
+class _RootShellState extends State<RootShell> with TickerProviderStateMixin {
   int _index = 0;
 
   /// 页面滑动过渡动画：dock 点击 / 拖动松手 / 页面回调统一经 [_selectTab]
@@ -758,137 +773,25 @@ class _RootShellState extends State<RootShell>
 
   String? _backendError;
 
-  /// 检查云端是否有更新时置位：回到前台可能连续触发几次，别把弹窗叠起来。
-  bool _checkingRemote = false;
-
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addObserver(this);
     // 短剧频道在推荐（视频流）与浅色页之间切换时，悬浮 dock 和系统导航栏
     // 要跟着换肤，所以停在壳层的 build 里监听。
     dramaLightPageNotifier.addListener(_onDramaChromeChanged);
+    // 墨水屏切换后重建壳层:部分子组件据此降级动效。
+    einkModeNotifier.addListener(_onEinkModeChanged);
     // 初始可见页：页面据此决定是否暂停播放器/定时器。
     shellVisibleTab.value = _index;
     _pageMotion.addStatusListener(_onPageMotionStatus);
     _startBackend();
-    // 首帧之后再问云端：启动不该等一次网络往返，检查失败也不该挡住首页。
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) unawaited(_checkRemoteUpdate());
-    });
   }
-
-  @override
-  void dispose() {
-    WidgetsBinding.instance.removeObserver(this);
-    dramaLightPageNotifier.removeListener(_onDramaChromeChanged);
-    _pageMotion.removeStatusListener(_onPageMotionStatus);
-    _homeScroll.dispose();
-    _pageMotion.dispose();
-    super.dispose();
-  }
-
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    switch (state) {
-      case AppLifecycleState.resumed:
-        unawaited(_checkRemoteUpdate());
-      case AppLifecycleState.paused:
-      case AppLifecycleState.hidden:
-        // 兜底触发点：页面自己的「离开时同步」可能还没跑完，或者根本来不及
-        // （用户直接回到桌面）。这里再推一次，`minInterval` 保证不会连成串。
-        //
-        // Flutter 没有「保证请求在退出前完成」的 API（Android 没有
-        // `onTaskRemoved`，iOS 没有 `beginBackgroundTask`），所以真正的保证
-        // 不是「退出时传完」，而是**平时就把脏数据推上去**，让退出时几乎没事可做。
-        unawaited(WebdavAutoSync.instance.flush());
-      case AppLifecycleState.inactive:
-        // 移动端 inactive 只是下拉通知栏、来电，太频繁，不当作退出。
-        //
-        // 桌面端没有 paused：切到别的应用、点 Dock 只到 inactive，窗口最小化
-        // 才是 hidden。不在这里兜一手，桌面就只剩「关窗口」一次同步机会
-        // （见 beforeClose）。`syncOnBackground` 自带 30 秒间隔，频繁切窗口
-        // 不会把请求连成一串。
-        if (isDesktopHost) unawaited(WebdavAutoSync.instance.flush());
-      case AppLifecycleState.detached:
-        // 进程即将结束，只做「把待发标记落定」这种同步动作；真正的网络
-        // 请求在这里不保证有结果，兜底仍然是上面的 paused/hidden。
-        unawaited(WebdavAutoSync.instance.flush());
-    }
-  }
-
-  /// 云端出现本机没见过的版本时，问一句「同步 / 忽略」。
-  ///
-  /// 判据是云端那一版的标识（ETag）与本机上次同步时记下的标识是否相同，
-  /// 不是「谁的时间更晚」—— 时间比较会被设备时钟偏移搞乱，版本比较不会。
-  /// 也不是「本地旧」：谁更新必须下载后逐条合并才知道，那就是同步本身。
-  Future<void> _checkRemoteUpdate() async {
-    if (_checkingRemote || !mounted) return;
-    _checkingRemote = true;
-    try {
-      final update = await WebdavAutoSync.instance.check();
-      if (update == null || !mounted) return;
-      final lastSyncedAt = update.lastSyncedAt;
-      final answer = await showDialog<bool>(
-        context: context,
-        builder: (dialogContext) => AlertDialog(
-          title: const Text('云端有更新'),
-          content: Text(
-            '云端备份${update.remoteModified == null ? '' : '在 ${_stamp(update.remoteModified!)} '}'
-            '有更新，与本机上次同步时看到的不是同一版'
-            '${lastSyncedAt == null ? '（本机还没有同步过）' : '（上次同步：${_stamp(lastSyncedAt)}）'}。\n\n'
-            '现在同步吗？',
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(dialogContext, false),
-              child: const Text('忽略'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(dialogContext, true),
-              child: const Text('立即同步'),
-            ),
-          ],
-        ),
-      );
-      if (!mounted) return;
-      if (answer == true) {
-        await _syncFromPrompt(update);
-      } else if (answer == false) {
-        // 只有明确点了「忽略」才算「这一版先不管」：同一个云端版本不再追问，
-        // 云端再被改过才会重新提示。点遮罩或按返回键是 null —— 那只是
-        // 「先不回答」，不该被记成一次回答，否则用户下次打开就再也看不到提示。
-        await WebdavAutoSync.instance.dismiss(update);
-      }
-    } finally {
-      _checkingRemote = false;
-    }
-  }
-
-  Future<void> _syncFromPrompt(WebdavRemoteUpdate update) async {
-    final messenger = ScaffoldMessenger.maybeOf(context);
-    messenger?.showSnackBar(const SnackBar(content: Text('正在同步，请不要退出…')));
-    try {
-      final report = await WebdavAutoSync.instance.syncNow(update);
-      messenger
-        ?..hideCurrentSnackBar()
-        ..showSnackBar(
-          SnackBar(content: Text(describeSyncReport(report, brief: true))),
-        );
-    } on WebdavException catch (error) {
-      messenger
-        ?..hideCurrentSnackBar()
-        ..showSnackBar(SnackBar(content: Text(error.message)));
-    } catch (_) {
-      messenger
-        ?..hideCurrentSnackBar()
-        ..showSnackBar(const SnackBar(content: Text('同步未完成，请稍后重试')));
-    }
-  }
-
-  static String _stamp(DateTime at) => at.toLocal().toString().split('.').first;
 
   void _onDramaChromeChanged() {
+    if (mounted) setState(() {});
+  }
+
+  void _onEinkModeChanged() {
     if (mounted) setState(() {});
   }
 
@@ -919,7 +822,7 @@ class _RootShellState extends State<RootShell>
     }
   }
 
-  Future<void> _retryWithDirectConnection() async {
+  Future<void> _resetProxyAndRetry() async {
     setState(() => _backendError = null);
     try {
       await NetworkProxyPreferences.instance.save(const NetworkProxyConfig());
@@ -929,15 +832,25 @@ class _RootShellState extends State<RootShell>
     }
   }
 
+  @override
+  void dispose() {
+    dramaLightPageNotifier.removeListener(_onDramaChromeChanged);
+    einkModeNotifier.removeListener(_onEinkModeChanged);
+    _pageMotion.removeStatusListener(_onPageMotionStatus);
+    _homeScroll.dispose();
+    _pageMotion.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     // 后端起不来时保留整屏错误页：原因、重试与服务面板入口都必须在。
-    // 本地服务没起来时用户仍要能进离线阅读、查服务面板、或重置代理再试。
+    // 本地服务没起来时用户仍要能进离线阅读、查服务面板、或重置代理再试
+    // （#318 只动成功路径的等待提示）。
     if (_backendError != null) return _backendFailureView(context);
     // 成功路径不再整屏遮罩：壳层与首页立刻出现，本地服务在后台静默启动，
-    // 等待反馈交给首页自己的骨架；核心就绪后数据直接落位，启动期间发出的
-    // 请求由传输层排队到核心就绪为止。
+    // 等待反馈交给首页自己的骨架。核心就绪后数据直接落位，用户无需重试
+    // （传输层会把启动期间的请求排队到核心就绪为止）。
     if (isDesktopHost) {
       return ValueListenableBuilder<int>(
         valueListenable: desktopTab,
@@ -1105,10 +1018,10 @@ class _RootShellState extends State<RootShell>
                   icon: const Icon(LucideIcons.settings),
                   label: const Text('服务面板'),
                 ),
-                if (isWindowsDesktop || isLinuxDesktop)
+                if (isDesktopHost)
                   TextButton(
-                    onPressed: _retryWithDirectConnection,
-                    child: const Text('重置代理为直连并重试'),
+                    onPressed: _resetProxyAndRetry,
+                    child: Text(isLinuxDesktop ? '重置代理为默认连接并重试' : '重置代理为直连并重试'),
                   ),
               ],
             ),

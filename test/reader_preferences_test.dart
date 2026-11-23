@@ -141,7 +141,7 @@ void main() {
     expect(restored.titleAlignment, ReaderTitleAlignment.start);
     expect(restored.showReadingInfo, isTrue);
     expect(restored.followSystemBrightness, isTrue);
-    expect(restored.brightness, 0, reason: '0 是合法值（面板最暗）：以前被规范化到 0.02，读回来又变亮');
+    expect(restored.brightness, 0.02);
     expect(restored.pageMode, ReaderPageMode.paged);
     expect(restored.columnMode, ReaderColumnMode.auto);
     // A wrong-typed stored value falls back to the default (on).
@@ -221,6 +221,28 @@ void main() {
       expect(restored.brightness, 0.7);
       expect(restored.followSystemBrightness, isFalse);
       expect(restored.titleAlignment, ReaderTitleAlignment.center);
+    },
+  );
+
+  test(
+    'desktop sidebar open defaults on and persists explicit choice',
+    () async {
+      final defaults = await ReaderPreferences.load();
+      expect(defaults.desktopSidebarOpen, isTrue);
+      expect(const ReaderPreferences().desktopSidebarOpen, isTrue);
+
+      await defaults.copyWith(desktopSidebarOpen: false).save();
+      final collapsed = await ReaderPreferences.load();
+      expect(collapsed.desktopSidebarOpen, isFalse);
+      expect(collapsed.copyWith(fontSize: 20).desktopSidebarOpen, isFalse);
+
+      await collapsed.copyWith(desktopSidebarOpen: true).save();
+      expect((await ReaderPreferences.load()).desktopSidebarOpen, isTrue);
+
+      SharedPreferences.setMockInitialValues({
+        'reader_desktop_sidebar_open': 'invalid',
+      });
+      expect((await ReaderPreferences.load()).desktopSidebarOpen, isTrue);
     },
   );
 }

@@ -1,16 +1,22 @@
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:fqapp/services/app_style_tokens.dart';
 import 'package:fqapp/widgets/home/home_shelf.dart';
 
-// `homeShelfColumns`：书架网格的列数。手机 3 列（内容宽 ≥324dp），小屏和
-// 大字号退回 2 列；平板/桌面按宽度放宽。
+// `homeShelfColumns`：书架网格的列数。经典版式的手机 3 列（内容宽 ≥360dp），
+// 小屏和大字号退回 2 列；平板/桌面按宽度放宽。
+//
+// 列数断点跟着版式走（经典 360 / 档案 324），所以这里显式挂上经典令牌：
+// 只 pump 一棵孤立的树时 `AppStyleTokens.of` 会落到档案兜底，那套断点是
+// 324，断言会整体错位。
 void main() {
   late BuildContext context;
 
   Future<void> pump(WidgetTester tester, {double textScale = 1}) async {
     await tester.pumpWidget(
       MaterialApp(
+        theme: ThemeData(extensions: const [AppStyleTokens.classic()]),
         builder: (context, child) => MediaQuery(
           data: MediaQuery.of(
             context,

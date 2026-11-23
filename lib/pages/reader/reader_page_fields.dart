@@ -45,6 +45,14 @@ mixin _ReaderPageFields on State<ReaderPage> {
   Future<void>? _bookmarkNavigationTask;
   bool _progressPreviewActive = false;
   bool _readerPanelOpen = false;
+
+  /// 桌面沉浸式阅读往外壳（[DesktopShellState]）登记窗口栏状态时用的身份。
+  ///
+  /// 一个页面实例一个 owner：窗口栏按它在栈里的位置决定显示「返回 / 侧栏 /
+  /// 全屏」，退出阅读页时用同一个 owner 注销，不会误清掉别的页面的登记。
+  final Object _desktopShellOwner = Object();
+  bool _desktopCanToggleSidebar = false;
+  bool _desktopCanToggleFullscreen = false;
   double? _pendingChapterPreview;
   bool _chapterPreviewScheduled = false;
   int? _previewLoadGeneration;

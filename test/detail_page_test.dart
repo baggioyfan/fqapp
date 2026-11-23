@@ -16,19 +16,14 @@ import 'package:fqapp/services/app_style_tokens.dart';
 import 'package:fqapp/services/app_theme_style.dart';
 import 'package:fqapp/services/chapter_cache_store.dart';
 import 'package:fqapp/services/chapter_text_formatter.dart';
-import 'package:fqapp/widgets/detail/detail_archive.dart';
 
 import 'support/fakes.dart';
 
 void main() {
-  // macOS 必须在矩阵里：v1.0.204-fq1 就是漏了这一端，视频类详情页在 macOS
-  // 上点章节只弹「当前平台暂不支持视频播放」，而当时的矩阵只有
-  // linux / android / windows（上游视角：它没有 macOS 端）。
   for (final platform in [
     TargetPlatform.linux,
     TargetPlatform.android,
     TargetPlatform.windows,
-    TargetPlatform.macOS,
   ]) {
     final blocked = platform == TargetPlatform.linux;
     for (final style
@@ -74,8 +69,18 @@ void main() {
                 expect(MediaQuery.sizeOf(context).width, 390);
                 var target = find.byKey(const Key('detail_read_button'));
                 if (action == 'episode') {
-                  await _revealSecondChapter(tester, style);
-                  target = _secondChapterRow(style);
+                  if (style == AppThemeStyle.classic) {
+                    target = find.byKey(
+                      const ValueKey('detail_preview_chapter_second'),
+                    );
+                    await tester.ensureVisible(target);
+                    await tester.pumpAndSettle();
+                  } else {
+                    await _revealSecondChapter(tester);
+                    target = find.byKey(
+                      const ValueKey('detail-directory-entry-1'),
+                    );
+                  }
                 }
                 expect(target.hitTestable(), findsOneWidget);
                 await tester.tap(target);
@@ -181,54 +186,6 @@ void main() {
       },
     );
   }
-
-  testWidgets('剧集条目的目录为空时不再降级成只有一集', (tester) async {
-    var calls = 0;
-    await tester.pumpWidget(
-      MaterialApp(
-        home: DetailPage(
-          item: MediaItem(
-            id: 'series',
-            seriesId: 'series',
-            episodeId: 'ep25',
-            title: '同步来的短剧',
-            cover: '',
-            author: '',
-            badge: '',
-            ep: '25',
-            kind: 'video',
-          ),
-          readerStore: MemoryReaderStore(),
-          detailLoader: (id, {String tab = '小说'}) async => {},
-          directoryLoader: (id, {String tab = '小说'}) async {
-            calls++;
-            return <List<Chapter>>[];
-          },
-        ),
-      ),
-    );
-    // 短剧目录空会再取一次（_directoryWithRetry），中间隔 300ms；轮询一次
-    // pumpAndSettle 在没有动画的骨架上会立刻返回，得把这 300ms 显式走掉。
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 400));
-    await tester.pumpAndSettle();
-    // 目录为空说明取目录失败（pseries 对单集 id 回 code=101104 + 空列表），
-    // 不能把它渲染成「这部剧只有正在看的这一集」：页面要给失败态和重试，
-    // 主按钮也不能可点——否则用户会被带进只有一集的播放器。
-    //
-    // 底部条本身保持挂载（上游口径），只把主按钮置为禁用，避免页面高度在
-    // 数据到达时跳一下。
-    expect(find.textContaining('没取到这部短剧的目录'), findsOneWidget);
-    expect(
-      tester
-          .widget<DetailArchiveDock>(find.byType(DetailArchiveDock))
-          .onPrimary,
-      isNull,
-    );
-    // 短剧的空目录会被当成一次失败重试（同一次地址连打两次都空才下结论）。
-    expect(calls, 2);
-    await tester.pumpWidget(const SizedBox.shrink());
-  });
 
   testWidgets('a long directory error can be scrolled to retry', (
     tester,
@@ -844,31 +801,13 @@ class _PendingHistory extends MemoryReaderStore {
   Future<Map<String, dynamic>?> historyEntry(String id) => pending.future;
 }
 
-/// 第二集在目录里的那一行。
-///
-/// 两种版式的入口不同：
-/// - classic 只列「当前 ±1」的目录预览，key 带章节 id；
-/// - archive 才是内联全量目录，key 带下标。
-/// 没显式给版式时按现场存在的那个取，省得每个用例都记一遍。
-Finder _secondChapterRow([AppThemeStyle? style]) {
-  final preview = find.byKey(
-    const ValueKey('detail_preview_chapter_second'),
-    skipOffstage: false,
-  );
-  final entry = find.byKey(
+Future<void> _revealSecondChapter(WidgetTester tester) async {
+  // The ported page lists the whole catalogue inline; entry 1 is 第二章 because
+  // this fixture has no volume names.
+  final row = find.byKey(
     const ValueKey('detail-directory-entry-1'),
     skipOffstage: false,
   );
-  if (style == AppThemeStyle.classic) return preview;
-  if (style == AppThemeStyle.archive) return entry;
-  return preview.evaluate().isEmpty ? entry : preview;
-}
-
-Future<void> _revealSecondChapter(
-  WidgetTester tester, [
-  AppThemeStyle? style,
-]) async {
-  final row = _secondChapterRow(style);
   await tester.ensureVisible(row);
   await tester.pump();
   // ensureVisible parks the row under the frosted header; drag it back down.

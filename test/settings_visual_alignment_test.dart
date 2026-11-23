@@ -49,7 +49,8 @@ void main() {
     expect(find.byType(ArchiveMasthead), findsOneWidget);
     expect(find.byType(FeatureEntry), findsWidgets);
     expect(find.text('设置'), findsOneWidget);
-    // 主题页（theme_page.dart）随「新的 ui」整块移除，设置里不再有「主题」入口。
+    // fork 的设置首页是六类：主题模式并进了「外观」（副标题「主题模式、
+    // OLED 纯黑」），没有独立的「主题」入口。
     for (final title in ['外观', '阅读', '听书', '短剧', '数据', '服务']) {
       await tester.scrollUntilVisible(
         find.text(title).hitTestable(),
@@ -275,21 +276,26 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    // 本机数据 / 云端同步 / 其他来源。上游客器端经典 UI 分支合入 WebDAV
-    // 时保留了「云端同步」分区（41fd0bc4），所以是 3 个而不是 2 个。
     expect(find.byType(ArchiveSection), findsNWidgets(3));
     expect(find.byType(ContentPanel), findsWidgets);
-    // WebDAV 同步与番茄导入各一张入口卡（前者随上游经典 UI 分支保留）。
-    expect(find.byType(FeatureEntry), findsNWidgets(2));
-    // The three data rows stay individually pinned: export, restore, 番茄.
+    // Backup and cloud sync entry points remain individually pinned.
     expect(find.byKey(const ValueKey('backup-export')), findsOneWidget);
     expect(find.byKey(const ValueKey('backup-import')), findsOneWidget);
-    expect(find.byKey(const ValueKey('backup-fanqie')), findsOneWidget);
+    expect(find.byKey(const ValueKey('backup-webdav')), findsOneWidget);
+    // 本机数据那张卡里是两张行卡片；独立成卡的入口有两处：WebDAV 与番茄导入。
+    expect(find.byType(FeatureEntry), findsNWidgets(2));
     expect(find.text('导出备份'), findsOneWidget);
     expect(find.text('从备份文件恢复'), findsOneWidget);
-    expect(find.text('导入番茄书架'), findsOneWidget);
+    expect(find.text('WebDAV 同步'), findsOneWidget);
+    expect(find.text('书架随你走'), findsOneWidget);
     expect(find.byType(SettingsSectionHeader), findsNothing);
     expect(find.byType(SettingsGroupCard), findsNothing);
-    expect(find.text('书架随你走'), findsOneWidget);
+    await tester.scrollUntilVisible(
+      find.byKey(const ValueKey('backup-fanqie')),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
+    expect(find.byKey(const ValueKey('backup-fanqie')), findsOneWidget);
+    expect(find.text('导入番茄书架'), findsOneWidget);
   });
 }

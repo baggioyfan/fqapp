@@ -156,6 +156,9 @@ mixin _LibraryPageActions on _LibraryPageStateBase {
     await _persist(() => view.setSource(ShelfSourceFilter.all));
     await _persist(() => view.setCategoryOf(_scope, ShelfCategory.all));
     if (mounted && _tab == 2) setState(() => _collectionFilter = null);
+    if (mounted && _tab == 0 && _shelfKindFilter != null) {
+      setState(() => _shelfKindFilter = null);
+    }
   }
 
   Future<void> _openMoreMenu(BuildContext anchor) async {
@@ -223,6 +226,16 @@ mixin _LibraryPageActions on _LibraryPageStateBase {
   Future<void> _open(MediaItem item, {bool importedResume = false}) async {
     if (isShuqiItem(item)) {
       if (await _openCached(item) || !mounted) return;
+      if (await openRecentBook(
+        context,
+        item,
+        cache: widget.cacheStore,
+        readerStore: widget.readerStore,
+        directoryLoader: widget.directoryLoader,
+      )) {
+        return;
+      }
+      if (!mounted) return;
       await openBookDetail(context, item, entry: BookOpenEntry.shelf);
       return;
     }
@@ -371,7 +384,12 @@ mixin _LibraryPageActions on _LibraryPageStateBase {
         );
       default:
         return ShelfProjection.apply(
-          _shelf,
+          _shelfKindFilter == null
+              ? _shelf
+              : [
+                  for (final entry in _shelf)
+                    if (entry.item.kind == _shelfKindFilter) entry,
+                ],
           sort: view.sort,
           reading: view.filter,
           source: view.source,
@@ -619,6 +637,8 @@ mixin _LibraryPageActions on _LibraryPageStateBase {
     );
     if (!confirmed || !mounted) return;
     final targets = [
+      // fork 的 removeHistoryEntries 只认 (kind, contentId) 两个字段（见其注释），
+      // 上游这里多带一个 source；在调用前映射掉，不改库的匹配语义。
       for (final entry in selected)
         (contentId: entry.contentId, kind: entry.item.kind),
     ];

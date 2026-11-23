@@ -8,6 +8,7 @@ mixin _LibraryClassicChrome on _LibraryShelfViews {
   bool _classicHasFiltersForTab(int tab) =>
       _activeFiltersForTab(tab) > 0 ||
       _categoryForTab(tab) != ShelfCategory.all ||
+      (tab == 0 && _shelfKindFilter != null) ||
       (tab == 2 && _collectionFilter != null);
 
   void _setClassicLayout(BookshelfLayout layout) {
@@ -87,18 +88,20 @@ mixin _LibraryClassicChrome on _LibraryShelfViews {
             ),
           ),
         ),
-        IconButton(
-          key: const Key('library-search-button'),
-          tooltip: '搜索',
-          onPressed: _openSearch,
-          style: IconButton.styleFrom(
-            foregroundColor: palette.ink,
-            padding: const EdgeInsets.all(8),
-            minimumSize: const Size(48, 48),
+        if (!(isDesktopHost && DesktopShellScope.hasFrameOf(context))) ...[
+          IconButton(
+            key: const Key('library-search-button'),
+            tooltip: '搜索',
+            onPressed: _openSearch,
+            style: IconButton.styleFrom(
+              foregroundColor: palette.ink,
+              padding: const EdgeInsets.all(8),
+              minimumSize: const Size(48, 48),
+            ),
+            icon: const Icon(LucideIcons.search, size: 21),
           ),
-          icon: const Icon(LucideIcons.search, size: 21),
-        ),
-        const SizedBox(width: 6),
+          const SizedBox(width: 6),
+        ],
         PopupMenuButton<_ClassicMenuAction>(
           key: const Key('library-more-button'),
           tooltip: '更多',
@@ -183,10 +186,7 @@ mixin _LibraryClassicChrome on _LibraryShelfViews {
     }
   }
 
-  /// L2 工具栏：左「今日已读」胶囊，中间分组筛选胶囊（书架 tab），右侧版式
-  /// 分段。分组胶囊把 `_category` 写成胶囊文案，也是分组入口（点开现有分类
-  /// 弹层，选择 / 新建 / 重命名 / 删除都在那里）。窄屏或大字号固定两行：
-  /// 统计独占第一行，分组与版式共享第二行；宽屏恢复单行。
+  /// 手机使用紧凑工具栏，宽屏保持原有分段版式开关。
   Widget _classicToolbar(HomePalette palette, int tab) => Padding(
     padding: const EdgeInsets.fromLTRB(
       ShelfTokens.screenPadding,
@@ -194,86 +194,158 @@ mixin _LibraryClassicChrome on _LibraryShelfViews {
       ShelfTokens.screenPadding,
       ShelfTokens.spaceS,
     ),
-    child: LayoutBuilder(
-      builder: (context, constraints) {
-        final stacked =
-            constraints.maxWidth < 480 ||
-            MediaQuery.textScalerOf(context).scale(1) > 1.4;
-        final collectionFilters = Wrap(
-          spacing: 8,
-          runSpacing: 8,
-          children: [
-            for (final (value, label) in const [
-              (null, '全部'),
-              ('video', '短剧'),
-              ('manju', '漫剧'),
-            ])
-              HomeChip(
-                key: Key('library-collection-filter-${value ?? 'all'}'),
-                label: label,
-                selected: _collectionFilter == value,
-                onTap: () => setState(() => _collectionFilter = value),
-              ),
-          ],
-        );
-        final shelfFilters = Row(
-          children: [
-            _classicTodayPill(palette),
-            Expanded(
-              child: Align(
-                alignment: Alignment.centerRight,
-                child: _classicGroupChip(palette, tab),
-              ),
-            ),
-          ],
-        );
-        final layouts = _ClassicLayoutSegments(
-          current: _classicLayout.value,
-          palette: palette,
-          onChanged: _setClassicLayout,
-        );
-        if (!stacked) {
-          return Row(
-            children: [
-              Expanded(child: tab == 0 ? shelfFilters : collectionFilters),
-              const SizedBox(width: 8),
-              layouts,
-            ],
-          );
-        }
-        if (tab == 0) {
-          return Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Align(
-                alignment: Alignment.centerLeft,
-                child: _classicTodayPill(palette),
-              ),
-              const SizedBox(height: 4),
-              Row(
-                children: [
-                  Flexible(
-                    child: Align(
-                      alignment: Alignment.centerLeft,
-                      child: _classicGroupChip(palette, tab),
-                    ),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        LayoutBuilder(
+          builder: (context, constraints) {
+            final wide = constraints.maxWidth >= 480;
+            if (!isDesktopHost && MediaQuery.sizeOf(context).width < 600) {
+              return _classicCompactToolbar(palette, tab);
+            }
+            final stacked =
+                !wide || MediaQuery.textScalerOf(context).scale(1) > 1.4;
+            final collectionFilters = Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                for (final (value, label) in const [
+                  (null, '全部'),
+                  ('video', '短剧'),
+                  ('manju', '漫剧'),
+                ])
+                  HomeChip(
+                    key: Key('library-collection-filter-${value ?? 'all'}'),
+                    label: label,
+                    selected: _collectionFilter == value,
+                    onTap: () => setState(() => _collectionFilter = value),
                   ),
+              ],
+            );
+            final shelfFilters = Row(
+              children: [
+                _classicTodayPill(palette),
+                Expanded(
+                  child: Align(
+                    alignment: Alignment.centerRight,
+                    child: _classicGroupChip(palette, tab),
+                  ),
+                ),
+              ],
+            );
+            final layouts = _ClassicLayoutSegments(
+              current: _classicLayout.value,
+              palette: palette,
+              onChanged: _setClassicLayout,
+            );
+            if (!stacked) {
+              return Row(
+                children: [
+                  Expanded(child: tab == 0 ? shelfFilters : collectionFilters),
                   const SizedBox(width: 8),
                   layouts,
                 ],
-              ),
-            ],
-          );
-        }
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            collectionFilters,
-            const SizedBox(height: 4),
-            Align(alignment: Alignment.centerRight, child: layouts),
-          ],
-        );
-      },
+              );
+            }
+            if (tab == 0) {
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: _classicTodayPill(palette),
+                  ),
+                  const SizedBox(height: 4),
+                  Row(
+                    children: [
+                      Flexible(
+                        child: Align(
+                          alignment: Alignment.centerLeft,
+                          child: _classicGroupChip(palette, tab),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      layouts,
+                    ],
+                  ),
+                ],
+              );
+            }
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                collectionFilters,
+                const SizedBox(height: 4),
+                Align(alignment: Alignment.centerRight, child: layouts),
+              ],
+            );
+          },
+        ),
+        if (tab == 0) ...[
+          const SizedBox(height: ShelfTokens.spaceXS),
+          _classicShelfKindFilter(),
+        ],
+      ],
+    ),
+  );
+
+  /// 书架 tab 的媒介类型筛选(全部 / 小说 / 漫画 / 短剧 / 漫剧 / 听书)。
+  Widget _classicShelfKindFilter() => Wrap(
+    spacing: 8,
+    runSpacing: 8,
+    children: [
+      for (final (value, label) in const [
+        (null, '全部'),
+        ('book', '小说'),
+        ('manga', '漫画'),
+        ('video', '短剧'),
+        ('manju', '漫剧'),
+        ('audio', '听书'),
+      ])
+        HomeChip(
+          key: Key('library-shelf-kind-${value ?? 'all'}'),
+          label: label,
+          selected: _shelfKindFilter == value,
+          onTap: () => setState(() => _shelfKindFilter = value),
+        ),
+    ],
+  );
+
+  /// 窄屏或大字号时让整块控件换行，保留每个入口的触控宽度。
+  Widget _classicCompactToolbar(HomePalette palette, int tab) => Wrap(
+    alignment: WrapAlignment.spaceBetween,
+    crossAxisAlignment: WrapCrossAlignment.center,
+    runSpacing: ShelfTokens.spaceXS,
+    children: [
+      if (tab == 0) ...[
+        _classicGroupChip(palette, tab, showChevron: true),
+        _classicTodayText(palette),
+      ] else
+        for (final (value, label) in const [
+          (null, '全部'),
+          ('video', '短剧'),
+          ('manju', '漫剧'),
+        ])
+          HomeChip(
+            key: Key('library-collection-filter-${value ?? 'all'}'),
+            label: label,
+            selected: _collectionFilter == value,
+            onTap: () => setState(() => _collectionFilter = value),
+          ),
+      _ClassicLayoutPicker(
+        current: _classicLayout.value,
+        palette: palette,
+        onChanged: _setClassicLayout,
+      ),
+    ],
+  );
+
+  Widget _classicTodayText(HomePalette palette) => Text(
+    '今日已读$_todayMinutes分钟',
+    style: TextStyle(
+      fontSize: ShelfTokens.subtitle,
+      fontWeight: FontWeight.w400,
+      color: palette.muted,
     ),
   );
 
@@ -306,10 +378,11 @@ mixin _LibraryClassicChrome on _LibraryShelfViews {
   );
 
   /// 分组胶囊的宽度上限：长分组名只省略，不把工具栏推出去换行。
-  ///
-  /// 分类按 tab 各自取值：真分页之后三个标签页同时活着，共用一个 `_category`
-  /// 会让「书架选了某组」串到收藏页的胶囊上。
-  Widget _classicGroupChip(HomePalette palette, int tab) {
+  Widget _classicGroupChip(
+    HomePalette palette,
+    int tab, {
+    bool showChevron = false,
+  }) {
     final category = _categoryForTab(tab);
     return ConstrainedBox(
       constraints: const BoxConstraints(maxWidth: 148),
@@ -318,6 +391,7 @@ mixin _LibraryClassicChrome on _LibraryShelfViews {
         label: ShelfGroupStore.instance.nameOf(category),
         active: category != ShelfCategory.all,
         palette: palette,
+        showChevron: showChevron,
         onTap: () => unawaited(_openCategorySheet()),
       ),
     );

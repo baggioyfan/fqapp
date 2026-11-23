@@ -161,6 +161,8 @@ void main() {
 
       final toggle = find.byKey(const Key('detail_description_toggle'));
       expect(toggle, findsOneWidget);
+      // 经典手机版:展开/收起是可点的 48dp 高度。
+      expect(tester.getSize(toggle).height, greaterThanOrEqualTo(48));
       await tester.ensureVisible(toggle);
       await tester.pump();
       await tester.tap(toggle);
@@ -199,7 +201,7 @@ void main() {
       await tester.pumpAndSettle();
 
       final toggle = find.byKey(const Key('detail_description_toggle'));
-      await tester.ensureVisible(toggle);
+      await Scrollable.ensureVisible(tester.element(toggle), alignment: .5);
       await tester.pump();
       await tester.tap(toggle);
       await tester.pumpAndSettle();
@@ -876,8 +878,10 @@ Future<void> _size(
   WidgetTester tester, [
   Size size = const Size(393, 600),
 ]) async {
-  await tester.binding.setSurfaceSize(size);
-  addTearDown(() => tester.binding.setSurfaceSize(null));
+  tester.view.physicalSize = size;
+  tester.view.devicePixelRatio = 1;
+  addTearDown(tester.view.resetPhysicalSize);
+  addTearDown(tester.view.resetDevicePixelRatio);
   addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
 }
 

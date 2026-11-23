@@ -25,13 +25,23 @@ enum AppThemeStyle {
 /// Device-local theme selection. Loading cannot overwrite a newer UI choice,
 /// and writes are serialized so rapid switching keeps the last choice on disk.
 class AppThemeStyleStore extends ValueNotifier<AppThemeStyle> {
-  AppThemeStyleStore({Future<SharedPreferences> Function()? preferences})
-    : _preferences = preferences ?? SharedPreferences.getInstance,
-      super(AppThemeStyle.classic);
+  /// [missingStyle] 是「没存过偏好时用哪套版式」。
+  ///
+  /// fork 的缺省是 classic —— 产品只跑经典界面，且 `app_theme_style_lock_test`
+  /// 把这条钉死了。上游的缺省是 archive，因为上游那批 widget 测试以档案版式的
+  /// 度量写的；需要那个基线的测试自己显式传 [AppThemeStyle.archive]，
+  /// 不要靠改这里的缺省去迁就测试。
+  AppThemeStyleStore({
+    Future<SharedPreferences> Function()? preferences,
+    AppThemeStyle missingStyle = AppThemeStyle.classic,
+  }) : _missingStyle = missingStyle,
+       _preferences = preferences ?? SharedPreferences.getInstance,
+       super(missingStyle);
 
   static final instance = AppThemeStyleStore();
   static const storageKey = 'app_theme_style';
 
+  final AppThemeStyle _missingStyle;
   final Future<SharedPreferences> Function() _preferences;
   Future<void>? _loading;
   Future<void> _writes = Future<void>.value();
@@ -48,7 +58,10 @@ class AppThemeStyleStore extends ValueNotifier<AppThemeStyle> {
     try {
       final prefs = await _preferences();
       if (revision == _revision && _revision == 0) {
-        value = AppThemeStyle.fromStorage(prefs.get(storageKey));
+        final stored = prefs.get(storageKey);
+        value = stored == null
+            ? _missingStyle
+            : AppThemeStyle.fromStorage(stored);
       }
       _loaded = true;
     } catch (_) {

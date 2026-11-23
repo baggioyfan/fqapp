@@ -123,6 +123,12 @@ void main() {
     expect(ShelfStore.instance.contains('manga', 'comic-shelf'), isTrue);
     expect(find.text('已加入书架'), findsOneWidget);
     expect(tester.widget<ComicChromeButton>(button).tooltip, '已在书架');
+
+    // 这里挂着三个定时器：加入书架提示的 SnackBar（2s）、漫画页进度保存的
+    // 500ms 防抖，以及 ShelfStore.toggle 之后 WebdavAutoSync.markDirty 的
+    // 5s 同步防抖。用例结束前全部推进过去，否则 fake-async 以 timersPending
+    // 收尾报错。
+    await tester.pump(const Duration(seconds: 6));
   });
 }
 

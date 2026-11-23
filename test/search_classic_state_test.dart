@@ -129,7 +129,11 @@ void main() {
 
         // 1985 是复审复现点：上一条结果与滚动视口相交，但整条藏在玻璃
         // 页头后面。邻近位置一起回归，避免只修一个魔法偏移。
-        for (final point in <double>[1900, 1985, 2050]) {
+        // 结果区头部多了一行「状态 / 字数」筛选条,同一内容位置对应更大的
+        // 滚动偏移,三个复审点整体下移筛选条的高度,保持原来的边界不变。
+        // 实测筛选条给结果头部增加 38dp(同一行在改动前后的 archive 顶部
+        // 相差 38px),所以三个复审点统一 +38;下面 <1 的行内偏移断言不变。
+        for (final point in <double>[1938, 2023, 2088]) {
           if (store.value != AppThemeStyle.archive) {
             await store.select(AppThemeStyle.archive);
             await tester.pumpAndSettle();

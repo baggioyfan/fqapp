@@ -19,7 +19,6 @@ import '../services/reader_history.dart';
 import '../services/shelf_store.dart';
 import '../services/shelf_toggle.dart';
 import '../services/user_facing_error.dart';
-import '../services/webdav_auto_sync.dart';
 import '../widgets/comic/comic_chapter_bar.dart';
 import '../widgets/comic/comic_chrome_button.dart';
 import '../widgets/comic/comic_directory_sheet.dart';
@@ -126,6 +125,7 @@ class _ComicReaderPageState extends State<ComicReaderPage>
   bool _progressReady = false;
   bool _appActive = true;
   bool _sessionActive = false;
+  bool _desktopSidebarOpen = true;
   DateTime _readStart = DateTime.now();
   Timer? _saveTimer;
   // 小米公平运行内存 KILL 广播的刷盘注销函数，见 reader_page.dart。
@@ -177,9 +177,6 @@ class _ComicReaderPageState extends State<ComicReaderPage>
     _settleReadTime();
     _sessionActive = false;
     unawaited(_saveProgress());
-    // 退出漫画页立刻推一次进度，与 reader_page / player_page 对齐：应用还在
-    // 前台，请求跑得完。不推的话「看几页按返回键」要等退到后台才上云。
-    unawaited(WebdavAutoSync.instance.syncOnLeave());
     _scroll.dispose();
     _pageController?.dispose();
     super.dispose();
@@ -193,9 +190,6 @@ class _ComicReaderPageState extends State<ComicReaderPage>
       _sessionActive = false;
       _appActive = false;
       unawaited(_saveProgress());
-      // 与 reader_page 对齐：只是标记「有改动」，真正发请求的是 root 的
-      // paused 兜底 —— 那里会先等这次写入落盘，避免把上一秒的进度推上去。
-      WebdavAutoSync.instance.markDirty();
     } else if (active && !_appActive) {
       _appActive = true;
       _startReadTime();
@@ -205,24 +199,73 @@ class _ComicReaderPageState extends State<ComicReaderPage>
   @override
   Widget build(BuildContext context) {
     if (!isDesktopHost) return _buildSurface(context);
-    return LayoutBuilder(
-      builder: (context, bounds) => Row(
-        children: [
-          if (bounds.maxWidth >= 1000)
-            DesktopChapterSidebar(
-              chapters: widget.chapters,
-              currentIndex: _chapterIndex,
-              onSelected: (index) => _changeChapter(index),
+    final palette = HomePalette.of(context);
+    return ValueListenableBuilder<bool>(
+      valueListenable: DesktopPlatform.fullscreen,
+      builder: (context, fullscreen, _) => LayoutBuilder(
+        builder: (context, bounds) {
+          final showSidebar =
+              bounds.maxWidth >= 1000 && _desktopSidebarOpen && !fullscreen;
+          return ColoredBox(
+            color: palette.canvas,
+            child: Row(
+              children: [
+                if (showSidebar)
+                  DesktopChapterSidebar(
+                    chapters: widget.chapters,
+                    currentIndex: _chapterIndex,
+                    onCollapse: () =>
+                        setState(() => _desktopSidebarOpen = false),
+                    onSelected: (index) => _changeChapter(index),
+                  ),
+                Expanded(
+                  child: Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      Center(
+                        child: ConstrainedBox(
+                          constraints: const BoxConstraints(maxWidth: 1000),
+                          child: _buildSurface(context),
+                        ),
+                      ),
+                      if (bounds.maxWidth >= 1000 &&
+                          !_desktopSidebarOpen &&
+                          !fullscreen)
+                        Positioned(
+                          top: 12,
+                          left: 12,
+                          child: DecoratedBox(
+                            decoration: BoxDecoration(
+                              color: palette.surface.withValues(alpha: 0.94),
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(color: palette.line),
+                            ),
+                            child: IconButton(
+                              key: const Key('comic-desktop-sidebar-toggle'),
+                              tooltip: '展开目录',
+                              visualDensity: VisualDensity.compact,
+                              constraints: const BoxConstraints.tightFor(
+                                width: 34,
+                                height: 32,
+                              ),
+                              padding: EdgeInsets.zero,
+                              onPressed: () =>
+                                  setState(() => _desktopSidebarOpen = true),
+                              icon: Icon(
+                                LucideIcons.panel_left_open,
+                                size: 16,
+                                color: palette.ink,
+                              ),
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              ],
             ),
-          Expanded(
-            child: Center(
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 1000),
-                child: _buildSurface(context),
-              ),
-            ),
-          ),
-        ],
+          );
+        },
       ),
     );
   }

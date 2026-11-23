@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:material_ui/material_ui.dart';
@@ -70,7 +71,14 @@ void main() {
     await tester.pumpAndSettle();
 
     await _chooseCategory(tester, '想读');
-    expect(_rowKeys(tester), ['shelf-book-book:shelf-book']);
+    // 书架 tab 收全部媒介:该分组下的书与短剧同页出现(收藏 tab 仍只放视频)。
+    expect(
+      _rowKeys(tester),
+      unorderedEquals(<String>[
+        'shelf-book-video:video-book',
+        'shelf-book-book:shelf-book',
+      ]),
+    );
 
     await tester.tap(find.text('浏览历史'));
     await tester.pumpAndSettle();
@@ -144,8 +152,20 @@ void main() {
     );
     await tester.pumpAndSettle();
     await tester.runAsync(() async {
-      await tester.tap(find.byKey(const Key('shelf-remove-action')));
-      await Future<void>.delayed(const Duration(milliseconds: 50));
+      final removed = Completer<void>();
+      void onChanged() {
+        if (!removed.isCompleted) removed.complete();
+      }
+
+      final changes = ShelfGroupStore.instance.listenable;
+      changes.addListener(onChanged);
+      try {
+        await tester.tap(find.byKey(const Key('shelf-remove-action')));
+        // The assignment changes only after its Hive write and flush finish.
+        await removed.future;
+      } finally {
+        changes.removeListener(onChanged);
+      }
     });
     await tester.pumpAndSettle();
     expect(ShelfStore.instance.records(), isEmpty);

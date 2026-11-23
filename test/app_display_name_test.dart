@@ -45,12 +45,12 @@ void main() {
     // the diff against upstream showed it was gone.
     // 上游 1995d74 把首页顶栏（home_hero）的品牌标题整块换成了搜索行，那里
     // 已经没有应用名，继续断言会让每次合并都红一次、然后被人顺手删掉整组。
-    // 换成 desktop_app_frame：左侧导航栏顶部那块是 macOS 上用户实际看到的
-    // 品牌位，比首页顶栏更该被守住。
+    // 换成 desktop_window_bar：桌面外壳的标题栏是用户第一眼看到名字的地方，
+    // 导航栏顶部不再重复放一份（两处都有就成了同一个名字排两行）。
     for (final path in const [
       'lib/main.dart',
       'lib/pages/about_page.dart',
-      'lib/widgets/desktop_app_frame.dart',
+      'lib/widgets/desktop_window_bar.dart',
     ]) {
       expect(
         File(path).readAsStringSync(),

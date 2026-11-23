@@ -11,13 +11,14 @@ import '../models/media_item.dart';
 import '../models/media_id.dart';
 import '../models/search_discovery.dart';
 import '../services/api_client.dart';
-import '../services/app_breakpoints.dart';
 import '../services/app_theme_style.dart';
-import '../services/desktop_platform.dart';
 import '../services/backend_transport.dart';
+import '../services/desktop_platform.dart';
+import '../services/search_filters.dart';
 import '../services/search_history_store.dart';
 import '../services/user_facing_error.dart';
 import '../widgets/app_ui/app_ui_scope.dart';
+import '../widgets/desktop_shell_scope.dart';
 import '../widgets/home/home_design.dart';
 import '../widgets/home/home_media_card.dart';
 import '../widgets/home/home_shelf.dart';
@@ -162,6 +163,10 @@ class SearchRoute<T> extends PageRouteBuilder<T> {
 
 class SearchPage extends StatefulWidget {
   final String? initialQuery;
+
+  /// 分类入口带进来的分类词(如「都市」)。设置后结果按作品的分类标签过滤,
+  /// 而不是把分类词当关键词只匹配书名。
+  final String? initialTag;
   final SearchPageLoader? searchLoader;
   final Future<MediaItem?> Function(String id)? idSearchLoader;
   final SearchHistoryRepository? historyStore;
@@ -182,6 +187,7 @@ class SearchPage extends StatefulWidget {
   const SearchPage({
     super.key,
     this.initialQuery,
+    this.initialTag,
     this.searchLoader,
     this.idSearchLoader,
     this.historyStore,
@@ -228,6 +234,9 @@ class _SearchPageState extends State<SearchPage> {
   int _tabIndex = 0;
   int _requestGeneration = 0;
   double _minimumScore = 0;
+
+  /// 状态 / 字数 / 分类词的二次筛选,只作用于番茄关键词结果。
+  SearchFilters _filters = const SearchFilters();
 
   /// Upstream search results are always `NovelRow` lists; the cover grid is
   /// an opt-in that fqapp persists.
@@ -306,6 +315,7 @@ class _SearchPageState extends State<SearchPage> {
   @override
   void initState() {
     super.initState();
+    if (isDesktopHost) DesktopShellState.enterSearch();
     // 首帧就停在该页签：分区入口（短剧/漫剧）进来的搜索不该先闪「综合」。
     _tabIndex = _categories.indexOf(widget.initialCategory);
     _scrollController.addListener(_onScroll);
@@ -313,7 +323,10 @@ class _SearchPageState extends State<SearchPage> {
     unawaited(_loadLayout());
     unawaited(_loadMinimumScore());
     unawaited(_loadHotSearch());
-    final initial = widget.initialQuery?.trim() ?? '';
+    final tag = widget.initialTag?.trim() ?? '';
+    if (tag.isNotEmpty) _filters = _filters.copyWith(tag: tag);
+    final query = widget.initialQuery?.trim() ?? '';
+    final initial = query.isNotEmpty ? query : tag;
     if (initial.isNotEmpty) {
       _ctrl.text = initial;
       _draft = initial;
@@ -416,6 +429,33 @@ class _SearchPageState extends State<SearchPage> {
       _minimumScore == 0 ||
       (item.score != null && item.score! >= _minimumScore);
 
+  /// 二次筛选(分类词 / 状态 / 字数)只对**番茄关键词结果**生效。书旗来源
+  /// 没有这套上游字段,ID 直查只有单条命中:两者都直接放行,避免切换来源
+  /// 后看不见的番茄筛选状态把结果整批滤掉。
+  bool get _filtersEnabled => _idQuery == null && !_shuqiSource;
+
+  /// 当前结果视口的完整过滤:评分 + 只对番茄关键词结果生效的二次筛选。
+  bool _matchesFilters(MediaItem item) =>
+      _matchesScore(item) && (!_filtersEnabled || _filters.matches(item));
+
+  /// 应用一组新的二次筛选,并在需要时补一次分页检查。
+  ///
+  /// 筛选会缩小可见集合,视图底部可能因此出现空档;这里复用滚动分页的
+  /// 判定(见 [_scheduleLoadMoreIfNeeded]),让它按既有的“新一页没有新增
+  /// 可见结果就停下”的规则补页,而不会无界连发请求。
+  void _setFilters(SearchFilters next) {
+    if (!mounted) return;
+    setState(() => _filters = next);
+    _scheduleLoadMoreIfNeeded(_tabIndex, _requestGeneration);
+  }
+
+  /// 空态里的“清除筛选”:一次清掉评分和二次筛选,回到纯关键词结果。
+  void _clearLoadedFilters() {
+    if (!mounted) return;
+    if (_minimumScore > 0) _selectMinimumScore(0);
+    _setFilters(const SearchFilters());
+  }
+
   /// 结果条目的来源限定身份。书旗和番茄各自有自己的 id 命名空间，不能只按
   /// id 或 kind 匹配。
   String _resultIdentity(MediaItem item) =>
@@ -433,7 +473,7 @@ class _SearchPageState extends State<SearchPage> {
     if (_query.isEmpty || _refining || _showSuggestions) return const [];
     final feed = _feeds[_tabIndex];
     if (!feed.initialized || feed.items.isEmpty) return const [];
-    return feed.items.where(_matchesScore).toList(growable: false);
+    return feed.items.where(_matchesFilters).toList(growable: false);
   }
 
   RenderBox? _resultBox(MediaItem item) {
@@ -958,7 +998,7 @@ class _SearchPageState extends State<SearchPage> {
                 tab.title == category.sourceTitle),
         orElse: () => SearchTab(title: category.title, items: []),
       );
-      final before = feed.items.where(_matchesScore).length;
+      final before = feed.items.where(_matchesFilters).length;
       setState(() {
         for (final item in page.items) {
           if (item.id.isEmpty ||
@@ -975,7 +1015,7 @@ class _SearchPageState extends State<SearchPage> {
       });
       // A filtered-empty or duplicate page can still advance. Leave a manual
       // continuation instead of chaining requests without new visible results.
-      if (feed.items.where(_matchesScore).length > before) {
+      if (feed.items.where(_matchesFilters).length > before) {
         _scheduleLoadMoreIfNeeded(index, generation);
       }
     } catch (e) {
@@ -1010,6 +1050,7 @@ class _SearchPageState extends State<SearchPage> {
 
   @override
   void dispose() {
+    if (isDesktopHost) DesktopShellState.exitSearch();
     ++_requestGeneration;
     ++_suggestGeneration;
     _activeRequest?.cancel();
@@ -1049,9 +1090,7 @@ class _SearchPageState extends State<SearchPage> {
             alignment: Alignment.topCenter,
             child: ConstrainedBox(
               constraints: BoxConstraints(
-                maxWidth: appIsWideLayout(context)
-                    ? double.infinity
-                    : appWideBreakpoint,
+                maxWidth: isDesktopHost ? 1180 : 840,
               ),
               // Upstream pads the whole search plane by the tab height, so
               // the scroll viewport starts below the search capsule and rows
@@ -1079,11 +1118,7 @@ class _SearchPageState extends State<SearchPage> {
   Widget _header(BuildContext context) => Align(
     alignment: Alignment.topCenter,
     child: ConstrainedBox(
-      constraints: BoxConstraints(
-        maxWidth: appIsWideLayout(context)
-            ? double.infinity
-            : appWideBreakpoint,
-      ),
+      constraints: BoxConstraints(maxWidth: isDesktopHost ? 1180 : 840),
       child: Column(
         children: [
           SizedBox(
@@ -1240,23 +1275,29 @@ class _SearchPageState extends State<SearchPage> {
         ),
       );
     }
-    final items = feed.items.where(_matchesScore).toList(growable: false);
+    final items = feed.items.where(_matchesFilters).toList(growable: false);
     if (items.isEmpty) {
-      final filtered = _idQuery == null && !_shuqiSource && _minimumScore > 0;
+      final secondaryActive = _filtersEnabled && _filters.isActive;
+      final ratingActive = _filtersEnabled && _minimumScore > 0;
+      final filtered = secondaryActive || ratingActive;
       final notice = ContentNotice(
         icon: CupertinoIcons.search,
         title: _idQuery != null
             ? (_feeds.first.items.isEmpty ? '未找到该 ID 对应的作品' : '该分类下没有匹配的作品')
-            : filtered
+            : secondaryActive
+            ? '已加载结果中暂无符合筛选的作品'
+            : ratingActive
             ? '已加载结果中暂无达到评分的作品'
             : '没有找到相关故事',
         message: _idQuery != null
             ? null
-            : filtered
+            : secondaryActive
+            ? '筛选只作用于已加载结果，可继续加载更多。'
+            : ratingActive
             ? '筛选只作用于已加载结果，未评分作品不计入。'
             : '试试更短的名称或作者名',
-        onRetry: filtered ? () => _selectMinimumScore(0) : null,
-        actionLabel: '清除评分筛选',
+        onRetry: filtered ? _clearLoadedFilters : null,
+        actionLabel: secondaryActive ? '清除筛选' : '清除评分筛选',
         secondaryAction: _idQuery != null
             // A missing ID can still be searched as a keyword.
             ? GlassTextButton(
@@ -1270,8 +1311,8 @@ class _SearchPageState extends State<SearchPage> {
               )
             : null,
       );
-      // Keep the heading (and its rating filter) when filtering leaves no
-      // rows, so the threshold can still be changed in place.
+      // Keep the heading (and its filter controls) when filtering leaves no
+      // rows, so the filters can still be changed in place.
       if (!filtered) return _notice(context, notice);
       return Padding(
         padding: EdgeInsets.only(top: _bodyTopInset(context)),
@@ -1374,6 +1415,183 @@ class _SearchPageState extends State<SearchPage> {
     },
   );
 
+  static const _statusLabels = <int, String>{
+    -1: '状态不限',
+    0: '已完结',
+    1: '连载中',
+    4: '已停更',
+  };
+
+  static const _wordLabels = <int, String>{
+    0: '字数不限',
+    1: '30 万字以下',
+    2: '30–100 万字',
+    3: '100–300 万字',
+    4: '300 万字以上',
+  };
+
+  /// 分类词 + 状态 + 字数 的二次筛选条。任一筛选把结果筛空时,这一行仍然留在
+  /// 空态上方,保证还能原地改条件或一键清除。
+  Widget _filterBar(BuildContext context) => Padding(
+    padding: const EdgeInsets.only(top: 2, bottom: 4),
+    child: Wrap(
+      spacing: 6,
+      runSpacing: 6,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      children: [
+        if (_filters.tag != null && _filters.tag!.isNotEmpty)
+          _filterPill(
+            context,
+            '分类:${_filters.tag}',
+            active: true,
+            icon: CupertinoIcons.xmark,
+            onTap: () => _setFilters(_filters.copyWith(clearTag: true)),
+          ),
+        _filterMenu(
+          context,
+          _statusLabels[_filters.status] ?? _statusLabels[-1]!,
+          active: _filters.status >= 0,
+          values: _statusLabels,
+          current: _filters.status,
+          onSelected: (value) => _setFilters(_filters.copyWith(status: value)),
+        ),
+        _filterMenu(
+          context,
+          _wordLabels[_filters.wordCount] ?? _wordLabels[0]!,
+          active: _filters.wordCount > 0,
+          values: _wordLabels,
+          current: _filters.wordCount,
+          onSelected: (value) =>
+              _setFilters(_filters.copyWith(wordCount: value)),
+        ),
+        if (_filters.status >= 0 || _filters.wordCount > 0)
+          _filterPill(
+            context,
+            '清除筛选',
+            active: false,
+            icon: CupertinoIcons.arrow_counterclockwise,
+            onTap: () => _setFilters(SearchFilters(tag: _filters.tag)),
+          ),
+      ],
+    ),
+  );
+
+  Widget _filterPill(
+    BuildContext context,
+    String label, {
+    required bool active,
+    IconData? icon,
+    required VoidCallback onTap,
+  }) {
+    final scheme = Theme.of(context).colorScheme;
+    return InkWell(
+      borderRadius: BorderRadius.circular(20),
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+        decoration: BoxDecoration(
+          color: active
+              ? scheme.primary.withValues(alpha: 0.16)
+              : scheme.onSurface.withValues(alpha: 0.06),
+          borderRadius: BorderRadius.circular(20),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 12.5,
+                fontWeight: active ? FontWeight.w600 : FontWeight.w500,
+                color: active ? scheme.primary : scheme.onSurfaceVariant,
+              ),
+            ),
+            if (icon != null) ...[
+              const SizedBox(width: 4),
+              Icon(
+                icon,
+                size: 12,
+                color: active ? scheme.primary : scheme.onSurfaceVariant,
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// 可点开的筛选胶囊:点一下弹底部选择面板。面板关闭后调用方可能已经
+  /// 被销毁(换主题、返回上一页),所以回写前先检查 mounted。
+  Widget _filterMenu(
+    BuildContext context,
+    String label, {
+    required bool active,
+    required Map<int, String> values,
+    required int current,
+    required ValueChanged<int> onSelected,
+  }) => _filterPill(
+    context,
+    label,
+    active: active,
+    icon: CupertinoIcons.chevron_down,
+    onTap: () async {
+      final picked = await showModalBottomSheet<int>(
+        context: context,
+        showDragHandle: true,
+        builder: (sheetContext) => SafeArea(
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                for (final entry in values.entries)
+                  InkWell(
+                    onTap: () => Navigator.of(sheetContext).pop(entry.key),
+                    child: SizedBox(
+                      height: 48,
+                      child: Row(
+                        children: [
+                          const SizedBox(width: 22),
+                          Expanded(
+                            child: Text(
+                              entry.value,
+                              style: TextStyle(
+                                fontSize: 15,
+                                fontWeight: entry.key == current
+                                    ? FontWeight.w600
+                                    : FontWeight.w400,
+                                color: entry.key == current
+                                    ? Theme.of(sheetContext).colorScheme.primary
+                                    : Theme.of(
+                                        sheetContext,
+                                      ).colorScheme.onSurface,
+                              ),
+                            ),
+                          ),
+                          if (entry.key == current)
+                            Padding(
+                              padding: const EdgeInsets.only(right: 18),
+                              child: Icon(
+                                CupertinoIcons.checkmark_alt,
+                                size: 18,
+                                color: Theme.of(
+                                  sheetContext,
+                                ).colorScheme.primary,
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ),
+      );
+      if (!mounted || picked == null || picked == current) return;
+      onSelected(picked);
+    },
+  );
+
   Widget _resultsHeading(BuildContext context, int count) {
     final scheme = Theme.of(context).colorScheme;
     final secondary = TextStyle(
@@ -1397,7 +1615,9 @@ class _SearchPageState extends State<SearchPage> {
                 child: AppText(
                   // Upstream says 已显示 when results are filtered locally: the
                   // count only covers loaded pages and grows while paging.
-                  _idQuery == null && !_shuqiSource && _minimumScore > 0
+                  _idQuery == null &&
+                          !_shuqiSource &&
+                          (_minimumScore > 0 || _filters.isActive)
                       ? '已显示 $count 个结果'
                       : '找到 $count 个结果',
                   maxLines: 1,
@@ -1433,6 +1653,7 @@ class _SearchPageState extends State<SearchPage> {
               ),
             ],
           ),
+          if (_idQuery == null && !_shuqiSource) _filterBar(context),
           if (_idQuery != null)
             Row(
               children: [
@@ -1507,7 +1728,7 @@ class _SearchPageState extends State<SearchPage> {
               // 与首页同一个阅读宽度：非 Windows 压到 840dp 并居中。
               child: ConstrainedBox(
                 constraints: BoxConstraints(
-                  maxWidth: isWindowsDesktop ? double.infinity : 840,
+                  maxWidth: isDesktopHost ? 1180 : 840,
                 ),
                 child: _classicContent(context, feed),
               ),
@@ -1602,6 +1823,7 @@ class _SearchPageState extends State<SearchPage> {
     listView: _listView,
     onToggleLayout: _toggleLayout,
     showRatingHint: _idQuery == null && !_shuqiSource && _minimumScore > 0,
+    filters: _idQuery == null && !_shuqiSource ? _filterBar(context) : null,
   );
 
   Widget _classicIdHint(BuildContext context) => ClassicSearchIdLookupHint(
@@ -1652,8 +1874,10 @@ class _SearchPageState extends State<SearchPage> {
         ),
       );
     }
-    final items = feed.items.where(_matchesScore).toList(growable: false);
+    final items = feed.items.where(_matchesFilters).toList(growable: false);
     if (items.isEmpty) {
+      final secondaryActive = _filtersEnabled && _filters.isActive;
+      final ratingActive = _filtersEnabled && _minimumScore > 0;
       return _classicResultsShell(
         context,
         Center(
@@ -1661,10 +1885,10 @@ class _SearchPageState extends State<SearchPage> {
             mainAxisSize: MainAxisSize.min,
             children: [
               Text(_classicEmptyMessage(feed)),
-              if (_idQuery == null && !_shuqiSource && _minimumScore > 0)
+              if (secondaryActive || ratingActive)
                 TextButton(
-                  onPressed: () => _selectMinimumScore(0),
-                  child: const Text('清除评分筛选'),
+                  onPressed: _clearLoadedFilters,
+                  child: Text(secondaryActive ? '清除筛选' : '清除评分筛选'),
                 ),
               if (feed.hasMore || feed.loading || feed.error != null)
                 _classicPaginationFooter(context, feed),
@@ -1689,6 +1913,9 @@ class _SearchPageState extends State<SearchPage> {
   String _classicEmptyMessage(_SearchFeed feed) {
     if (_idQuery != null) {
       return _feeds.first.items.isEmpty ? '未找到该 ID 对应的作品' : '该分类下没有匹配的作品';
+    }
+    if (!_shuqiSource && _filters.isActive) {
+      return '已加载结果中暂无符合筛选的作品';
     }
     if (!_shuqiSource && _minimumScore > 0) {
       return '已加载结果中暂无达到评分的作品';

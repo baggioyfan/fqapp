@@ -213,7 +213,13 @@ void main() {
       final pager = tester.widget<ReaderPagedView>(
         find.byType(ReaderPagedView),
       );
+      final beforeTurn = store.entry!['textOffset'];
       pager.onPageChanged(2);
+      await tester.pumpAndSettle();
+      // 直接调 onPageChanged 绕过了翻页动画，进度会当场落盘（页面内部没有再
+      // 压一层防抖），所以这里只验「锚点确实换成了新页的起点」。
+      expect(store.entry!['textOffset'], greaterThan(beforeTurn));
+      await tester.pump(const Duration(milliseconds: 250));
       await tester.pumpAndSettle();
       final anchor = store.entry!['textOffset'];
       sheet.onChanged(

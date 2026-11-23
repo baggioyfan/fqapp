@@ -30,10 +30,13 @@ mixin _LibraryShelfViews on _LibraryShelfChrome {
         emptyBuilder: (context) => _emptyState(context),
         padding: EdgeInsets.fromLTRB(
           style.pageGutter,
-          0,
+          isDesktopHost ? 12 : 0,
           style.pageGutter,
-          DockLayout.scrollPaddingOf(context),
+          isDesktopHost ? 24.0 : DockLayout.scrollPaddingOf(context),
         ),
+        maxContentWidth: isDesktopHost
+            ? (mode == BookCollectionMode.list ? 1080.0 : 1680.0)
+            : null,
         storageKey: PageStorageKey('shelf-$_tab'),
         onGridViewport: (viewport) => _gridViewport = viewport,
       ),

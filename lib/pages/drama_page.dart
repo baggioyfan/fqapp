@@ -18,7 +18,6 @@ import '../models/media_item.dart';
 import '../models/playlet_comment.dart';
 import '../models/series_detail.dart';
 import '../services/api_client.dart';
-import '../services/app_breakpoints.dart';
 import '../services/backend_transport.dart';
 import '../services/drama_channel_preferences.dart';
 import '../services/drama_mute_preferences.dart';
@@ -317,7 +316,7 @@ double _dramaStripHeightFor(BuildContext context) {
 /// 留白、最近/收藏的筛选行都得自己让出这段高度。桌面端不渲染搜索行
 /// （搜索入口收敛到频道条右端图标），比手机端少一个 [_dramaSearchRowHeight]。
 double dramaTopChromeHeight(BuildContext context) =>
-    (isWindowsDesktop ? 0.0 : _dramaSearchRowHeight) +
+    (isDesktopHost ? 0.0 : _dramaSearchRowHeight) +
     _dramaStripHeightFor(context);
 
 /// 频道条的定位锚点：条数变化时只增删尾部，保留已有 index 的 `GlobalKey`。
@@ -427,9 +426,13 @@ class _DramaPageState extends ConsumerState<DramaPage>
   }
 
   final Map<int, PageController> _feedControllers = {};
+  final Map<String, ScrollController> _gridControllers = {};
+  final Map<String, int> _gridAutoFillForCount = {};
   final Map<int, int> _screenIndices = {};
   PageController _pagesFor(int tab) =>
       _feedControllers.putIfAbsent(tab, PageController.new);
+  ScrollController _gridControllerFor(String gridKey) =>
+      _gridControllers.putIfAbsent(gridKey, ScrollController.new);
   PageController get _pages => _pagesFor(_current.tabIndex);
   bool _channelScrolling = false;
 
@@ -605,7 +608,7 @@ class _DramaPageState extends ConsumerState<DramaPage>
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) dramaLightPageNotifier.value = !_current.playsInline;
     });
-    if (isWindowsDesktop) {
+    if (isDesktopHost) {
       DesktopPlatform.fullscreen.addListener(_desktopFullscreenChanged);
     }
     WidgetsBinding.instance.addObserver(this);
@@ -663,7 +666,7 @@ class _DramaPageState extends ConsumerState<DramaPage>
 
   @override
   void dispose() {
-    if (isWindowsDesktop) {
+    if (isDesktopHost) {
       DesktopPlatform.fullscreen.removeListener(_desktopFullscreenChanged);
     }
     WidgetsBinding.instance.removeObserver(this);
@@ -680,6 +683,9 @@ class _DramaPageState extends ConsumerState<DramaPage>
     _channelScrollingWatchdog?.cancel();
     _pullDistance.dispose();
     for (final controller in _feedControllers.values) {
+      controller.dispose();
+    }
+    for (final controller in _gridControllers.values) {
       controller.dispose();
     }
     _channelProgress.dispose();
@@ -1050,8 +1056,10 @@ class _DramaPageState extends ConsumerState<DramaPage>
     return false;
   }
 
-  Future<void> _refresh() =>
-      ref.read(dramaProvider.notifier).load(manualRefresh: true);
+  Future<void> _refresh() {
+    _gridAutoFillForCount.clear();
+    return ref.read(dramaProvider.notifier).load(manualRefresh: true);
+  }
 
   /// 官方单击语义：**暂停 / 继续当前这条视频**，不跳任何界面。
   ///
@@ -1730,7 +1738,7 @@ class _DramaPageState extends ConsumerState<DramaPage>
                 ),
               ),
             if (!_recentEditing &&
-                !(isWindowsDesktop && DesktopPlatform.fullscreen.value))
+                !(isDesktopHost && DesktopPlatform.fullscreen.value))
               Positioned(
                 // 推荐（视频流）与看剧/漫剧（浅色页）切换时，下面的浅色
                 // 渐变背板会整体插入或移除，Stack 的子项下标随之错位。
@@ -1764,7 +1772,7 @@ class _DramaPageState extends ConsumerState<DramaPage>
             // 底部 tab（50dp）是**悬浮压在 feed 上的**，所以 94dp 从 tab 底边算，
             // 提示悬在 tab 栏上方约 44dp。本页 feed 止步于 NavigationBar 顶边，
             // 同一视觉位置 = 94 - 官方 tab 高 50 = **44dp**。
-            if (_guideMounted && !isWindowsDesktop)
+            if (_guideMounted && !isDesktopHost)
               Positioned(
                 left: 16,
                 right: 16,
@@ -1873,27 +1881,38 @@ class _DramaPageState extends ConsumerState<DramaPage>
       }
       return _GridMessage(key: Key('$gridKey.empty'), message: '暂无内容');
     }
-    final wide = appIsWideLayout(context);
+    final wide = isDesktopHost || MediaQuery.sizeOf(context).width >= 840;
     if (wide) {
       columns = dramaDesktopColumns(context);
     }
     final bottomInset = _effectiveBottomInset(context);
+    if (active &&
+        !state.isLoading &&
+        !state.isLoadMore &&
+        state.hasMore &&
+        state.error == null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _maybeAutoFillGrid(gridKey, items.length);
+      });
+    }
     return NotificationListener<ScrollNotification>(
       onNotification: (notification) =>
           active ? _onGridScroll(notification) : false,
       child: GridView.builder(
         key: Key(gridKey),
+        controller: _gridControllerFor(gridKey),
+        physics: const AlwaysScrollableScrollPhysics(),
         padding: EdgeInsets.fromLTRB(
-          12,
+          wide && isDesktopHost ? 20 : 12,
           // 频道条底边到第一行海报的距离：只留 12 时条带和封面几乎贴在一起，
           // 与首页「标签条 → 内容」的 16 对齐。
           MediaQuery.paddingOf(context).top + _topChromeHeight + 16,
-          12,
-          bottomInset + 20,
+          wide && isDesktopHost ? 20 : 12,
+          isDesktopHost ? 24 : bottomInset + 20,
         ),
         gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
           crossAxisCount: columns,
-          crossAxisSpacing: 8,
+          crossAxisSpacing: wide && isDesktopHost ? 12 : 8,
           mainAxisSpacing: 16,
           // 海报约 5:7 + 片名 + 「分类·集数」；两列格片名可占两行。
           childAspectRatio: wide
@@ -1916,6 +1935,26 @@ class _DramaPageState extends ConsumerState<DramaPage>
     );
   }
 
+  void _maybeAutoFillGrid(String gridKey, int itemCount) {
+    if (!mounted || !_tickerEnabled) return;
+    if (_gridShape(_current)?.gridKey != gridKey) return;
+    final state = ref.read(dramaProvider);
+    if (state.isLoading ||
+        state.isLoadMore ||
+        !state.hasMore ||
+        state.error != null) {
+      return;
+    }
+    final controller = _gridControllers[gridKey];
+    if (controller == null || !controller.hasClients) return;
+    final position = controller.position;
+    if (!position.hasContentDimensions) return;
+    if (position.extentAfter >= 600) return;
+    if (_gridAutoFillForCount[gridKey] == itemCount) return;
+    _gridAutoFillForCount[gridKey] = itemCount;
+    unawaited(ref.read(dramaProvider.notifier).loadMore());
+  }
+
   /// 瀑布格的滚动：保留下拉刷新（同一套手势与提示），把 feed 的
   /// 竖滑换页/内联同步换成触底翻页。
   bool _onGridScroll(ScrollNotification notification) {
@@ -1925,11 +1964,14 @@ class _DramaPageState extends ConsumerState<DramaPage>
           .clamp(0, kDramaPullRefreshTrigger);
       return false;
     }
-    if (notification is ScrollUpdateNotification &&
-        _pullDistance.value > 0 &&
-        (notification.scrollDelta ?? 0) > 0) {
-      _pullDistance.value = (_pullDistance.value - notification.scrollDelta!)
-          .clamp(0, kDramaPullRefreshTrigger);
+    if (notification is ScrollUpdateNotification) {
+      if (_pullDistance.value > 0 && (notification.scrollDelta ?? 0) > 0) {
+        _pullDistance.value = (_pullDistance.value - notification.scrollDelta!)
+            .clamp(0, kDramaPullRefreshTrigger);
+      }
+      if (notification.metrics.extentAfter < 600) {
+        ref.read(dramaProvider.notifier).loadMore();
+      }
     }
     if (notification is ScrollEndNotification) {
       final shouldRefresh = _pullDistance.value >= kDramaPullRefreshTrigger;
@@ -1952,7 +1994,7 @@ class _DramaPageState extends ConsumerState<DramaPage>
     required DramaChannel channel,
     required bool active,
   }) {
-    if (isWindowsDesktop && state.error == null && items.isNotEmpty) {
+    if (isDesktopHost && state.error == null && items.isNotEmpty) {
       return active
           ? _desktopFeed(items)
           : _previewFeedPoster(
@@ -2192,25 +2234,55 @@ class _DramaPageState extends ConsumerState<DramaPage>
                 ),
               ),
               if (!DesktopPlatform.fullscreen.value)
-                SizedBox(
-                  height: 44,
+                Container(
+                  height: 46,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF141416),
+                    border: Border(
+                      top: BorderSide(
+                        color: Colors.white.withValues(alpha: 0.08),
+                      ),
+                    ),
+                  ),
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
                       TextButton.icon(
+                        style: TextButton.styleFrom(
+                          foregroundColor: Colors.white,
+                          disabledForegroundColor: Colors.white38,
+                        ),
                         onPressed: _screenIndex > 0
                             ? () => _desktopNextDrama(items, -1)
                             : null,
                         icon: const Icon(Icons.keyboard_arrow_up),
                         label: const Text('上一条（Page Up）'),
                       ),
-                      const SizedBox(width: 24),
-                      Text(
-                        '${_screenIndex + 1} / ${items.length}',
-                        style: const TextStyle(color: Colors.white60),
+                      const SizedBox(width: 20),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 4,
+                        ),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF232328),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Text(
+                          '${_screenIndex + 1} / ${items.length}',
+                          style: const TextStyle(
+                            color: Colors.white70,
+                            fontSize: 12.5,
+                          ),
+                        ),
                       ),
-                      const SizedBox(width: 24),
+                      const SizedBox(width: 20),
                       TextButton.icon(
+                        style: TextButton.styleFrom(
+                          foregroundColor: Colors.white,
+                          disabledForegroundColor: Colors.white38,
+                        ),
                         onPressed: _screenIndex + 1 < items.length
                             ? () => _desktopNextDrama(items, 1)
                             : null,
@@ -2575,7 +2647,7 @@ class _TopBarState extends State<_TopBar> {
     final available = constraints.maxWidth - ClassicHomeTabBar.sidePadding * 2;
     final cellWidth = count == 0 ? 0.0 : available / count;
     final spread =
-        !isWindowsDesktop &&
+        !isDesktopHost &&
         cellWidth.isFinite &&
         cellWidth > 0 &&
         _reservedWidths.every((width) => width <= cellWidth);
@@ -2715,7 +2787,7 @@ class _TopBarState extends State<_TopBar> {
           // 搜索框（2026-10-25 用户反馈）。
           // 桌面端不渲染这一行：分区搜索只留频道条右端的搜索图标一处
           // 入口（与 _DramaPageState._topChromeHeight 的桌面高度一致）。
-          if (!isWindowsDesktop)
+          if (!isDesktopHost)
             SizedBox(
               height: _dramaSearchRowHeight,
               child: Padding(
@@ -2736,7 +2808,7 @@ class _TopBarState extends State<_TopBar> {
                 // 官方 `ap3.xml` 的 `@id/h4f` 是 20dp 搜索钮，但手机端顶部
                 // 已有整条搜索框，两处入口重复（2026-10-25 用户要求移除）。
                 // 桌面端不渲染搜索行，搜索只留这一处入口。
-                if (isWindowsDesktop) ...[
+                if (isDesktopHost) ...[
                   IconButton(
                     key: const Key('drama_strip_search_button'),
                     tooltip: '搜索短剧',
@@ -4283,7 +4355,7 @@ class _InlineVideoLayer extends StatelessWidget {
     return LayoutBuilder(
       builder: (context, constraints) {
         final window = constraints.biggest;
-        final wide = appIsWideLayout(context, width: window.width);
+        final wide = isDesktopHost || window.width >= 840;
         final cacheWidth =
             (window.width * MediaQuery.devicePixelRatioOf(context)).ceil();
         return AnimatedBuilder(
@@ -4324,7 +4396,9 @@ class _InlineVideoLayer extends StatelessWidget {
                     rect: layout.video,
                     child: RotatedBox(
                       quarterTurns: playback.rotation.value,
-                      child: isWindowsDesktop
+                      // iOS 与桌面一样由进程内的 media_kit 出画,没有
+                      // Texture 可画;Android 才走原生纹理。
+                      child: isDesktopHost || isIOSPlatform
                           ? DesktopPlatform.instance.videoSurface(
                               textureId,
                               key: ValueKey('drama_inline_${item.id}'),
@@ -4985,7 +5059,8 @@ class _LocalListState extends State<_LocalList> {
           // 桌面端跟看剧/漫剧同口径铺列（[dramaDesktopColumns]，行距也放到
           // 16）；手机保持官方的双列 8dp。原先这里恒写 2 列，桌面上两列会被
           // 拉到近 700dp 宽，和隔壁频道完全两种排版。
-          final desktopGrid = appIsWideLayout(context);
+          final desktopGrid =
+              isDesktopHost || MediaQuery.sizeOf(context).width >= 840;
           final columns = desktopGrid ? dramaDesktopColumns(context) : 3;
           final body = filtered.isEmpty
               ? empty
@@ -4993,14 +5068,16 @@ class _LocalListState extends State<_LocalList> {
                   key: Key('drama_${widget.channel.label}_grid'),
                   // 官方 staggered 网格间距（`j0`）：左右 12dp、行/列间距 8dp。
                   padding: EdgeInsets.fromLTRB(
-                    12,
+                    desktopGrid && isDesktopHost ? 20 : 12,
                     8,
-                    12,
-                    MediaQuery.paddingOf(context).bottom + 72.0 + 20,
+                    desktopGrid && isDesktopHost ? 20 : 12,
+                    isDesktopHost
+                        ? 24.0
+                        : MediaQuery.paddingOf(context).bottom + 72.0 + 20,
                   ),
                   gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
                     crossAxisCount: columns,
-                    crossAxisSpacing: 8,
+                    crossAxisSpacing: desktopGrid && isDesktopHost ? 12 : 8,
                     mainAxisSpacing: desktopGrid ? 16 : 8,
                     // 官方封面 10:14 + 粗体两行标题 + 进度行。
                     childAspectRatio: desktopGrid ? .58 : 0.47,
@@ -5072,11 +5149,12 @@ class _LocalListState extends State<_LocalList> {
   /// 官方删除要按**记录身份**（kind + contentId），不能用下标。
   String _keyOf(MediaItem item) => '${item.kind}:${item.id}';
 
-  List<({String contentId, String kind})> get _targets => [
+  List<({String contentId, String kind, String source})> get _targets => [
     for (final entry in _historyEntries())
       (
         contentId: historyContentId(entry),
         kind: entry['kind']?.toString() ?? 'video',
+        source: historySource(entry),
       ),
   ];
 
@@ -5367,10 +5445,15 @@ class _LocalListState extends State<_LocalList> {
       await store.removeKeys(keys);
     } else {
       // 只删选中的记录：按 kind+contentId 精确匹配，其它记录一律不动。
+      // fork 的 `removeHistoryEntries` 只认 (kind, contentId) 两个字段（见其
+      // 注释），所以把上游 _targets 里的 source 在这里映射掉，不改库的语义。
       removed = await LibraryStore.instance.removeHistoryEntries(
-        _targets.where(
-          (target) => selected.contains('${target.kind}:${target.contentId}'),
-        ),
+        _targets
+            .where(
+              (target) =>
+                  selected.contains('${target.kind}:${target.contentId}'),
+            )
+            .map((target) => (contentId: target.contentId, kind: target.kind)),
       );
     }
     if (!mounted) return;

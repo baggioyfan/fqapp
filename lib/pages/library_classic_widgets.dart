@@ -109,7 +109,7 @@ class _ClassicLayoutSegments extends StatelessWidget {
         for (final layout in BookshelfLayout.values)
           Tooltip(
             message: layout.menuLabel,
-            excludeFromSemantics: false,
+            excludeFromSemantics: true,
             child: Semantics(
               button: true,
               selected: layout == current,
@@ -154,6 +154,93 @@ class _ClassicLayoutSegments extends StatelessWidget {
   );
 }
 
+/// 手机选择器与宽屏分段控件共用版式状态和持久化入口。
+class _ClassicLayoutPicker extends StatelessWidget {
+  const _ClassicLayoutPicker({
+    required this.current,
+    required this.palette,
+    required this.onChanged,
+  });
+
+  final BookshelfLayout current;
+  final HomePalette palette;
+  final ValueChanged<BookshelfLayout> onChanged;
+
+  static String labelOf(BookshelfLayout layout) => switch (layout) {
+    BookshelfLayout.grid => '宫格',
+    BookshelfLayout.doubleColumn => '双列',
+    BookshelfLayout.list => '列表',
+  };
+
+  @override
+  Widget build(BuildContext context) => PopupMenuButton<BookshelfLayout>(
+    key: const Key('shelf-layout-picker'),
+    tooltip: '切换版式',
+    padding: EdgeInsets.zero,
+    color: palette.surface,
+    shape: RoundedRectangleBorder(
+      borderRadius: BorderRadius.circular(16),
+      side: BorderSide(color: palette.line, width: .6),
+    ),
+    elevation: 4,
+    onSelected: onChanged,
+    itemBuilder: (context) => [
+      for (final layout in BookshelfLayout.values)
+        CheckedPopupMenuItem(
+          key: Key('shelf-layout-${layout.segmentKey}'),
+          value: layout,
+          checked: layout == current,
+          child: Row(
+            children: [
+              Icon(layout.menuIcon, size: 16, color: palette.ink),
+              const SizedBox(width: 10),
+              Text(
+                labelOf(layout),
+                style: TextStyle(fontSize: 14, color: palette.ink),
+              ),
+            ],
+          ),
+        ),
+    ],
+    child: ConstrainedBox(
+      constraints: const BoxConstraints(minHeight: _classicTouchTarget),
+      child: Center(
+        widthFactor: 1,
+        heightFactor: 1,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+          decoration: BoxDecoration(
+            color: palette.soft,
+            borderRadius: BorderRadius.circular(ShelfTokens.radiusChip),
+            border: palette.eink ? Border.all(color: palette.line) : null,
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                current.menuIcon,
+                size: ShelfTokens.iconInline,
+                color: palette.muted,
+              ),
+              const SizedBox(width: 5),
+              Text(
+                labelOf(current),
+                style: TextStyle(
+                  fontSize: ShelfTokens.subtitle,
+                  fontWeight: FontWeight.w500,
+                  color: palette.ink,
+                ),
+              ),
+              const SizedBox(width: 2),
+              Icon(LucideIcons.chevron_down, size: 13, color: palette.muted),
+            ],
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
 /// 经典书架工具栏的分组胶囊：与「今日已读」胶囊同款外形，也是分组入口
 /// （点开就是现有的分类弹层）。选中分组时用强调色描边与文字，长分组名
 /// 只省略不折行，不会把工具栏挤高一行。
@@ -164,12 +251,15 @@ class _ClassicGroupChip extends StatelessWidget {
     required this.active,
     required this.palette,
     required this.onTap,
+    this.showChevron = false,
   });
 
   final String label;
   final bool active;
   final HomePalette palette;
   final VoidCallback onTap;
+
+  final bool showChevron;
 
   @override
   Widget build(BuildContext context) {
@@ -225,6 +315,14 @@ class _ClassicGroupChip extends StatelessWidget {
                         ),
                       ),
                     ),
+                    if (showChevron) ...[
+                      const SizedBox(width: 2),
+                      Icon(
+                        LucideIcons.chevron_down,
+                        size: 13,
+                        color: accent ? HomePalette.accent : palette.muted,
+                      ),
+                    ],
                   ],
                 ),
               ),

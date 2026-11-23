@@ -1,18 +1,19 @@
 import 'dart:async';
 
 import 'package:material_ui/material_ui.dart';
+import 'package:flutter_lucide/flutter_lucide.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../models/home_cell.dart';
 import '../models/search_discovery.dart';
 import '../models/media_item.dart';
 import '../services/api_client.dart';
-import '../services/app_breakpoints.dart';
 import '../services/app_log.dart';
 import '../services/app_style_tokens.dart';
 import '../services/app_theme_style.dart';
 import '../services/book_open_preferences.dart';
 import '../services/chapter_cache_store.dart';
+import '../services/desktop_platform.dart';
 import '../services/frame_stats.dart';
 import '../services/shell_visibility.dart';
 import '../services/home_continue_preferences.dart';
@@ -22,12 +23,18 @@ import '../widgets/home/classic_home_feed_states.dart';
 import '../widgets/home/classic_home_skeleton.dart';
 import '../widgets/home/classic_home_stream_footer.dart';
 import '../widgets/home/home_hero.dart';
+import '../widgets/home/home_archive.dart';
+import '../widgets/home/home_cell_blocks.dart';
 import '../widgets/home/home_cell_renderers.dart';
 import '../widgets/home/home_design.dart';
+import '../widgets/home/home_feed_states.dart';
+import '../widgets/home/home_masthead.dart';
 import '../widgets/home/home_media_card.dart';
 import '../widgets/home/home_reading_row.dart';
 import '../widgets/home/home_shelf.dart';
+import '../widgets/home/home_skeleton.dart';
 import '../widgets/home/home_tab_bar.dart';
+import '../widgets/desktop_shell_scope.dart';
 import '../widgets/tab_swipe_area.dart';
 import 'cached_book_reader.dart';
 import 'category_page.dart';
@@ -279,6 +286,7 @@ class _HomePageState extends ConsumerState<HomePage> {
 
   void _onScroll() {
     if (!mounted || !_visible) return;
+    if (_isUgcTab(ref.read(homeProvider).tabIndex)) return;
     if (!_scroll.hasClients) {
       final state = ref.read(homeProvider);
       if (state.error == null && _visibleItems(state).isEmpty) _maybeLoadMore();
@@ -292,6 +300,7 @@ class _HomePageState extends ConsumerState<HomePage> {
   void _maybeLoadMore() {
     if (!mounted || !_visible || _loadMoreTimer != null) return;
     final state = ref.read(homeProvider);
+    if (_isUgcTab(state.tabIndex)) return;
     if (state.isLoading || state.isLoadMore || !state.hasMore) return;
     _loadMoreTimer = Timer(const Duration(milliseconds: 500), () {
       _loadMoreTimer = null;
@@ -325,6 +334,9 @@ class _HomePageState extends ConsumerState<HomePage> {
   String _kindOf(HomeState state) =>
       ref.read(homeProvider.notifier).identityOf(state.tabIndex).kind;
 
+  bool _isUgcTab(int tabIndex) =>
+      ref.read(homeProvider.notifier).identityOf(tabIndex).kind == 'ugc';
+
   List<MediaItem> _visibleItems(HomeState state) {
     final kind = _kindOf(state);
     return [
@@ -351,7 +363,8 @@ class _HomePageState extends ConsumerState<HomePage> {
   ///
   /// 2026-10-24 用户决定回退服务端 11 项方案——服务端表没有「短剧/漫剧」，
   /// 跨媒介入口只能本地给；点击身份由 `homeProvider` 的 `usesLocalTabs`
-  /// 本地表驱动，与这里的下标一一对应。
+  /// 本地表驱动，与这里的下标一一对应。第 7 格「短篇」不给：`HomeNotifier.tabs`
+  /// 只有 6 项，多出来的那格点下去会落到 `allTabs[6]`（「视频」频道）。
   List<HomeCategory> _categoriesOf(HomeState state) => homeCategories;
 
   @override
@@ -374,28 +387,93 @@ class _HomePageState extends ConsumerState<HomePage> {
         // 窗口再宽只把卡片放大，不会往格子里塞更多小封面。
         child: ConstrainedBox(
           constraints: BoxConstraints(
-            maxWidth: appIsWideLayout(context)
+            maxWidth:
+                isDesktopHost || MediaQuery.sizeOf(context).width >= 840
                 ? double.infinity
-                : appWideBreakpoint,
+                : 840,
           ),
           child: SafeArea(
             bottom: false,
             child: Column(
               children: [
-                HomeHero(
-                  onSearch: _openSearch,
-                  onCategory: _openCategory,
-                  cueLoader: widget.cueLoader,
-                ),
-                ValueListenableBuilder<double>(
-                  valueListenable: _tabProgress,
-                  builder: (context, progress, _) => HomeTabBar(
-                    selectedIndex: state.tabIndex,
-                    onSelect: _selectTab,
-                    categories: categories,
-                    progress: progress,
+                if (isDesktopHost && DesktopShellScope.hasFrameOf(context))
+                  DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: palette.canvas,
+                      border: Border(bottom: BorderSide(color: palette.line)),
+                    ),
+                    child: Padding(
+                      padding: const EdgeInsets.only(right: homeGutter),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: ValueListenableBuilder<double>(
+                              valueListenable: _tabProgress,
+                              builder: (context, progress, _) => HomeTabBar(
+                                selectedIndex: state.tabIndex,
+                                onSelect: _selectTab,
+                                categories: categories,
+                                progress: progress,
+                                showBottomBorder: false,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          OutlinedButton.icon(
+                            key: const Key('home_category_button'),
+                            onPressed: _openCategory,
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: palette.ink,
+                              backgroundColor: palette.surface,
+                              side: BorderSide(color: palette.line),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 12,
+                              ),
+                              minimumSize: const Size(0, 32),
+                              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                            ),
+                            icon: Icon(
+                              LucideIcons.layout_grid,
+                              size: 15,
+                              color: palette.ink,
+                            ),
+                            label: const Text(
+                              '分类',
+                              style: TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  )
+                else ...[
+                  if (AppStyleTokens.of(context).isClassic)
+                    HomeHero(
+                      onSearch: _openSearch,
+                      onCategory: _openCategory,
+                      cueLoader: widget.cueLoader,
+                    )
+                  else
+                    HomeMasthead(
+                      onSearch: _openSearch,
+                      onCategory: _openCategory,
+                    ),
+                  ValueListenableBuilder<double>(
+                    valueListenable: _tabProgress,
+                    builder: (context, progress, _) => HomeTabBar(
+                      selectedIndex: state.tabIndex,
+                      onSelect: _selectTab,
+                      categories: categories,
+                      progress: progress,
+                    ),
                   ),
-                ),
+                ],
                 Expanded(
                   // Headers stay outside both the horizontal transform and
                   // the vertical viewport, including loading/error states.
@@ -470,6 +548,15 @@ class _HomePageState extends ConsumerState<HomePage> {
 
   Widget _buildTabPage(int target, double gridWidth, double textScale) {
     final palette = HomePalette.of(context);
+    final kind = ref.read(homeProvider.notifier).identityOf(target).kind;
+    if (kind == 'ugc') {
+      // fork 不含 UGC 故事流（首页分类表里也没有 ugc），上游那套组件没有
+      // 一并移植过来。真遇到这个分类时给一句可读的空态，而不是白屏。
+      return ColoredBox(
+        color: palette.canvas,
+        child: const Center(child: Text('该栏目暂不可用')),
+      );
+    }
     final saved = _tabStates[target];
     // 只记每个分类「第一次被建出来」的时刻：和 stall 行对齐就能看出
     // 那一下停顿是不是花在建页上。
@@ -497,20 +584,30 @@ class _HomePageState extends ConsumerState<HomePage> {
     );
   }
 
-  Widget _skeleton() => const ClassicHomeSkeleton();
+  Widget _skeleton() => AppStyleTokens.of(context).isClassic
+      ? const ClassicHomeSkeleton()
+      : const HomeSkeleton();
 
   List<Widget> _contentSlivers(HomeState state, double gridWidth) {
+    final classic = AppStyleTokens.of(context).isClassic;
     if (state.error != null &&
         state.items.isEmpty &&
         _cellsOfCurrentTab(state).isEmpty) {
       return [
         SliverToBoxAdapter(
-          child: ClassicHomeFeedError(
-            headline: '故事还在路上',
-            message: '暂时无法加载推荐，稍后再试一次。',
-            detail: state.error!,
-            onRetry: _refresh,
-          ),
+          child: classic
+              ? ClassicHomeFeedError(
+                  headline: '故事还在路上',
+                  message: '暂时无法加载推荐，稍后再试一次。',
+                  detail: state.error!,
+                  onRetry: _refresh,
+                )
+              : HomeFeedError(
+                  headline: '故事还在路上',
+                  message: '暂时无法加载推荐，稍后再试一次。',
+                  detail: state.error!,
+                  onRetry: _refresh,
+                ),
         ),
       ];
     }
@@ -551,19 +648,32 @@ class _HomePageState extends ConsumerState<HomePage> {
       // `alx.xml` points its `SkeletonLayout` at `cmc`, so a cold first load
       // paints the skeleton rather than a spinner.
       if (_hadContent) {
-        return [SliverToBoxAdapter(child: const ClassicHomeFeedLoading())];
+        return [
+          SliverToBoxAdapter(
+            child: classic
+                ? const ClassicHomeFeedLoading()
+                : const HomeFeedLoading(),
+          ),
+        ];
       }
       return [SliverToBoxAdapter(child: _skeleton())];
     }
     return [
       SliverFillRemaining(
         hasScrollBody: false,
-        child: ClassicHomeFeedEmpty(
-          title: '暂无内容',
-          message: '换个分类，或刷新发现新故事',
-          actionLabel: '刷新推荐',
-          onRefresh: _refresh,
-        ),
+        child: classic
+            ? ClassicHomeFeedEmpty(
+                title: '暂无内容',
+                message: '换个分类，或刷新发现新故事',
+                actionLabel: '刷新推荐',
+                onRefresh: _refresh,
+              )
+            : HomeFeedEmpty(
+                title: '暂无内容',
+                message: '换个分类，或刷新发现新故事',
+                actionLabel: '刷新推荐',
+                onRefresh: _refresh,
+              ),
       ),
     ];
   }
@@ -739,12 +849,24 @@ class _HomePageState extends ConsumerState<HomePage> {
     ];
   }
 
-  Widget _gridHeader(HomeState state) =>
-      HomeSectionHeader(title: _gridTitle(state));
+  Widget _gridHeader(HomeState state) => AppStyleTokens.of(context).isClassic
+      ? HomeSectionHeader(title: _gridTitle(state))
+      : HomeSectionLabel(code: _gridCode(state), title: _gridTitle(state));
+
+  /// 分区编号：排行榜占了 01，网格就是 02；没有排行榜时网格自己从 01 起。
+  String _gridCode(HomeState state) {
+    final hasRank = _cellsOfCurrentTab(
+      state,
+    ).any((cell) => cell.showType == kHomeCellRank);
+    return hasRank ? '02 / FOR YOU' : '01 / FOR YOU';
+  }
 
   /// One book grid: cover, title, one meta line, nothing else.
   Widget _gridBody(List<MediaItem> entries, double gridWidth) {
     final cardWidth = homeShelfCardWidth(context, gridWidth);
+    final tokens = AppStyleTokens.of(context);
+    final classic = tokens.isClassic;
+    final radius = classic ? 12.0 : tokens.coverRadius;
     return SliverPadding(
       padding: const EdgeInsets.symmetric(horizontal: homeGutter),
       sliver: SliverGrid(
@@ -760,8 +882,9 @@ class _HomePageState extends ConsumerState<HomePage> {
             child: HomeMediaCard(
               item: item,
               coverWidth: cardWidth,
-              radius: 12,
-              titleSize: 15,
+              radius: radius,
+              titleSize: classic ? 15 : homeCardTitleSize,
+              archiveCode: classic ? null : homeFileCode(item),
               onTap: () => _openItem(item),
             ),
           );
@@ -777,16 +900,34 @@ class _HomePageState extends ConsumerState<HomePage> {
 
   /// 流尾三态：加载中 / 追加失败可重试 / 已到底。
   Widget _footer(HomeState state) {
+    if (AppStyleTokens.of(context).isClassic) {
+      if (state.isLoadMore) {
+        return const SliverToBoxAdapter(
+          child: ClassicHomeStreamFooter.loading(),
+        );
+      }
+      if (state.error != null) {
+        return SliverToBoxAdapter(
+          child: ClassicHomeStreamFooter.retry(onRetry: _retryLoadMore),
+        );
+      }
+      if (!state.hasMore) {
+        return const SliverToBoxAdapter(child: ClassicHomeStreamFooter.done());
+      }
+      return const SliverToBoxAdapter(child: SizedBox.shrink());
+    }
     if (state.isLoadMore) {
-      return const SliverToBoxAdapter(child: ClassicHomeStreamFooter.loading());
+      return SliverToBoxAdapter(
+        child: HomeStreamFooter.loading(onRetry: _retryLoadMore),
+      );
     }
     if (state.error != null) {
       return SliverToBoxAdapter(
-        child: ClassicHomeStreamFooter.retry(onRetry: _retryLoadMore),
+        child: HomeStreamFooter.retry(onRetry: _retryLoadMore),
       );
     }
     if (!state.hasMore) {
-      return const SliverToBoxAdapter(child: ClassicHomeStreamFooter.done());
+      return const SliverToBoxAdapter(child: HomeStreamFooter.done());
     }
     return const SliverToBoxAdapter(child: SizedBox.shrink());
   }

@@ -11,7 +11,6 @@ import '../models/shelf_categories.dart';
 import '../models/shelf_identity.dart';
 import '../models/shelf_view_state.dart';
 import '../models/shuqi_book.dart';
-import '../services/app_breakpoints.dart';
 import '../services/app_log.dart';
 import '../services/app_style_tokens.dart';
 import '../services/book_open_preferences.dart';
@@ -20,6 +19,7 @@ import '../services/chapter_cache_store.dart';
 import '../services/shell_visibility.dart';
 import '../services/classic_shelf_layout.dart';
 import '../services/connectivity_status.dart';
+import '../services/desktop_platform.dart';
 import '../services/imported_book_store.dart';
 import '../services/haptic_preferences.dart';
 import '../services/library_store.dart';
@@ -31,6 +31,7 @@ import '../services/shelf_store.dart';
 import '../services/shelf_view_store.dart';
 import '../services/update_check_gate.dart';
 import '../widgets/bookshelf_card.dart';
+import '../widgets/desktop_shell_scope.dart';
 import '../widgets/home/home_chip.dart';
 import '../widgets/home/home_design.dart';
 import '../widgets/shelf/book_collection_tiles.dart';
@@ -299,6 +300,11 @@ mixin _LibraryPageStateBase on State<LibraryPage>, WidgetsBindingObserver {
   /// 收藏 tab 的类型筛选：null 全部 / video 短剧 / manju 漫剧（官方还有
   /// 「其他视频」，本地没有这种 kind，不放空壳胶囊）。
   String? _collectionFilter;
+
+  /// 书架 tab 的媒介类型筛选:null 全部 / book 小说 / manga 漫画 /
+  /// video 短剧 / manju 漫剧 / audio 听书。书架 tab 收全部条目,
+  /// 「收藏」tab 仍是视频源的独立视图。
+  String? _shelfKindFilter;
   bool _visible = false;
   final Map<String, int> _latestChapterCounts = {};
   final _updateChecks = UpdateCheckGate();
@@ -518,10 +524,9 @@ mixin _LibraryPageStateBase on State<LibraryPage>, WidgetsBindingObserver {
     };
     setState(() {
       final records = ShelfStore.instance.records();
-      _shelf = _shelfEntries([
-        for (final record in records)
-          if (!_isVideoKind(record.item.kind)) record,
-      ], byIdentity);
+      // 书架 tab 收全部条目(小说 / 漫画 / 短剧 / 漫剧 / 听书),媒介区分
+      // 交给 `_shelfKindFilter`;收藏 tab 保留视频源的独立视图。
+      _shelf = _shelfEntries(records, byIdentity);
       _collection = _shelfEntries([
         for (final record in records)
           if (_isVideoKind(record.item.kind)) record,
@@ -569,7 +574,8 @@ mixin _LibraryPageStateBase on State<LibraryPage>, WidgetsBindingObserver {
   int _todayReadMinutes() {
     final now = DateTime.now();
     final key = '${now.year}-${now.month}-${now.day}';
-    // 今日阅读只需要按天表里的那一个 key，不用再逐书取、逐书相加。
+    // 今日阅读只需要按天表里的那一个 key，不用再逐书取、逐书相加
+    // （fork 的 LibraryStore 暴露的是 readTimeDailyTotals 这张按天表）。
     final seconds = LibraryStore.instance.readTimeDailyTotals()[key] ?? 0;
     return seconds ~/ 60;
   }
@@ -603,7 +609,45 @@ class _LibraryPageState extends State<LibraryPage>
   @override
   Widget build(BuildContext context) {
     final classic = AppStyleTokens.of(context).isClassic;
+    final inDesktopFrame =
+        isDesktopHost && DesktopShellScope.hasFrameOf(context);
     final topInset = featurePadding(context).top;
+    final archiveContent = ShelfPerformanceScope(
+      shelf3d: ShelfViewStore.instance.state.shelf3d,
+      child: Column(
+        children: [
+          if (inDesktopFrame)
+            _desktopArchiveHeader(context)
+          else ...[
+            Padding(
+              padding: EdgeInsets.fromLTRB(24, topInset, 24, 0),
+              child: _editing ? _editBar(context) : _tabSegments(context),
+            ),
+            const SizedBox(height: 8),
+          ],
+          Expanded(
+            child: TabSwipeArea(
+              index: _tab,
+              count: _tabTitles.length,
+              onSelect: _selectTab,
+              onProgress: (value) {
+                if (_tabProgress.value != value) {
+                  _tabProgress.value = value;
+                }
+              },
+              // 编辑态里横向拖动留给列表自身（多选/滑动删除的起手）。
+              enabled: !_editing,
+              child: RefreshIndicator(
+                onRefresh: () async {
+                  await _refreshUpdates(force: true);
+                },
+                child: _content(context),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
     return PopScope<Object?>(
       // 编辑态拦下系统返回 / 侧滑：先退出编辑态，而不是把整页 pop 掉。
       // 书架页是 RootShell 保活容器（移动端 Stack+Offstage / 桌面
@@ -615,41 +659,16 @@ class _LibraryPageState extends State<LibraryPage>
       },
       child: classic
           ? _classicPage(context)
+          : inDesktopFrame
+          ? Scaffold(
+              backgroundColor: HomePalette.of(context).canvas,
+              bottomNavigationBar: _editing ? _editBottomBar(context) : null,
+              body: archiveContent,
+            )
           : WenkuPage(
               header: _header(context),
               bottomNavigationBar: _editing ? _editBottomBar(context) : null,
-              child: ShelfPerformanceScope(
-                shelf3d: ShelfViewStore.instance.state.shelf3d,
-                child: Column(
-                  children: [
-                    Padding(
-                      padding: EdgeInsets.fromLTRB(24, topInset, 24, 0),
-                      child: _editing
-                          ? _editBar(context)
-                          : _tabSegments(context),
-                    ),
-                    const SizedBox(height: 8),
-                    Expanded(
-                      child: TabSwipeArea(
-                        index: _tab,
-                        count: _tabTitles.length,
-                        onSelect: _selectTab,
-                        onProgress: (value) {
-                          if (_tabProgress.value != value) {
-                            _tabProgress.value = value;
-                          }
-                        },
-                        // 编辑态里横向拖动留给列表自身（多选/滑动删除的起手）。
-                        enabled: !_editing,
-                        child: RefreshIndicator(
-                          onRefresh: () => _refreshUpdates(force: true),
-                          child: _content(context),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
+              child: archiveContent,
             ),
     );
   }
