@@ -1,4 +1,5 @@
 import 'package:material_ui/material_ui.dart';
+import 'package:flutter/foundation.dart' show defaultTargetPlatform, TargetPlatform;
 import 'package:flutter_lucide/flutter_lucide.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -270,12 +271,15 @@ void main() {
     });
   });
 
-  test('archive styles use the bundled font families', () {
+  test('archive styles use the platform serif and mono families', () {
+    // fork 不打包 Home Serif / Home Mono（pubspec 的 fonts 段是注释掉的），
+    // 用系统已注册的族名：Android 认通用族，其余平台点具体字体。
+    final android = defaultTargetPlatform == TargetPlatform.android;
     final serif = homeSerifStyle(size: 15, color: Colors.white);
-    expect(serif.fontFamily, 'Home Serif');
+    expect(serif.fontFamily, android ? 'serif' : 'Songti SC');
     expect(serif.fontWeight, FontWeight.w700);
     final code = homeCodeStyle(const HomePalette(false));
-    expect(code.fontFamily, 'Home Mono');
+    expect(code.fontFamily, android ? 'monospace' : 'Menlo');
     expect(code.fontWeight, FontWeight.w500);
   });
 

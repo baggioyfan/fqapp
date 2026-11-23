@@ -209,7 +209,12 @@ void main() {
       await _openMenu(tester);
       await tester.tap(find.text('目录'));
       await tester.pumpAndSettle();
-      final directory = find.text('目录');
+      // 底部工具栏那颗「目录」在弹层打开后仍在树里（chrome 层只降不透明度），
+      // 所以按主题取色必须限定在弹层内的那个标题上。
+      final directory = find.descendant(
+        of: find.byType(ReaderSettingsSheetFrame),
+        matching: find.text('目录'),
+      );
       expect(
         Theme.of(tester.element(directory)).colorScheme.brightness,
         Brightness.dark,
@@ -251,11 +256,9 @@ void main() {
     expect(frame.preset, ReaderThemePreset.light);
     expect(find.text('听书方式'), findsOneWidget);
     final sheet = find.byType(ReaderSettingsSheetFrame);
-    for (final icon in [
-      LucideIcons.headphones,
-      LucideIcons.locate_fixed,
-      LucideIcons.mic,
-    ]) {
+    // fork 的这张面板只问引擎（智能朗读 / 系统朗读）：起点由调用方决定，
+    // 没有上游那个「从本页听」的定位项。
+    for (final icon in [LucideIcons.headphones, LucideIcons.mic]) {
       expect(
         find.descendant(of: sheet, matching: find.byIcon(icon)),
         findsOneWidget,

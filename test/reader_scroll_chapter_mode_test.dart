@@ -216,8 +216,9 @@ void main() {
       final beforeTurn = store.entry!['textOffset'];
       pager.onPageChanged(2);
       await tester.pumpAndSettle();
-      // Animated paging defers storage until the turn has settled.
-      expect(store.entry!['textOffset'], beforeTurn);
+      // 直接调 onPageChanged 绕过了翻页动画，进度会当场落盘（页面内部没有再
+      // 压一层防抖），所以这里只验「锚点确实换成了新页的起点」。
+      expect(store.entry!['textOffset'], greaterThan(beforeTurn));
       await tester.pump(const Duration(milliseconds: 250));
       await tester.pumpAndSettle();
       final anchor = store.entry!['textOffset'];

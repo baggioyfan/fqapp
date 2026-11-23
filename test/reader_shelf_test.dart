@@ -123,6 +123,10 @@ void main() {
     expect(ShelfStore.instance.contains('manga', 'comic-shelf'), isTrue);
     expect(find.text('已加入书架'), findsOneWidget);
     expect(tester.widget<ComicChromeButton>(button).tooltip, '已在书架');
+
+    // 漫画页的进度保存是 500ms 防抖（comic_reader_session 的 _saveTimer），
+    // 用例结束前让它落地，否则 fake-async 会以 timersPending 收尾报错。
+    await tester.pump(const Duration(milliseconds: 600));
   });
 }
 

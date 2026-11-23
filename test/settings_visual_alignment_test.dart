@@ -49,7 +49,9 @@ void main() {
     expect(find.byType(ArchiveMasthead), findsOneWidget);
     expect(find.byType(FeatureEntry), findsWidgets);
     expect(find.text('设置'), findsOneWidget);
-    for (final title in ['外观', '主题', '阅读', '听书', '短剧', '数据', '服务']) {
+    // fork 的设置首页是六类：主题模式并进了「外观」（副标题「主题模式、
+    // OLED 纯黑」），没有独立的「主题」入口。
+    for (final title in ['外观', '阅读', '听书', '短剧', '数据', '服务']) {
       await tester.scrollUntilVisible(
         find.text(title).hitTestable(),
         100,
@@ -280,7 +282,8 @@ void main() {
     expect(find.byKey(const ValueKey('backup-export')), findsOneWidget);
     expect(find.byKey(const ValueKey('backup-import')), findsOneWidget);
     expect(find.byKey(const ValueKey('backup-webdav')), findsOneWidget);
-    expect(find.byType(FeatureEntry), findsOneWidget);
+    // 本机数据那张卡里是两张行卡片；独立成卡的入口有两处：WebDAV 与番茄导入。
+    expect(find.byType(FeatureEntry), findsNWidgets(2));
     expect(find.text('导出备份'), findsOneWidget);
     expect(find.text('从备份文件恢复'), findsOneWidget);
     expect(find.text('WebDAV 同步'), findsOneWidget);

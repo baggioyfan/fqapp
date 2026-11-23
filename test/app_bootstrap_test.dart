@@ -11,6 +11,8 @@ import 'package:fqapp/widgets/home/home_skeleton.dart';
 import 'package:hive_ce/hive.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'support/pump_until.dart';
+
 void main() {
   testWidgets('retrying initialization retains existing Hive history', (
     tester,
@@ -60,13 +62,13 @@ void main() {
         ),
       ),
     );
-    // 等真实 Hive I/O 走完,不能用有界推进:骨架只在闸门挂起时在位,
-    // 闸门放行后 pumpAndSettle 自然静止(见 test/support/pump_until.dart)。
-    await tester.pumpAndSettle();
+    // 闸门挂起时在位的是首页骨架，它自带 repeat(reverse: true) 的无限脉动，
+    // pumpAndSettle 永远等不到静止，只能有界推进到目标出现为止。
+    await pumpUntilFound(tester, find.text('无法读取本地数据'), maxPumps: 60);
     expect(find.text('无法读取本地数据'), findsOneWidget);
     expect(history.get('kept'), record);
     await tester.tap(find.text('重试'));
-    await tester.pumpAndSettle();
+    await pumpUntilFound(tester, find.text('ready'), maxPumps: 60);
     expect(find.text('ready'), findsOneWidget);
     expect(attempts, 2);
     expect(history.get('kept'), record);
@@ -213,7 +215,9 @@ void main() {
       expect(find.text('无法读取本地数据'), findsOneWidget);
       expect(tester.takeException(), isNull);
     } finally {
-      await AppLog.instance.resetForTest();
+      // 组件测试里 await 版会永久挂住（见 AppLog.resetForTest 的注释）：
+      // 模拟时钟只在 pump 时清微任务，测试体最后一句之后不再有 pump。
+      AppLog.instance.resetForTestSync();
     }
   });
 }

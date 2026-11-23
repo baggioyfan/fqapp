@@ -17,10 +17,13 @@ const homeCategories = [
   HomeCategory('漫剧'),
   HomeCategory('漫画'),
   HomeCategory('听书'),
-  HomeCategory('短篇'),
 ];
 
-/// 七个媒介分类固定在顶部；保留名称和下划线，不再重复分区的编号层级。
+/// 六个媒介分类固定在顶部；保留名称和下划线，不再重复分区的编号层级。
+///
+/// 不要补「短篇」：`HomeNotifier.tabs` 只有 6 项，第 7 格点下去会落到
+/// `allTabs[6]`（短剧页的「视频」频道），拉到别的分类的流。
+/// `test/home_tab_alignment_test.dart` 守着这条。
 class HomeTabBar extends StatelessWidget {
   static const double sidePadding = 16;
   static const double tabSpacing = 22;

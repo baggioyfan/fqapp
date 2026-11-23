@@ -520,8 +520,10 @@ void main() {
       );
       final feed = container.read(homeProvider);
       final before = loads;
+      // 此时整体还是档案皮肤，网格的分区头是档案那支（经典才用
+      // HomeSectionHeader，见 home_page.dart 的 _gridHeader）。
       expect(
-        find.byType(HomeSectionHeader, skipOffstage: false),
+        find.byType(HomeSectionLabel, skipOffstage: false),
         findsWidgets,
         reason: '邻页现在是真实页面，分区头也应随之出现',
       );

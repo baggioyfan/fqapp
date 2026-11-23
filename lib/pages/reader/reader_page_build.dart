@@ -503,6 +503,12 @@ extension _ReaderPageBuild on _ReaderPageState {
                     ],
                   ),
                 ),
+                // 上下滑调亮度的浮层：手势在翻页模式才有（见 reader_page_content
+                // 的 _BrightnessDragArea），浮层只在翻页模式挂，跟着亮度实时显示。
+                if (_paged)
+                  Positioned.fill(
+                    child: ReaderBrightnessHud(value: _brightnessHud),
+                  ),
                 if (!classic &&
                     !_settingsPreviewActive &&
                     !_progressPreviewActive)
