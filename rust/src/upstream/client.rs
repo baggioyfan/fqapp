@@ -427,6 +427,19 @@ impl UpstreamClient {
 
             let target = self.effective_url(&signed.url);
             let headers = signed.headers;
+            Self::record_envelope(&signed.url);
+            if let Some(trace) = super::playback_trace::current() {
+                log::info!(
+                    "v5 trace request={} purpose={} attempt={} device={} in_flight={} event=send route={} body_bytes={}",
+                    trace.request_id,
+                    trace.purpose,
+                    trace.attempt,
+                    trace.device_tag,
+                    trace.in_flight,
+                    trace.route,
+                    body.len(),
+                );
+            }
             let attempt = super::playback_trace::with_device(&dev.device_id, async {
                 self.http
                     .request_with_limit(
@@ -451,6 +464,7 @@ impl UpstreamClient {
                 }
                 Err(TransportError::TooLarge(m)) => return Err(ClientError::Other(m)),
             };
+            Self::record_exchange(resp.status, resp.body.len());
 
             if resp.status != 200 {
                 let err = if is_auth_fail_status(resp.status) {
@@ -465,6 +479,11 @@ impl UpstreamClient {
                 };
                 last_err = Some(err.clone());
                 if err.is_device_failed() {
+                    // 预取不换身份：换身份是注册级动作，预取只是暖门，
+                    // 为它烧掉一台设备不值得。
+                    if Self::speculative_playback() {
+                        return Err(err);
+                    }
                     if super::budget::remaining().is_some_and(|left| left.is_zero()) {
                         return Err(err);
                     }
@@ -529,6 +548,7 @@ impl UpstreamClient {
 
             let target = self.effective_url(&signed.url);
             let headers = signed.headers;
+            Self::record_envelope(&signed.url);
             let attempt = super::playback_trace::with_device(&dev.device_id, async {
                 self.http
                     .request_with_limit(
@@ -554,6 +574,7 @@ impl UpstreamClient {
                 }
                 Err(TransportError::TooLarge(m)) => return Err(ClientError::Other(m)),
             };
+            Self::record_exchange(resp.status, resp.body.len());
 
             if resp.status != 200 {
                 let err = if is_auth_fail_status(resp.status) {
@@ -568,6 +589,11 @@ impl UpstreamClient {
                 };
                 last_err = Some(err.clone());
                 if err.is_device_failed() {
+                    // 预取不换身份：换身份是注册级动作，预取只是暖门，
+                    // 为它烧掉一台设备不值得。
+                    if Self::speculative_playback() {
+                        return Err(err);
+                    }
                     if super::budget::remaining().is_some_and(|left| left.is_zero()) {
                         return Err(err);
                     }
@@ -599,10 +625,62 @@ impl UpstreamClient {
                 return Ok(device);
             }
         }
+        // 预取要的是「另一台空闲设备」，不是把池子里的第一台再拿出来用一次：
+        // 它不该占用正在被前台请求使用的那台的身份。
+        if Self::speculative_playback() {
+            return self
+                .pool
+                .get_excluding("")
+                .await
+                .map_err(|_| ClientError::Other("no playback device available".to_string()));
+        }
         self.pool
             .get()
             .await
             .map_err(|e| ClientError::Other(format!("get device: {e}")))
+    }
+
+    /// 当前请求是不是预取：预取不换身份、不探冷却门、不注册新设备。
+    fn speculative_playback() -> bool {
+        super::playback_trace::current().is_some_and(|trace| trace.purpose == "prefetch")
+    }
+
+    /// 把本次交换的状态码与正文长度记进 trace，供门级诊断行归因。
+    fn record_exchange(status: u16, body_len: usize) {
+        if let Some(trace) = super::playback_trace::current() {
+            let method = trace.recorded_method();
+            {
+                let mut exchange = trace
+                    .exchange
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner());
+                exchange.http_status = Some(status);
+                exchange.body_len = Some(body_len);
+            }
+            log::info!(
+                "v5 trace request={} attempt={} route={} event=answer method={method} status={status} body_len={body_len}",
+                trace.request_id,
+                trace.attempt,
+                trace.route,
+            );
+        }
+    }
+
+    /// 记录本次请求实际发出去的信封形态（full / legacy）。
+    fn record_envelope(url: &str) {
+        if let Some(trace) = super::playback_trace::current() {
+            let query = url.split_once('?').map_or("", |(_, query)| query);
+            let envelope = if crate::sign::v5::playback_envelope_is_full(query) {
+                "full"
+            } else {
+                "legacy"
+            };
+            trace
+                .exchange
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .envelope = envelope;
+        }
     }
 
     /// One bounded identity rotation for playback recovery.

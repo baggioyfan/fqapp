@@ -463,12 +463,14 @@ Map<String, dynamic> _videoPayload({bool includeH264 = false}) => {
           'main_url': 'https://example.invalid/bytevc2.mp4',
           'codec_type': 'bytevc2',
           'vwidth': 1080,
+          'vheight': 1920,
         },
         if (includeH264)
           'video_2': {
             'main_url': 'https://example.invalid/h264.mp4',
             'codec_type': 'h264',
             'vwidth': 720,
+            'vheight': 1280,
             'spade_a': 'kbwf80+1N+V9nwHQSp431GWvLeBlqizTYJ0o5FOrHuZhqimysg==',
           },
       },
