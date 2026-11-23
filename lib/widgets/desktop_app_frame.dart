@@ -173,6 +173,23 @@ class _DesktopNavPane extends StatelessWidget {
                   builder: (context, inSettings, _) => Column(
                     children: [
                       const SizedBox(height: 6),
+                      // 品牌位：上游的导航栏顶部没有应用名，macOS 上这里就是
+                      // 用户唯一看到名字的地方（首页顶栏已换成搜索行）。
+                      // 收起时只留首字，避免 68px 宽度里被截成省略号。
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 4),
+                        child: Center(
+                          child: Text(
+                            visualExpanded ? '什锦铺' : '什',
+                            key: const Key('desktop-brand'),
+                            style: TextStyle(
+                              fontSize: visualExpanded ? 15 : 16,
+                              fontWeight: FontWeight.w700,
+                              color: palette.ink,
+                            ),
+                          ),
+                        ),
+                      ),
                       Expanded(
                         child: SingleChildScrollView(
                           padding: const EdgeInsets.only(bottom: 8),

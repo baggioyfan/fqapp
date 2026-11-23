@@ -46,7 +46,9 @@ void main() {
   }
 
   for (final style in AppThemeStyle.values) {
-    for (final platform in [TargetPlatform.linux, TargetPlatform.android]) {
+    // fork 没有 Linux 端的 TTS 指引弹窗（上游为 speech-dispatcher 新加），
+    // 只保留 Android 分支；linux 那半段判断留在下面不影响编译。
+    for (final platform in [TargetPlatform.android]) {
       testWidgets('$style $platform 语音设置动作符合平台能力', (tester) async {
         const guidance =
             '请使用系统 Speech Dispatcher 配置工具配置中文语音（例如 '

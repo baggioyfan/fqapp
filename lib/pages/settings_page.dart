@@ -69,12 +69,12 @@ class _SettingsPageState extends State<SettingsPage> {
   @override
   void initState() {
     super.initState();
-    if (isDesktopHost) DesktopShellState.enterSettings();
+    if (isWindowsDesktop) DesktopShellState.enterSettings();
   }
 
   @override
   void dispose() {
-    if (isDesktopHost) DesktopShellState.exitSettings();
+    if (isWindowsDesktop) DesktopShellState.exitSettings();
     super.dispose();
   }
 
@@ -239,7 +239,7 @@ class _SettingsPageState extends State<SettingsPage> {
 
     // Keep the desktop body at one element path while switching themes: its
     // nested Navigator owns the theme picker and must not be recreated mid-tap.
-    if (isDesktopHost) {
+    if (isWindowsDesktop) {
       final palette = HomePalette.of(context);
       return Scaffold(
         backgroundColor: palette.canvas,

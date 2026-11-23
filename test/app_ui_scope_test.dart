@@ -11,6 +11,7 @@ import 'package:fqapp/services/app_theme_style.dart';
 import 'package:fqapp/widgets/app_ui/app_ui_scope.dart';
 
 import 'support/app_ui_host.dart';
+import 'support/app_style_baseline.dart';
 
 void main() {
   setUp(() {
@@ -21,7 +22,7 @@ void main() {
   testWidgets('root, nested navigator and overlays share one live style', (
     tester,
   ) async {
-    final store = AppThemeStyleStore();
+    final store = archiveStyleStore();
     addTearDown(store.dispose);
     final navigatorKey = GlobalKey<NavigatorState>();
     final nestedKey = GlobalKey<NavigatorState>();
@@ -81,7 +82,7 @@ void main() {
   testWidgets('only display readers rebuild; scope ignores animated tokens', (
     tester,
   ) async {
-    final store = AppThemeStyleStore();
+    final store = archiveStyleStore();
     addTearDown(store.dispose);
     final builds = <String, int>{};
 
@@ -123,7 +124,7 @@ void main() {
   testWidgets('discrete style switches before the theme animation settles', (
     tester,
   ) async {
-    final store = AppThemeStyleStore();
+    final store = archiveStyleStore();
     addTearDown(store.dispose);
     await tester.pumpWidget(
       AppUiHost(

@@ -19,6 +19,7 @@ import 'package:fqapp/widgets/settings/settings_widgets.dart';
 import 'package:fqapp/widgets/wenku/wenku_ui.dart';
 
 import 'support/app_ui_host.dart';
+import 'support/app_style_baseline.dart';
 
 void main() {
   setUp(() {
@@ -29,7 +30,7 @@ void main() {
   testWidgets(
     'an open sheet follows the live style, keeps its State and reader paper',
     (tester) async {
-      final store = AppThemeStyleStore();
+      final store = archiveStyleStore();
       addTearDown(store.dispose);
       late BuildContext pageContext;
       var initializations = 0;
@@ -142,7 +143,7 @@ void main() {
   testWidgets('an open menu follows the live style and keeps its trigger', (
     tester,
   ) async {
-    final store = AppThemeStyleStore();
+    final store = archiveStyleStore();
     addTearDown(store.dispose);
     late BuildContext context;
 
@@ -218,7 +219,7 @@ void main() {
   testWidgets('a menu outside tap still cancels in the classic style', (
     tester,
   ) async {
-    final store = AppThemeStyleStore()..value = AppThemeStyle.classic;
+    final store = archiveStyleStore()..value = AppThemeStyle.classic;
     addTearDown(store.dispose);
     late BuildContext context;
 
@@ -263,7 +264,7 @@ void main() {
   testWidgets('classic confirmation is a Material dialog in the same route', (
     tester,
   ) async {
-    final store = AppThemeStyleStore()..value = AppThemeStyle.classic;
+    final store = archiveStyleStore()..value = AppThemeStyle.classic;
     addTearDown(store.dispose);
     late BuildContext context;
 
@@ -334,7 +335,7 @@ void main() {
   testWidgets('switching style keeps an open confirmation and its result', (
     tester,
   ) async {
-    final store = AppThemeStyleStore();
+    final store = archiveStyleStore();
     addTearDown(store.dispose);
     late BuildContext context;
 
@@ -389,7 +390,7 @@ void main() {
   });
 
   testWidgets('AppFeaturePage swaps shell for the live style', (tester) async {
-    final store = AppThemeStyleStore();
+    final store = archiveStyleStore();
     addTearDown(store.dispose);
     late BuildContext context;
 
@@ -445,7 +446,7 @@ void main() {
   testWidgets('a single nested settings route keeps its page in both shells', (
     tester,
   ) async {
-    final store = AppThemeStyleStore();
+    final store = archiveStyleStore();
     addTearDown(store.dispose);
     final nestedKey = GlobalKey<NavigatorState>();
 
@@ -490,7 +491,7 @@ void main() {
   testWidgets('desktop settings keeps its category across a style switch', (
     tester,
   ) async {
-    final store = AppThemeStyleStore();
+    final store = archiveStyleStore();
     addTearDown(store.dispose);
     final categories = [
       SettingsCategory(
@@ -557,7 +558,7 @@ void main() {
 
   testWidgets('SearchRoute uses the archive plane and the classic platform '
       'transition, keeping settings and results', (tester) async {
-    final store = AppThemeStyleStore();
+    final store = archiveStyleStore();
     addTearDown(store.dispose);
     final navigatorKey = GlobalKey<NavigatorState>();
     late BuildContext context;
@@ -625,7 +626,7 @@ void main() {
   testWidgets('AppFeaturePage keeps child State and focus across shells', (
     tester,
   ) async {
-    final store = AppThemeStyleStore();
+    final store = archiveStyleStore();
     addTearDown(store.dispose);
     var inits = 0;
     var disposals = 0;
@@ -690,7 +691,7 @@ void main() {
   testWidgets('SettingsArchivePage keeps child State and focus across shells', (
     tester,
   ) async {
-    final store = AppThemeStyleStore()..value = AppThemeStyle.classic;
+    final store = archiveStyleStore()..value = AppThemeStyle.classic;
     addTearDown(store.dispose);
     var inits = 0;
     var disposals = 0;
@@ -755,7 +756,7 @@ void main() {
   testWidgets(
     'a scrolled open menu keeps its offset and result across shells',
     (tester) async {
-      final store = AppThemeStyleStore();
+      final store = archiveStyleStore();
       addTearDown(store.dispose);
       late BuildContext context;
 
@@ -860,7 +861,7 @@ void main() {
     tester.view.physicalSize = const Size(800, 600);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.reset);
-    final store = AppThemeStyleStore()..value = AppThemeStyle.classic;
+    final store = archiveStyleStore()..value = AppThemeStyle.classic;
     addTearDown(store.dispose);
     late BuildContext context;
 
@@ -945,7 +946,7 @@ void main() {
     );
     tester.view.viewInsets = const FakeViewPadding(bottom: 300);
     addTearDown(tester.view.reset);
-    final store = AppThemeStyleStore()..value = AppThemeStyle.classic;
+    final store = archiveStyleStore()..value = AppThemeStyle.classic;
     addTearDown(store.dispose);
     late BuildContext nestedContext;
 
@@ -998,7 +999,7 @@ void main() {
     tester.view.devicePixelRatio = 1.0;
     tester.view.viewInsets = const FakeViewPadding(bottom: 180);
     addTearDown(tester.view.reset);
-    final store = AppThemeStyleStore()..value = AppThemeStyle.classic;
+    final store = archiveStyleStore()..value = AppThemeStyle.classic;
     addTearDown(store.dispose);
     late BuildContext context;
 
@@ -1054,7 +1055,7 @@ void main() {
     tester.platformDispatcher.textScaleFactorTestValue = 1.8;
     addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
     addTearDown(tester.view.reset);
-    final store = AppThemeStyleStore()..value = AppThemeStyle.classic;
+    final store = archiveStyleStore()..value = AppThemeStyle.classic;
     addTearDown(store.dispose);
     late BuildContext context;
 
@@ -1110,7 +1111,7 @@ void main() {
   testWidgets('the modal scrim follows the live style and preview', (
     tester,
   ) async {
-    final store = AppThemeStyleStore();
+    final store = archiveStyleStore();
     addTearDown(store.dispose);
     final previewing = ValueNotifier<bool>(false);
     addTearDown(previewing.dispose);
@@ -1178,7 +1179,7 @@ void main() {
   });
 
   testWidgets('the confirmation scrim follows the live style', (tester) async {
-    final store = AppThemeStyleStore();
+    final store = archiveStyleStore();
     addTearDown(store.dispose);
     late BuildContext context;
 
@@ -1235,7 +1236,7 @@ void main() {
   testWidgets('classic preview only makes the surface transparent', (
     tester,
   ) async {
-    final store = AppThemeStyleStore()..value = AppThemeStyle.classic;
+    final store = archiveStyleStore()..value = AppThemeStyle.classic;
     addTearDown(store.dispose);
     final previewing = ValueNotifier<bool>(false);
     addTearDown(previewing.dispose);
@@ -1310,7 +1311,7 @@ void main() {
   });
 
   testWidgets('classic preview keeps guarded drag semantics', (tester) async {
-    final store = AppThemeStyleStore()..value = AppThemeStyle.classic;
+    final store = archiveStyleStore()..value = AppThemeStyle.classic;
     addTearDown(store.dispose);
     final previewing = ValueNotifier<bool>(true);
     addTearDown(previewing.dispose);
@@ -1376,7 +1377,7 @@ void main() {
     tester.view.physicalSize = const Size(400, 900);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.reset);
-    final store = AppThemeStyleStore()..value = AppThemeStyle.classic;
+    final store = archiveStyleStore()..value = AppThemeStyle.classic;
     addTearDown(store.dispose);
 
     await tester.pumpWidget(
