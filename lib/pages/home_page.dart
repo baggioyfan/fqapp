@@ -359,11 +359,12 @@ class _HomePageState extends ConsumerState<HomePage> {
     return owner == state.tabIndex ? cells : const [];
   }
 
-  /// 顶栏分类：固定用本地七分类（推荐/小说/短剧/漫剧/漫画/听书/短篇）。
+  /// 顶栏分类：固定用本地六分类（推荐/小说/短剧/漫剧/漫画/听书）。
   ///
   /// 2026-10-24 用户决定回退服务端 11 项方案——服务端表没有「短剧/漫剧」，
   /// 跨媒介入口只能本地给；点击身份由 `homeProvider` 的 `usesLocalTabs`
-  /// 本地表驱动，与这里的下标一一对应。
+  /// 本地表驱动，与这里的下标一一对应。第 7 格「短篇」不给：`HomeNotifier.tabs`
+  /// 只有 6 项，多出来的那格点下去会落到 `allTabs[6]`（「视频」频道）。
   List<HomeCategory> _categoriesOf(HomeState state) => homeCategories;
 
   @override

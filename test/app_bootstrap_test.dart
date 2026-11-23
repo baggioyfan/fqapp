@@ -11,19 +11,26 @@ import 'package:fqapp/widgets/home/home_skeleton.dart';
 import 'package:hive_ce/hive.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-/// 交替「给真实时间」和「pump 一帧」，直到 [text] 出现为止。
+/// 推进到 [text] 出现为止：每次「走过一小段模拟时间」再「给一小段真实时间」。
 ///
-/// 启动闸门用的是真实 Hive I/O（要 wall-clock），而界面重建只在 pump 时发生；
-/// 单靠 pumpAndSettle 会撞上骨架的无限脉动，单靠 pump 又等不到 I/O。
+/// 两样缺一不可：
+/// - `pump(Duration)` 才推进模拟时钟，启动闸门等的那批定时器/预算才不会永远不动
+///   （裸 `pump()` 只重建、不推时钟，闸门会一直卡着）；
+/// - `runAsync` 才给真实的 Hive I/O 一点 wall-clock。
+///
+/// 也不能用 `pumpAndSettle`：闸门挂起时在位的是首页骨架，它自带
+/// `repeat(reverse: true)` 的无限脉动，永远等不到静止，直接撞 10 分钟超时。
 Future<void> _waitForText(WidgetTester tester, String text) async {
   final finder = find.text(text);
-  for (var i = 0; i < 60; i++) {
+  for (var i = 0; i < 80; i++) {
     if (finder.evaluate().isNotEmpty) return;
+    await tester.pump(const Duration(milliseconds: 100));
     await tester.runAsync(
-      () => Future<void>.delayed(const Duration(milliseconds: 25)),
+      () => Future<void>.delayed(const Duration(milliseconds: 10)),
     );
-    await tester.pump();
   }
+  // 走完还没出现就再 pump 一次，交给调用方的 expect 给出可读的失败信息。
+  await tester.pump();
 }
 
 void main() {
@@ -55,7 +62,12 @@ void main() {
     addTearDown(() async {
       await tester.pumpWidget(const SizedBox.shrink());
       await tester.runAsync(() async {
-        await Hive.close();
+        // 用例失败时初始化可能还挂着，Hive 的 in-flight 写入会让 close 永不返回；
+        // 收尾卡死会把一次失败放大成两次 10 分钟超时（同文件后续用例一起红）。
+        await Hive.close().timeout(
+          const Duration(seconds: 10),
+          onTimeout: () => const <void>[],
+        );
         if (directory.absolute.parent.path != tempRoot.path) {
           throw StateError('Temporary directory escaped its parent');
         }
