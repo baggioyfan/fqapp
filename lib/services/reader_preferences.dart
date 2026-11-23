@@ -1,3 +1,5 @@
+import 'dart:ui' show Size;
+
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -5,7 +7,7 @@ import 'reader_tap_zones.dart';
 
 part 'reader_preferences_codec.dart';
 
-enum ReaderThemePreset { light, eyeCare, parchment, dark, eink }
+enum ReaderThemePreset { light, eyeCare, parchment, dark, eink, mistBlue }
 
 enum ReaderTitleAlignment { start, center }
 
@@ -24,6 +26,23 @@ enum ReaderInfoMode { hidden, compact, detailed }
 /// (覆盖), or appears instantly (无). See
 /// .agents/notes/implemented/feature/2026-09-11-reader-paragraph-bubble.md
 enum ReaderPageTurnStyle { cover, slide, curl, none }
+
+/// Column layout for paged reading:
+/// [auto] switches to a two-column spread on tablet/desktop landscape
+/// viewports; [single] forces one column; [dual] uses two columns whenever
+/// the viewport is wide enough to fit two readable columns.
+enum ReaderColumnMode {
+  auto,
+  single,
+  dual;
+
+  int resolveColumns(Size viewport) => switch (this) {
+    ReaderColumnMode.single => 1,
+    ReaderColumnMode.dual => viewport.width >= 420 ? 2 : 1,
+    ReaderColumnMode.auto =>
+      viewport.width >= 840 && viewport.width > viewport.height ? 2 : 1,
+  };
+}
 
 @immutable
 class ReaderPreferences {
@@ -53,6 +72,7 @@ class ReaderPreferences {
   static const _justifyTextKey = 'reader_justify_text';
   static const _pageModeKey = 'reader_page_mode';
   static const _pageTurnStyleKey = 'reader_page_turn_style';
+  static const _columnModeKey = 'reader_column_mode';
   static const _volumeKeyTurnKey = 'reader_volume_key_turn';
   static const _keepScreenOnKey = 'reader_keep_screen_on';
   static const _autoTurnSecondsKey = 'reader_auto_turn_seconds';
@@ -71,6 +91,7 @@ class ReaderPreferences {
   static const _showParagraphBubblesKey = 'reader_show_paragraph_bubbles';
   static const _showVideoButtonKey = 'reader_show_video_button';
   static const _videoChapterSyncKey = 'reader_video_chapter_sync';
+  static const _desktopSidebarOpenKey = 'reader_desktop_sidebar_open';
 
   final double fontSize;
   final int fontWeight;
@@ -96,6 +117,7 @@ class ReaderPreferences {
   final bool justifyText;
   final ReaderPageMode pageMode;
   final ReaderPageTurnStyle pageTurnStyle;
+  final ReaderColumnMode columnMode;
   final bool volumeKeyTurn;
   final bool keepScreenOn;
   final int autoTurnSeconds;
@@ -184,6 +206,7 @@ class ReaderPreferences {
   final bool showParagraphBubbles;
   final bool showVideoButton;
   final bool videoChapterSync;
+  final bool desktopSidebarOpen;
 
   const ReaderPreferences({
     this.fontSize = 18,
@@ -210,6 +233,7 @@ class ReaderPreferences {
     this.justifyText = true,
     this.pageMode = ReaderPageMode.paged,
     this.pageTurnStyle = ReaderPageTurnStyle.slide,
+    this.columnMode = ReaderColumnMode.auto,
     this.volumeKeyTurn = false,
     this.keepScreenOn = false,
     this.autoTurnSeconds = 10,
@@ -228,6 +252,7 @@ class ReaderPreferences {
     this.showParagraphBubbles = true,
     this.showVideoButton = true,
     this.videoChapterSync = true,
+    this.desktopSidebarOpen = true,
   }) : readingInfoMode = showReadingInfo == false
            ? ReaderInfoMode.hidden
            : readingInfoMode;
@@ -258,6 +283,7 @@ class ReaderPreferences {
     bool? justifyText,
     ReaderPageMode? pageMode,
     ReaderPageTurnStyle? pageTurnStyle,
+    ReaderColumnMode? columnMode,
     bool? volumeKeyTurn,
     bool? keepScreenOn,
     int? autoTurnSeconds,
@@ -283,6 +309,7 @@ class ReaderPreferences {
     bool? showParagraphBubbles,
     bool? showVideoButton,
     bool? videoChapterSync,
+    bool? desktopSidebarOpen,
   }) {
     return ReaderPreferences(
       fontSize: fontSize ?? this.fontSize,
@@ -318,6 +345,7 @@ class ReaderPreferences {
       justifyText: justifyText ?? this.justifyText,
       pageMode: pageMode ?? this.pageMode,
       pageTurnStyle: pageTurnStyle ?? this.pageTurnStyle,
+      columnMode: columnMode ?? this.columnMode,
       volumeKeyTurn: volumeKeyTurn ?? this.volumeKeyTurn,
       keepScreenOn: keepScreenOn ?? this.keepScreenOn,
       autoTurnSeconds: autoTurnSeconds ?? this.autoTurnSeconds,
@@ -341,6 +369,7 @@ class ReaderPreferences {
       showParagraphBubbles: showParagraphBubbles ?? this.showParagraphBubbles,
       showVideoButton: showVideoButton ?? this.showVideoButton,
       videoChapterSync: videoChapterSync ?? this.videoChapterSync,
+      desktopSidebarOpen: desktopSidebarOpen ?? this.desktopSidebarOpen,
     ).normalized();
   }
 
@@ -371,7 +400,7 @@ class ReaderPreferences {
       showSystemStatusBar: showSystemStatusBar,
       showSystemNavigationBar: showSystemNavigationBar,
       followSystemBrightness: followSystemBrightness,
-      brightness: brightness.isFinite ? brightness.clamp(0, 1) : 0.5,
+      brightness: brightness.isFinite ? brightness.clamp(0.02, 1) : 0.5,
       fontPath: fontPath,
       fontName: fontPath.isEmpty ? '' : fontName,
       builtinSerifFont: builtinSerifFont,
@@ -379,6 +408,7 @@ class ReaderPreferences {
       justifyText: justifyText,
       pageMode: pageMode,
       pageTurnStyle: pageTurnStyle,
+      columnMode: columnMode,
       volumeKeyTurn: volumeKeyTurn,
       keepScreenOn: keepScreenOn,
       autoTurnSeconds: autoTurnSeconds.isFinite
@@ -399,6 +429,7 @@ class ReaderPreferences {
       showParagraphBubbles: showParagraphBubbles,
       showVideoButton: showVideoButton,
       videoChapterSync: videoChapterSync,
+      desktopSidebarOpen: desktopSidebarOpen,
     );
   }
 
@@ -456,6 +487,10 @@ class ReaderPreferences {
         (value) => value.name == preferences.get(_pageTurnStyleKey),
         orElse: () => ReaderPageTurnStyle.slide,
       ),
+      columnMode: ReaderColumnMode.values.firstWhere(
+        (value) => value.name == preferences.get(_columnModeKey),
+        orElse: () => ReaderColumnMode.auto,
+      ),
       volumeKeyTurn: _boolean(preferences, _volumeKeyTurnKey) ?? false,
       keepScreenOn: _boolean(preferences, _keepScreenOnKey) ?? false,
       autoTurnSeconds: (_number(preferences, _autoTurnSecondsKey) ?? 10)
@@ -490,6 +525,7 @@ class ReaderPreferences {
           _boolean(preferences, _showParagraphBubblesKey) ?? true,
       showVideoButton: _boolean(preferences, _showVideoButtonKey) ?? true,
       videoChapterSync: _boolean(preferences, _videoChapterSyncKey) ?? true,
+      desktopSidebarOpen: _boolean(preferences, _desktopSidebarOpenKey) ?? true,
     ).normalized();
   }
 
@@ -541,6 +577,7 @@ class ReaderPreferences {
       preferences.setBool(_justifyTextKey, value.justifyText),
       preferences.setString(_pageModeKey, value.pageMode.name),
       preferences.setString(_pageTurnStyleKey, value.pageTurnStyle.name),
+      preferences.setString(_columnModeKey, value.columnMode.name),
       preferences.setBool(_volumeKeyTurnKey, value.volumeKeyTurn),
       preferences.setBool(_keepScreenOnKey, value.keepScreenOn),
       preferences.setInt(_autoTurnSecondsKey, value.autoTurnSeconds),
@@ -580,6 +617,7 @@ class ReaderPreferences {
       preferences.setBool(_showParagraphBubblesKey, value.showParagraphBubbles),
       preferences.setBool(_showVideoButtonKey, value.showVideoButton),
       preferences.setBool(_videoChapterSyncKey, value.videoChapterSync),
+      preferences.setBool(_desktopSidebarOpenKey, value.desktopSidebarOpen),
     ]);
   }
 }

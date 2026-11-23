@@ -13,7 +13,8 @@ import 'desktop_platform.dart';
 /// Windows 走同一套 media_kit 实现，必须一起放行，否则 macOS 的视频入口会被
 /// 误判为「暂不支持」。
 ///
-/// Linux **不在**其中：fork 没有 Linux 构建产物，上游也把 Linux 视为尚未接
+/// 注意这里**不能**写成 [isDesktopHost]：那个判定包含 Linux，而 Linux
+/// **不在**其中 —— fork 没有 Linux 构建产物，上游也把 Linux 视为尚未接
 /// 视频播放（见 `8022c8cd` 的用例「D4 Linux must reject playback before
 /// navigation」）。要放开 Linux 得连那批用例一起改。
 bool get supportsVideoPlayback =>

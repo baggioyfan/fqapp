@@ -47,9 +47,18 @@ class AppStyleTokens extends ThemeExtension<AppStyleTokens> {
   /// 会走到它的只有「只 pump 单页、不装 scope」的 widget 测试 —— 那批用例正是
   /// 以档案版式为基线写的（208 个），改成 classic 会把它们整体翻成经典布局。
   /// 动这一行要先迁移测试基线，属 P1b 的完整收敂范围。
-  static AppStyleTokens of(BuildContext context) =>
-      Theme.of(context).extension<AppStyleTokens>() ??
-      const AppStyleTokens.archive();
+  /// 主题里的风格令牌。
+  ///
+  /// fork 只保留经典界面：档案版式已从产品中移除，读到缺失或档案令牌时一律
+  /// 回落到 [AppStyleTokens.classic]，避免任何页面在缺主题扩展的路径上
+  /// （弹层、独立路由、单页测试）掉进档案尺寸与纸张配色。
+  static AppStyleTokens of(BuildContext context) {
+    final tokens = Theme.of(context).extension<AppStyleTokens>();
+    if (tokens == null || !tokens.isClassic) {
+      return const AppStyleTokens.classic();
+    }
+    return tokens;
+  }
 
   final AppThemeStyle style;
   final double panelRadius;

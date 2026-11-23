@@ -13,16 +13,17 @@
 //   `setting_menu.dart` / `glass_controls.dart`.
 // - Upstream items fqapp does not have (force portrait, start page, combined
 //   shelf, language, fonts, dictionaries, lane sync, widgets, frame rate,
-//   low-performance mode, haptics) are intentionally absent, per the product
+//   low-performance mode) are intentionally absent, per the product
 //   boundary: "do not add upstream settings fqapp lacks".
+// - Haptics use fqapp's app-wide preference, shared by both UI styles (#303).
 // - Windows keeps the existing two-pane `DesktopSettingsBody` inside the
 //   archive shell so the desktop settings workflow is unchanged.
 
 import 'dart:async';
 
 import 'package:cupertino_ui/cupertino_ui.dart';
-import 'package:flutter_lucide/flutter_lucide.dart';
 import 'package:material_ui/material_ui.dart';
+import 'package:flutter_lucide/flutter_lucide.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../services/app_theme.dart';
@@ -30,14 +31,18 @@ import '../services/app_theme_style.dart';
 import '../services/app_style_tokens.dart';
 import '../services/audio_preferences.dart';
 import '../services/desktop_platform.dart';
+import '../services/linux_platform.dart' show isLinuxDesktop;
 import '../services/native_player.dart';
 import '../services/player_layout_preferences.dart';
 import '../services/player_preferences.dart';
 import '../services/book_open_preferences.dart';
 import '../services/boss_key_preferences.dart';
 import '../services/drama_mute_preferences.dart';
+import '../services/haptic_preferences.dart';
 import '../services/library_store.dart';
 import '../widgets/desktop_settings_body.dart';
+import '../widgets/desktop_shell_scope.dart';
+import '../widgets/home/home_design.dart';
 import '../widgets/settings/settings_archive_rows.dart';
 import '../widgets/settings/settings_widgets.dart';
 import '../widgets/settings/classic_settings_icons.dart';
@@ -48,22 +53,38 @@ import 'boss_key_settings_page.dart';
 import 'cached_books_page.dart';
 import 'cached_dramas_page.dart';
 import 'library_backup_page.dart';
-import 'reader_preferences_page.dart';
 import 'settings_category_page.dart';
 import 'system_tts_settings_page.dart';
-import 'webdav_sync_page.dart';
 import 'text_replacement_page.dart';
+import 'reader_preferences_page.dart';
 
 /// Settings home: a list of category entries (PiliPlus multi-level
 /// navigation). Each category opens its own archive option page.
-class SettingsPage extends StatelessWidget {
+class SettingsPage extends StatefulWidget {
   const SettingsPage({super.key});
+
+  @override
+  State<SettingsPage> createState() => _SettingsPageState();
+}
+
+class _SettingsPageState extends State<SettingsPage> {
+  @override
+  void initState() {
+    super.initState();
+    if (isDesktopHost) DesktopShellState.enterSettings();
+  }
+
+  @override
+  void dispose() {
+    if (isDesktopHost) DesktopShellState.exitSettings();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     // 开关读的是 ValueNotifier：先把持久化的值读出来，读到后自动重绘。
     unawaited(BookOpenPreferences.instance.load());
-    if (!isBossKeyHost) return _buildContent(context);
+    if (!isMediaDesktop) return _buildContent(context);
     unawaited(BossKeyPreferences.instance.load());
     return ListenableBuilder(
       listenable: Listenable.merge([
@@ -84,17 +105,22 @@ class SettingsPage extends StatelessWidget {
       SettingsCategory(
         icon: SettingsCategoryIcons.appearance,
         title: '外观',
-        subtitle: '主题模式、OLED 纯黑、播放页布局',
+        subtitle: isMediaDesktop
+            ? '主题模式、OLED 纯黑'
+            : HapticPreferences.supported
+            ? '主题模式、振动反馈、播放页布局'
+            : '主题模式、OLED 纯黑、播放页布局',
         // 用 builder 而不是固定 items：切到深色 / 切回浅色后，分类页重建
         // 时会重新判定，OLED 行不必退出重进就能出现或消失。
-        // 播放页布局只在手机端有效（Windows 由 DesktopVideoChrome 承担）。
+        // 播放页布局只在手机端有效（Windows/Linux 由桌面播放器承担）。
         itemsBuilder: (context) => [
           _themeModeItem(),
+          if (HapticPreferences.supported) _hapticsItem(),
           if (isDarkAppearance(
             systemBrightness: MediaQuery.platformBrightnessOf(context),
           ))
             _oledModeItem(),
-          if (!isDesktopHost) _playerLayoutItem(),
+          if (!isMediaDesktop) _playerLayoutItem(),
         ],
       ),
       SettingsCategory(
@@ -130,7 +156,7 @@ class SettingsPage extends StatelessWidget {
         subtitle: '后台播放、通知栏控制与系统朗读',
         items: [
           _backgroundAudioItem(),
-          if (!isDesktopHost) _audioRateEngineItem(),
+          if (!isMediaDesktop) _audioRateEngineItem(),
           SettingsItem(
             icon: CupertinoIcons.mic,
             title: '系统朗读',
@@ -142,17 +168,18 @@ class SettingsPage extends StatelessWidget {
           ),
         ],
       ),
-      SettingsCategory(
-        icon: SettingsCategoryIcons.drama,
-        title: '短剧',
-        subtitle: '播放',
-        items: [
-          _muteWhenColdStartItem(),
-          if (!isDesktopHost) _floatingWindowItem(),
-          if (!isDesktopHost) _videoDecoderItem(),
-        ],
-      ),
-      if (isBossKeyHost)
+      if (!isLinuxDesktop)
+        SettingsCategory(
+          icon: SettingsCategoryIcons.drama,
+          title: '短剧',
+          subtitle: '播放',
+          items: [
+            _muteWhenColdStartItem(),
+            if (!isMediaDesktop) _floatingWindowItem(),
+            if (!isMediaDesktop) _videoDecoderItem(),
+          ],
+        ),
+      if (isMediaDesktop)
         SettingsCategory(
           icon: SettingsCategoryIcons.bossKey,
           title: '老板键',
@@ -164,7 +191,7 @@ class SettingsPage extends StatelessWidget {
       SettingsCategory(
         icon: SettingsCategoryIcons.data,
         title: '数据',
-        subtitle: '备份与恢复、WebDAV 同步、缓存、阅读与播放历史',
+        subtitle: '备份与恢复、缓存与历史',
         items: [
           SettingsItem(
             icon: CupertinoIcons.folder,
@@ -173,15 +200,6 @@ class SettingsPage extends StatelessWidget {
             onTap: (context, _) => Navigator.push(
               context,
               MaterialPageRoute(builder: (_) => const LibraryBackupPage()),
-            ),
-          ),
-          SettingsItem(
-            icon: CupertinoIcons.cloud,
-            title: 'WebDAV 同步',
-            subtitle: '用一个云端目录在两台手机之间对齐收藏和进度',
-            onTap: (context, setState) => Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => const WebdavSyncPage()),
             ),
           ),
           SettingsItem(
@@ -196,7 +214,7 @@ class SettingsPage extends StatelessWidget {
           SettingsItem(
             icon: CupertinoIcons.play_rectangle,
             title: '短剧离线缓存',
-            subtitle: '短剧下载、离线播放和清理缓存',
+            subtitle: isLinuxDesktop ? '管理已下载文件和下载任务' : '短剧下载、离线播放和清理缓存',
             onTap: (context, _) => Navigator.push(
               context,
               MaterialPageRoute(builder: (_) => const CachedDramasPage()),
@@ -221,24 +239,16 @@ class SettingsPage extends StatelessWidget {
       ),
     ];
 
+    // Keep the desktop body at one element path while switching themes: its
+    // nested Navigator owns the theme picker and must not be recreated mid-tap.
     if (isDesktopHost) {
-      // The desktop body keeps its two-pane workflow; the shared header and
-      // background come from the shell.
-      return WenkuPage(
-        header: _header(context),
-        child: Padding(
-          padding: EdgeInsets.only(
-            top:
-                MediaQuery.paddingOf(context).top + FrostedHeader.toolbarHeight,
-          ),
-          child: DesktopSettingsBody(
-            categories: style.isClassic
-                ? [
-                    for (final category in categories)
-                      _classicCategory(category),
-                  ]
-                : categories,
-          ),
+      final palette = HomePalette.of(context);
+      return Scaffold(
+        backgroundColor: palette.canvas,
+        body: DesktopSettingsBody(
+          categories: style.isClassic
+              ? [for (final category in categories) _classicCategory(category)]
+              : categories,
         ),
       );
     }
@@ -264,6 +274,7 @@ class SettingsPage extends StatelessWidget {
                     iconTile: true,
                     title: category.title,
                     subtitle: category.subtitle,
+                    value: category.value,
                     onTap: () => _openCategory(context, category),
                   ),
               ],
@@ -293,9 +304,7 @@ class SettingsPage extends StatelessWidget {
                   // The current theme is a value, not a control: it belongs
                   // next to the chevron, and the chevron has to land in the
                   // same place as every other row's.
-                  trailingText: categories[index].title == '主题'
-                      ? AppThemeStyleStore.instance.value.label
-                      : null,
+                  trailingText: categories[index].value,
                   onTap: () => _openCategory(context, categories[index]),
                 ),
               ],
@@ -311,6 +320,7 @@ class SettingsPage extends StatelessWidget {
         icon: classicSettingsIcon(category.title, category.icon),
         title: category.title,
         subtitle: category.subtitle,
+        value: category.value,
         items: category.items,
         itemsBuilder: category.itemsBuilder,
         pageBuilder: category.pageBuilder,
@@ -424,6 +434,29 @@ class SettingsPage extends StatelessWidget {
       }
     }
   }
+
+  SettingsItem _hapticsItem() => SettingsItem(
+    icon: CupertinoIcons.waveform,
+    title: '振动反馈',
+    rowBuilder: (context) => ValueListenableBuilder<bool>(
+      valueListenable: HapticPreferences.instance,
+      builder: (context, value, _) => SettingsToggleRow(
+        key: const ValueKey('settings-haptics'),
+        icon: CupertinoIcons.waveform,
+        title: '振动反馈',
+        description: '控制按钮、书架与播放手势的振动，不影响系统键盘',
+        value: value,
+        onChanged: (enabled) async {
+          final saved = await HapticPreferences.instance.setEnabled(enabled);
+          if (!saved && context.mounted) {
+            ScaffoldMessenger.of(
+              context,
+            ).showSnackBar(const SnackBar(content: Text('未能完整应用或保存振动设置，请重试')));
+          }
+        },
+      ),
+    ),
+  );
 
   /// OLED 纯黑：画布纯黑省电，卡片 / 弹层保持近黑，靠描边撑住层次。
   /// 只在深色外观下显示（浅色 / 墨水屏没有可省的黑）。

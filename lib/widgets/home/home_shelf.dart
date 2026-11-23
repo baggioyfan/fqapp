@@ -1,5 +1,8 @@
 import 'package:material_ui/material_ui.dart';
 
+import '../../services/app_style_tokens.dart';
+import '../../services/desktop_platform.dart';
+
 import 'home_archive.dart';
 import 'home_design.dart';
 
@@ -27,9 +30,11 @@ const double homeHeaderGap = 12;
 const double homeSectionGap = 20;
 
 /// Bottom clearance above the floating navigation bar: bar 64 + its 8dp
-/// padding + the system inset + 24dp of breathing room.
-double homeBottomClearance(BuildContext context) =>
-    64 + 8 + MediaQuery.paddingOf(context).bottom + 24;
+/// padding + the system inset + 24dp of breathing room (desktop shell omits
+/// the bottom bar).
+double homeBottomClearance(BuildContext context) => isWindowsDesktop
+    ? MediaQuery.paddingOf(context).bottom + 24
+    : 64 + 8 + MediaQuery.paddingOf(context).bottom + 24;
 
 /// 宽屏（≥900dp）上一格卡片的目标宽度：列数由它反推，不再按断点给固定列数。
 ///
@@ -59,7 +64,7 @@ const int homeShelfWideMinColumns = 6;
 int homeShelfColumns(BuildContext context, double width) {
   final scaler = MediaQuery.textScalerOf(context);
   if (scaler.scale(15) > 22 && width < 640) return 2;
-  if (width < (360)) return 2;
+  if (width < (AppStyleTokens.of(context).isClassic ? 360 : 324)) return 2;
   if (width < 640) return 3;
   if (width < 900) return 4;
   // 大字号把目标卡宽一起放大：190dp 里塞 2.4 倍的字会挤成竖条。
@@ -94,10 +99,13 @@ double homeCardExtent(
   double cardWidth,
   TextScaler scaler,
 ) {
+  final classic = AppStyleTokens.of(context).isClassic;
   return cardWidth * 1.4 +
       8 +
-      scaler.scale(15) * 1.35 * 2 +
-      4 +
+      scaler.scale(classic ? 15 : homeCardTitleSize) * 1.35 * 2 +
+      (!classic && AppStyleTokens.of(context).showDecorativeCodes
+          ? 5 + scaler.scale(homeCardCodeSize) * 1.35 + 2
+          : 4) +
       scaler.scale(homeCardMetaSize) * 1.3 +
       2;
 }
@@ -106,6 +114,9 @@ double homeCardExtent(
 ///
 /// 旧版的「橙色竖条 + 罗盘图标 + 20sp 副标题」是三件套装饰，去掉了；层级
 /// 由字号和留白承担。`action` 放在同一行右端（榜单的「更多」）。
+///
+/// `action` 会参与行高；若它的热区高于标题、且下方紧接标签行，调用方
+/// 应将操作区放在「标题 + 标签」旁边的独立列，保持标题下方的间距。
 class HomeSectionHeader extends StatelessWidget {
   final String title;
   final Widget? action;
@@ -120,11 +131,16 @@ class HomeSectionHeader extends StatelessWidget {
     this.action,
     this.gutter = homeGutter,
     this.topPadding = homeSectionGap,
+    this.bottomPadding = homeHeaderGap,
     this.alignActionToTop = false,
   });
 
   /// 与上一段内容的间距。默认 [homeSectionGap]；紧跟分类条的第一段传小值。
   final double topPadding;
+
+  /// 与下一段内容的间距。默认 [homeHeaderGap]；下一段自带上下留白（如
+  /// 榜单标签的 48dp 热区）时传 0，避免两段空白叠加。
+  final double bottomPadding;
 
   /// 操作区需要更大的点击高度时，让标题和操作内容都从顶部对齐。
   final bool alignActionToTop;
@@ -133,7 +149,7 @@ class HomeSectionHeader extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = HomePalette.of(context);
     return Padding(
-      padding: EdgeInsets.fromLTRB(gutter, topPadding, gutter, homeHeaderGap),
+      padding: EdgeInsets.fromLTRB(gutter, topPadding, gutter, bottomPadding),
       child: Row(
         crossAxisAlignment: alignActionToTop
             ? CrossAxisAlignment.start

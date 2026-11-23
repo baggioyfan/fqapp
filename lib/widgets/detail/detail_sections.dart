@@ -41,44 +41,6 @@ class DetailStarRow extends StatelessWidget {
   }
 }
 
-/// Genre tags as rounded chips.
-class DetailTagChips extends StatelessWidget {
-  final List<String> tags;
-  final bool desktop;
-
-  const DetailTagChips({super.key, required this.tags, this.desktop = false});
-
-  @override
-  Widget build(BuildContext context) {
-    final palette = HomePalette.of(context);
-    if (tags.isEmpty) return const SizedBox.shrink();
-    return Wrap(
-      key: const Key('detail_tag_chips'),
-      spacing: 6,
-      runSpacing: 6,
-      children: [
-        for (final tag in tags)
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 2),
-            decoration: BoxDecoration(
-              color: palette.soft,
-              borderRadius: BorderRadius.circular(999),
-              border: palette.eink ? Border.all(color: palette.line) : null,
-            ),
-            child: Text(
-              tag,
-              style: TextStyle(
-                color: palette.muted,
-                fontSize: desktop ? 13 : 11,
-                height: 1.5,
-              ),
-            ),
-          ),
-      ],
-    );
-  }
-}
-
 /// Horizontal cast list for a short drama: avatar, actor name and role.
 ///
 /// Renders nothing when the series has no cast, so the section disappears

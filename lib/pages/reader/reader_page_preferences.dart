@@ -4,6 +4,27 @@ part of '../reader_page.dart';
 extension _ReaderPagePreferences on _ReaderPageState {
   bool get _paged => _preferences.pageMode == ReaderPageMode.paged;
 
+  bool get _ownsDesktopShell =>
+      isDesktopHost &&
+      mounted &&
+      widget.chapters.isNotEmpty &&
+      (_routeCurrent || _ideasSheetOpen || _readerPanelOpen);
+
+  void _setDesktopSidebarOpen(bool open) {
+    if (_preferences.desktopSidebarOpen == open) return;
+    _preferencesDirty = true;
+    _setState(() {
+      _preferences = _preferences.copyWith(desktopSidebarOpen: open);
+    });
+    _syncDesktopShell();
+    if (_preferencesReady) {
+      unawaited(_savePreferences());
+    }
+  }
+
+  void _toggleDesktopSidebar() =>
+      _setDesktopSidebarOpen(!_preferences.desktopSidebarOpen);
+
   /// 阅读器自己的书架条目（issue #103）：详情页传了原 item 就用它，否则按本页
   /// 已有的书籍字段兜底。书架 key 是 `kind:id`，这里固定 'book'——漫画走自己的
   /// 阅读器（kind 'manga'），两者在书架上本就是两条。
@@ -120,6 +141,7 @@ extension _ReaderPagePreferences on _ReaderPageState {
         _dayTheme = preferences.themePreset;
       }
     });
+    _syncDesktopShell();
     if (_controlsVisible) _loadReaderMenuData();
     _syncSystemBars();
     _syncVolumeKeyEnabled();
@@ -374,6 +396,7 @@ extension _ReaderPagePreferences on _ReaderPageState {
       // 刷新间隔改变时清零计数，避免沿用旧阈值导致久不刷新或立刻刷新。
       if (intervalChanged) _einkPageCounter = 0;
     });
+    _syncDesktopShell();
     _syncSystemBars();
     _syncVolumeKeyEnabled();
     unawaited(_device.keepScreenOn(_preferences.keepScreenOn));
@@ -383,6 +406,7 @@ extension _ReaderPagePreferences on _ReaderPageState {
 
   Future<void> _showTextReplacement() async {
     _readerPanelOpen = false;
+    _syncDesktopShell();
     _syncSystemBars();
     await Navigator.push<void>(
       context,
@@ -495,36 +519,10 @@ extension _ReaderPagePreferences on _ReaderPageState {
     unawaited(_savePreferences());
   }
 
-  Future<void> _showDirectory() async {
-    if (AppUiScope.isClassic(context)) return _showClassicBookPanel();
-    _readerPanelOpen = true;
-    _setControlsVisible(false);
-    Set<String> cachedIds = {};
-    try {
-      cachedIds = await _diskCache.cachedChapterIds(widget.bookId);
-    } catch (_) {}
-    if (!mounted) return;
-    final preset = _effectivePreset;
-    final selected = await showModalBottomSheet<int>(
-      context: context,
-      isScrollControlled: true,
-      useSafeArea: true,
-      backgroundColor: Colors.transparent,
-      clipBehavior: Clip.antiAlias,
-      // 与 ReaderSettingsSheetFrame 的顶部圆角一致，只用于裁掉越界内容。
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
-      ),
-      builder: (context) => ReaderDirectorySheet(
-        chapters: widget.chapters,
-        currentIndex: _index,
-        cachedIds: cachedIds,
-        preset: preset,
-      ),
-    );
-    // 墨水屏：目录关闭后刷一次（选了章节时切章本身也会刷一次，不叠加也无妨）。
-    _maybeEinkRefresh();
-    if (selected != null && mounted) await _jumpToChapter(selected);
+  Future<void> _showDirectory() {
+    // fork 只保留经典界面（[AppUiScope.of] 恒为 classic），所以目录一律走
+    // 经典书面板；上游那套玻璃目录挂在档案分支上，不在这里参与编译。
+    return _showClassicBookPanel();
   }
 
   Future<void> _showCache() {

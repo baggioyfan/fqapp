@@ -6,6 +6,7 @@ import '../services/api_client.dart';
 import '../services/desktop_platform.dart';
 import '../services/user_facing_error.dart';
 import '../widgets/category/category_dim_rail.dart';
+import '../widgets/desktop_shell_scope.dart';
 import '../widgets/home/home_design.dart';
 import '../widgets/home/home_feed_states.dart';
 import 'search_page.dart';
@@ -212,7 +213,7 @@ class _CategoryPageState extends State<CategoryPage> {
     });
   }
 
-  void _openSearch({String? query}) {
+  void _openSearch({String? query, String? tag}) {
     final category = switch (_tabValue) {
       3 => SearchCategory.audio,
       5 => SearchCategory.manga,
@@ -222,8 +223,11 @@ class _CategoryPageState extends State<CategoryPage> {
     Navigator.of(context).push(
       SearchRoute.open<void>(
         context,
-        builder: (_) =>
-            SearchPage(initialQuery: query, initialCategory: category),
+        builder: (_) => SearchPage(
+          initialQuery: query,
+          initialTag: tag,
+          initialCategory: category,
+        ),
       ),
     );
   }
@@ -285,7 +289,7 @@ class _CategoryPageState extends State<CategoryPage> {
                           child: _SectionList(
                             state: this,
                             columns: columns,
-                            onSearch: (name) => _openSearch(query: name),
+                            onSearch: (name) => _openSearch(tag: name),
                           ),
                         ),
                       ],
@@ -317,8 +321,16 @@ class _TopBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = HomePalette.of(context);
-    return SizedBox(
+    final inDesktopFrame =
+        isDesktopHost && DesktopShellScope.hasFrameOf(context);
+    return Container(
       height: 48,
+      decoration: isDesktopHost
+          ? BoxDecoration(
+              color: palette.canvas,
+              border: Border(bottom: BorderSide(color: palette.line)),
+            )
+          : null,
       child: Row(
         children: [
           // 桌面壳层顶栏已经有「← 什锦铺」，这里再放一个返回键就是两个
@@ -370,12 +382,13 @@ class _TopBar extends StatelessWidget {
                     },
                   ),
           ),
-          IconButton(
-            key: const Key('category_search'),
-            icon: Icon(LucideIcons.search, size: 20, color: palette.ink),
-            tooltip: '搜索',
-            onPressed: onSearch,
-          ),
+          if (!inDesktopFrame)
+            IconButton(
+              key: const Key('category_search'),
+              icon: Icon(LucideIcons.search, size: 20, color: palette.ink),
+              tooltip: '搜索',
+              onPressed: onSearch,
+            ),
         ],
       ),
     );
