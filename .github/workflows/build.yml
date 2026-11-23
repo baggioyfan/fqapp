@@ -834,14 +834,56 @@ jobs:
       CARGO_NET_OFFLINE: 'true'
     steps:
       - name: Prepare isolated Arch snapshot (never the host)
+        # 下面用了数组与函数：容器 job 的默认 shell 若是 sh 会直接语法错，
+        # 所以显式钉成 bash（Arch 镜像里一定有）。
+        shell: bash
         run: |
           # 钉住某一天的归档：Arch 是滚动发行版，今天的 base 镜像明天装的
           # gcc/glibc 未必能重现同一个包。
-          printf 'Server = https://archive.archlinux.org/repos/2026/11/09/$repo/os/$arch\n' > /etc/pacman.d/mirrorlist
-          pacman -Syyuu --noconfirm
-          pacman -S --needed --noconfirm base-devel git clang cmake ninja pkgconf gtk3 libsecret mpv libepoxy libglvnd libx11 dbus xdg-utils xdg-user-dirs hicolor-icon-theme rust python nodejs ffmpeg patchelf desktop-file-utils zstd unzip xz curl speech-dispatcher libspeechd espeak-ng xdg-desktop-portal
+          #
+          # 但归档站是单机、对 CI 出口经常被限到 1 B/s 级别：2026-11-23 那次
+          # 252 个包在 48 秒内被 pacman 判整体超时
+          # （`Operation too slow. Less than 1 bytes/sec transferred the last
+          # 10 seconds`），事务直接回滚，连包都没开始编。
+          #
+          # 所以这里降级而不是硬失败：先试快照，**整批装完**才算数；中途被判
+          # 超时或超过时间预算就换官方 CDN 重来一次。换源意味着这一版没有钉
+          # 日期 —— `/etc/arch-snapshot` 记下用的是哪个，最终写进产物的
+          # ACCEPTANCE.txt，事后可追溯。
+          snapshot='https://archive.archlinux.org/repos/2026/11/09/$repo/os/$arch'
+          live='https://geo.mirror.pkgbuild.com/$repo/os/$arch'
+          packages=(
+            base-devel git clang cmake ninja pkgconf gtk3 libsecret mpv
+            libepoxy libglvnd libx11 dbus xdg-utils xdg-user-dirs
+            hicolor-icon-theme rust python nodejs ffmpeg patchelf
+            desktop-file-utils zstd unzip xz curl speech-dispatcher
+            libspeechd espeak-ng xdg-desktop-portal
+          )
+
+          install_with() {
+            printf 'Server = %s\n' "$1" > /etc/pacman.d/mirrorlist
+            # 单包超时保留 pacman 默认判定（10 秒内低于 1 B/s 即断），慢到不可用
+            # 的镜像能立刻暴露；整体再加一层墙钟上限，防止「不快不慢」的镜像把
+            # job 拖到 60 分钟超时。timeout 杀掉 pacman 后可能留下数据库锁。
+            rm -f /var/lib/pacman/db.lck
+            timeout 900 pacman -Syyuu --noconfirm &&
+              timeout 600 pacman -S --needed --noconfirm "${packages[@]}"
+          }
+
+          if install_with "$snapshot"; then
+            echo snapshot > /etc/arch-snapshot
+          else
+            echo '::warning::归档站不可用（下载被判超时或超过时间预算），回退到官方 CDN：本次产物未钉 2026-11-09 快照'
+            install_with "$live"
+            echo live > /etc/arch-snapshot
+          fi
+
           useradd -m builder
-          rustc --version | grep -E '^rustc 1\.99\.1 '
+          if [ "$(cat /etc/arch-snapshot)" = snapshot ]; then
+            rustc --version | grep -E '^rustc 1\.99\.1 '
+          else
+            echo "::warning::本次未钉快照，rustc 为 $(rustc --version)"
+          fi
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -878,6 +920,8 @@ jobs:
           pacman -Q > build/validation/linux/arch-packages.txt
           printf '%s\n' 'EXPERIMENTAL: no hardware, schema rollback, clean installation or licensing acceptance; no formal Release.' > build/validation/linux/ACCEPTANCE.txt
           BUILD
+          # 用快照还是官方 CDN 直接影响 gcc/glibc 版本，产物里必须留痕。
+          printf 'arch-mirror: %s\n' "$(cat /etc/arch-snapshot)" >> build/validation/linux/ACCEPTANCE.txt
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
