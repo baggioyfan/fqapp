@@ -45,15 +45,35 @@ jobs:
           find raw -type f -printf '%s\t%p\n' | sort -rn
 
           apk=$(find raw -name '*.apk' | head -1)
-          mac=$(find raw -name 'fqapp-macos*.zip' | head -1)
+          mac=$(find raw -name 'fqapp-macos*.zip' | head -1 || true)
+          # Windows 那层用 fqapp.exe 定位：upload-artifact 的 `path: release`
+          # 不会保留目录名，artifact 的根就是 release 的内容。
+          win_exe=$(find raw -name 'fqapp.exe' | head -1 || true)
+          win=$( [ -n "$win_exe" ] && dirname "$win_exe" || true )
+          lin=$(find raw -name '*.pkg.tar.zst' | head -1 || true)
           info=$(find raw -name 'build-info.txt' | head -1)
-          for f in "$apk" "$mac" "$info"; do
-            [ -n "$f" ] && [ -s "$f" ] || { echo "缺少产物：apk/macos/build-info 之一为空"; exit 1; }
+          # 必需的是 APK 与 build-info；桌面包按这次实际产出的带上。
+          # 存在这个口子是因为 macOS runner 会连续拿不到（2026-11-23 连续 6 次
+          # 排队 15 分钟被判 cancelled），不能因此把已经编好的 APK 一起扣着。
+          for f in "$apk" "$info"; do
+            [ -n "$f" ] && [ -s "$f" ] || { echo "缺少必需产物：apk / build-info"; exit 1; }
           done
 
           cp "$apk"  "dist/fqapp-${TAG}-arm64-v8a.apk"
-          cp "$mac"  "dist/fqapp-${TAG}-macos.zip"
           cp "$info" dist/build-info.txt
+          if [ -n "$mac" ]; then
+            cp "$mac" "dist/fqapp-${TAG}-macos.zip"
+          else
+            echo '::warning::本次运行没有 macOS 产物（runner 未分配到），先发其余资产'
+          fi
+          if [ -n "$win" ]; then
+            # artifact 里是整个 release 目录，打成「解压即用」的包：zip 根就是
+            # fqapp.exe / data / *.dll 那一层。
+            (cd "$win" && zip -qr "$GITHUB_WORKSPACE/dist/fqapp-${TAG}-windows-x64.zip" .)
+          fi
+          if [ -n "$lin" ]; then
+            cp "$lin" "dist/fqapp-${TAG}-linux-x86_64.pkg.tar.zst"
+          fi
 
           ls -l dist
           echo "--- build-info 的 App commit ---"
@@ -72,9 +92,14 @@ jobs:
           # 免得正文里的文件名跟着上一版的 tag 走。
           notes=$(mktemp)
           {
+            # 跨 step 不共享变量，这里按 dist 里实际有什么来判断。
+            if ! ls dist/fqapp-*-macos.zip >/dev/null 2>&1; then
+              printf '> ⚠️ **macOS 包稍后补传**：这次 macOS job 没能拿到 GitHub 的 runner，'
+              printf '其余平台已就绪，包编出来后会上传到本页。\n\n'
+            fi
             cat .github/release-notes.md
             printf '\n## 资产\n\n'
-            for a in dist/fqapp-*.apk dist/fqapp-*.zip dist/build-info.txt; do
+            for a in dist/fqapp-*.apk dist/fqapp-*.zip dist/fqapp-*.zst dist/build-info.txt; do
               [ -f "$a" ] || continue
               printf -- '- `%s` — %s B\n' "$(basename "$a")" "$(wc -c < "$a" | tr -d ' ')"
             done
@@ -85,6 +110,6 @@ jobs:
             --target "$sha" \
             --title "$TAG" \
             --notes-file "$notes" \
-            dist/fqapp-*.apk dist/fqapp-*.zip dist/build-info.txt
+            dist/fqapp-*.apk dist/fqapp-*.zip dist/fqapp-*.zst dist/build-info.txt
           gh release view "$TAG" -R "$GITHUB_REPOSITORY" --json url,assets \
             --jq '"\(.url)", (.assets[] | "  \(.name) \(.size) B")'
