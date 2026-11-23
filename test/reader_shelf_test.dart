@@ -124,9 +124,10 @@ void main() {
     expect(find.text('已加入书架'), findsOneWidget);
     expect(tester.widget<ComicChromeButton>(button).tooltip, '已在书架');
 
-    // 漫画页的进度保存是 500ms 防抖（comic_reader_session 的 _saveTimer），
-    // 用例结束前让它落地，否则 fake-async 会以 timersPending 收尾报错。
-    await tester.pump(const Duration(milliseconds: 600));
+    // 提示走 SnackBar（duration 2s），外加漫画页进度保存的 500ms 防抖；两者
+    // 都是待触发的定时器，用例结束前推进过去，否则 fake-async 以
+    // timersPending 收尾报错。
+    await tester.pump(const Duration(milliseconds: 2500));
   });
 }
 

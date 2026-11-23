@@ -519,10 +519,39 @@ extension _ReaderPagePreferences on _ReaderPageState {
     unawaited(_savePreferences());
   }
 
-  Future<void> _showDirectory() {
-    // fork 只保留经典界面（[AppUiScope.of] 恒为 classic），所以目录一律走
-    // 经典书面板；上游那套玻璃目录挂在档案分支上，不在这里参与编译。
-    return _showClassicBookPanel();
+  Future<void> _showDirectory() async {
+    // 皮肤决定目录的形状：经典一幅书面板，档案走玻璃目录（搜索 + 倒序 +
+    // 木纹行）。这里不能写死经典——[AppUiScope.of] 报的是真实皮肤，档案下
+    // 写死 classic 会让 ReaderDirectorySheet 整支（415 行）变成死代码。
+    if (AppUiScope.isClassic(context)) return _showClassicBookPanel();
+    _readerPanelOpen = true;
+    _setControlsVisible(false);
+    Set<String> cachedIds = {};
+    try {
+      cachedIds = await _diskCache.cachedChapterIds(widget.bookId);
+    } catch (_) {}
+    if (!mounted) return;
+    final preset = _effectivePreset;
+    final selected = await showModalBottomSheet<int>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: Colors.transparent,
+      clipBehavior: Clip.antiAlias,
+      // 与 ReaderSettingsSheetFrame 的顶部圆角一致，只用于裁掉越界内容。
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
+      ),
+      builder: (context) => ReaderDirectorySheet(
+        chapters: widget.chapters,
+        currentIndex: _index,
+        cachedIds: cachedIds,
+        preset: preset,
+      ),
+    );
+    // 墨水屏：目录关闭后刷一次（选了章节时切章本身也会刷一次，不叠加也无妨）。
+    _maybeEinkRefresh();
+    if (selected != null && mounted) await _jumpToChapter(selected);
   }
 
   Future<void> _showCache() {

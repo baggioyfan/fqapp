@@ -8,12 +8,27 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:fqapp/services/app_style_tokens.dart';
 import 'package:fqapp/services/app_theme.dart';
 import 'package:fqapp/widgets/home/classic_home_tab_bar.dart';
+import 'package:fqapp/widgets/home/home_tab_bar.dart' show HomeCategory;
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   // 单项宽 46（选中样式 17 × 两字 + 2×6 padding）。
   const itemWidth = 46.0;
+
+  // 用七格独立表：这里钉的是标签条的滚动几何（自然总宽 402 / 442），需要
+  // 一个稳定的溢出量。产品自己的 homeCategories 是六格（第 7 格点下去会落到
+  // allTabs[6]「视频」，见 home_tab_bar.dart），拿它当基准会让几何断言跟着
+  // 产品分类数变。
+  const geometryCategories = [
+    HomeCategory('推荐'),
+    HomeCategory('小说'),
+    HomeCategory('短剧'),
+    HomeCategory('漫剧'),
+    HomeCategory('漫画'),
+    HomeCategory('听书'),
+    HomeCategory('短篇'),
+  ];
 
   Widget host({
     required int selected,
@@ -31,6 +46,7 @@ void main() {
             child: ClassicHomeTabBar(
               selectedIndex: selected,
               onSelect: onSelect ?? (_) {},
+              categories: geometryCategories,
             ),
           ),
         ),

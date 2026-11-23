@@ -369,6 +369,11 @@ void main() {
 
       await tester.runAsync(() async {
         await tester.tap(find.byKey(const Key('shelf-remove-action')));
+        // 移出要落盘（ShelfStore + 分组清理 + 导入书删除）才弹撤销条，耗时随
+        // 磁盘波动；固定 50ms 在慢机上不够，SnackBar 还没排上就被断言了。
+        for (var i = 0; i < 100 && ShelfStore.instance.records().isNotEmpty; i++) {
+          await Future<void>.delayed(const Duration(milliseconds: 20));
+        }
         await Future<void>.delayed(const Duration(milliseconds: 50));
       });
       // SnackBar 入场只用短 pump 推进：pumpAndSettle 会快进 4s 计时把撤销条冲掉。
@@ -405,6 +410,10 @@ void main() {
       await tester.pumpAndSettle();
       await tester.runAsync(() async {
         await tester.tap(find.byKey(const Key('shelf-remove-action')));
+        // 同上：等真正的落盘完成，撤销条才会排上。
+        for (var i = 0; i < 100 && ShelfStore.instance.records().isNotEmpty; i++) {
+          await Future<void>.delayed(const Duration(milliseconds: 20));
+        }
         await Future<void>.delayed(const Duration(milliseconds: 50));
       });
       await tester.pump();

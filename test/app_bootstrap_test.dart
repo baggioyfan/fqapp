@@ -11,7 +11,20 @@ import 'package:fqapp/widgets/home/home_skeleton.dart';
 import 'package:hive_ce/hive.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import 'support/pump_until.dart';
+/// 交替「给真实时间」和「pump 一帧」，直到 [text] 出现为止。
+///
+/// 启动闸门用的是真实 Hive I/O（要 wall-clock），而界面重建只在 pump 时发生；
+/// 单靠 pumpAndSettle 会撞上骨架的无限脉动，单靠 pump 又等不到 I/O。
+Future<void> _waitForText(WidgetTester tester, String text) async {
+  final finder = find.text(text);
+  for (var i = 0; i < 60; i++) {
+    if (finder.evaluate().isNotEmpty) return;
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 25)),
+    );
+    await tester.pump();
+  }
+}
 
 void main() {
   testWidgets('retrying initialization retains existing Hive history', (
@@ -63,12 +76,14 @@ void main() {
       ),
     );
     // 闸门挂起时在位的是首页骨架，它自带 repeat(reverse: true) 的无限脉动，
-    // pumpAndSettle 永远等不到静止，只能有界推进到目标出现为止。
-    await pumpUntilFound(tester, find.text('无法读取本地数据'), maxPumps: 60);
+    // pumpAndSettle 永远等不到静止；而这次初始化走的是真实 Hive I/O，要的是
+    // wall-clock 而不是帧。所以两头交替：给一小段真实时间让 I/O 跑，再 pump
+    // 一帧让微任务落地并重建界面。
+    await _waitForText(tester, '无法读取本地数据');
     expect(find.text('无法读取本地数据'), findsOneWidget);
     expect(history.get('kept'), record);
     await tester.tap(find.text('重试'));
-    await pumpUntilFound(tester, find.text('ready'), maxPumps: 60);
+    await _waitForText(tester, 'ready');
     expect(find.text('ready'), findsOneWidget);
     expect(attempts, 2);
     expect(history.get('kept'), record);
