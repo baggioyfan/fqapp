@@ -72,17 +72,17 @@ class AppUiScope extends InheritedNotifier<AppThemeStyleStore> {
 
   /// The live discrete style. Never the animated token value.
   ///
-  /// fork 只保留经典界面：档案版式（纸张底色 / 档案编号 / 留白排版）已从
-  /// 产品中移除，所以这里一律报 [AppThemeStyle.classic]。保留 scope 与 store
-  /// 的接线只为兼容旧存档与既有测试 —— 任何页面里的 `isClassic` 分支都会
-  /// 落在经典路径上，不会漏出半套档案 UI。
+  /// fork 只保留经典界面，但收敂点在**取值来源**：产品的
+  /// [AppThemeStyleStore.instance] 钉死 classic，所以这里读到的永远是 classic。
+  /// 这一层仍按 scope 的真实值回报 —— 孤立 widget 测试会自己造 archive store，
+  /// 恒报 classic 会把它们整体翻成经典布局。
   ///
   /// 缺 scope 时仍然走一次 [AppStyleTokens] 回退读取，好让
   /// [debugFallbackReads] 继续度量「有树没接 scope」的情况。
   static AppThemeStyle of(BuildContext context) {
     final scope = maybeOf(context);
-    if (scope == null) _fallbackStyle(context);
-    return AppThemeStyle.classic;
+    if (scope != null) return scope.notifier!.value;
+    return _fallbackStyle(context);
   }
 
   /// Discrete target-style constants for layout branches.
