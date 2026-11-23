@@ -7,10 +7,13 @@ import android.os.Build
 import android.os.Environment
 import android.util.Log
 import androidx.annotation.Keep
+import okhttp3.Dns
 import java.io.EOFException
 import java.io.File
 import java.io.IOException
 import java.io.InputStream
+import java.net.Inet6Address
+import java.net.InetAddress
 import java.net.Proxy
 import java.net.UnknownHostException
 import java.nio.file.NoSuchFileException
@@ -70,6 +73,24 @@ object CryptoNative {
 }
 
 /**
+ * 视频 CDN 的 AAAA 记录在国内多数宽带上被黑洞：TCP SYN 被直接丢弃，不回 RST，
+ * 所以只能等满 `connectTimeout` 才轮到下一条地址。一个域名一次返回 4 条以上
+ * AAAA，等排到 A 记录时 ExoPlayer 的起播窗口（约 30 s）早已用完，界面上就是一直
+ * 转圈、进度条停在 00:00:00。2026-11-23 实测同一集同一地址：走 IPv4 是 0.07 s
+ * 出 206，走 IPv6 逐条 10 s 连不上。
+ *
+ * 这里只调**尝试顺序**：有 A 记录就先试 IPv4，全部失败才回落到 AAAA；不改变任何
+ * 地址的可达性，也不影响只提供 AAAA 的主机。
+ */
+internal fun preferIpv4Addresses(addresses: List<InetAddress>): List<InetAddress> =
+    addresses.sortedBy { it is Inet6Address }
+
+internal val ipv4FirstDns: Dns = object : Dns {
+    override fun lookup(hostname: String): List<InetAddress> =
+        preferIpv4Addresses(Dns.SYSTEM.lookup(hostname))
+}
+
+/**
  * OkHttp-backed HTTP range fetcher invoked from native code. Kept as a
  * top-level object with a single static-style entry point so the JNI layer
  * can resolve it via GetStaticMethodID without holding an instance.
@@ -90,6 +111,8 @@ object HttpBridge {
             .readTimeout(30, TimeUnit.SECONDS)
             .callTimeout(45, TimeUnit.SECONDS)
             .retryOnConnectionFailure(true)
+            // 视频 CDN 的 IPv6 多数情况下是黑洞，见 preferIpv4Addresses。
+            .dns(ipv4FirstDns)
             // Bypass the system/WiFi HTTP proxy and hit the CDN directly. OkHttp
             // defaults to ProxySelector.getDefault(), which picks up a per-network
             // proxy and breaks playback when that proxy is unreachable.
