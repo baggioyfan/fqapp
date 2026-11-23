@@ -83,7 +83,10 @@ class _MinePageState extends State<MinePage> {
     setState(
       () => _stats = ReadingStats.from(
         history: store.historySnapshot(),
-        readTime: store.readTimeSnapshot(),
+        // fork 的 ReadingStats 以「天 + 书」两张表为入参（上游后来改成
+        // readTime/readTimeKinds 两路），这里按本仓库的签名装配。
+        readTimeDays: store.readTimeDailyTotals(),
+        readTimeBooks: store.readTimeBookTotals(),
         readTimeKinds: store.readTimeKindSnapshot(),
       ),
     );

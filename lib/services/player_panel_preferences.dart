@@ -1,3 +1,6 @@
+import 'dart:async';
+
+import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'player_style_config.dart';
@@ -35,6 +38,92 @@ class PlayerPanelPreferences {
   static bool get defaultMute => _defaultMute;
 
   static void setDefaultMute(bool enabled) => _defaultMute = enabled;
+
+  /// 播放器自己的音量档位（0..1），与静音分开记。
+  ///
+  /// 播放器音量是叠在系统音量之上的比例：1.0 就是「跟系统音量一样大」。
+  /// 以前解除静音、换集、新建播放器一律回到 1.0，开了默认静音的用户一点
+  /// 音量就先被拉到系统音量满档，再降到自己选的档位，耳朵受不了。现在
+  /// 用户选过的档位单独记住并落盘：解除静音和新播放器都回到这个档位。
+  /// 没选过时，有声起播仍是 1.0，不改变从未调过音量的用户的行为；但从静音
+  /// 解除时用 [firstUnmuteLevel]，不让第一次解除静音就是系统满音量。
+  static const volumeLevelKey = 'player_volume_level';
+
+  /// 从未选过档位时，解除静音落到的音量。
+  static const firstUnmuteLevel = .5;
+
+  /// 低于它的档位不当作「要记住的音量」：拖到 0 的途中会经过极小值，
+  /// 记住它会让下次解除静音几乎没声音。
+  static const _minRememberedLevel = .05;
+
+  static double _volumeLevel = 1;
+  static bool _levelChosen = false;
+  static Timer? _saveVolumeTimer;
+
+  /// 解除静音时应恢复的音量（不含静音态）。
+  static double get volumeLevel => _volumeLevel;
+
+  /// 新播放器或换集时应下发的音量：静音为 0，否则是记住的档位。
+  static double get playbackVolume => _defaultMute ? 0 : _volumeLevel;
+
+  /// 启动时读入内存：起播路径直接读 [volumeLevel]，不在那里 await 读盘。
+  static Future<void> loadVolumeLevel() async {
+    try {
+      final preferences = await SharedPreferences.getInstance();
+      final saved = preferences.getDouble(volumeLevelKey);
+      if (saved != null && saved.isFinite && saved >= _minRememberedLevel) {
+        _volumeLevel = saved.clamp(_minRememberedLevel, 1.0).toDouble();
+        _levelChosen = true;
+      }
+    } catch (_) {
+      // 读不到就保持 1.0：音量只是表现层，不能拖住启动。
+    }
+  }
+
+  /// 用户在音量条/快捷键上选了 [value]：0 表示静音（保留原档位，方便恢复），
+  /// 其余值解除静音并记成新档位。拖动时会连续调用，落盘做了合并。
+  static void selectVolume(double value) {
+    final level = value.isFinite ? value.clamp(0.0, 1.0).toDouble() : 0.0;
+    if (level == 0) {
+      _defaultMute = true;
+      return;
+    }
+    _defaultMute = false;
+    if (level < _minRememberedLevel) return;
+    _remember(level);
+  }
+
+  /// 解除静音（喇叭图标、静音药丸、关闭「默认静音」）时应恢复的音量。
+  ///
+  /// 选过档位就回到那一档；从未选过时用 [firstUnmuteLevel] 并把它记成
+  /// 当前档位，之后换集、新播放器都沿用它，不会又回到系统满音量。
+  static double takeUnmuteLevel() {
+    if (!_levelChosen) _remember(firstUnmuteLevel);
+    return _volumeLevel;
+  }
+
+  static void _remember(double level) {
+    _volumeLevel = level;
+    _levelChosen = true;
+    _saveVolumeTimer?.cancel();
+    _saveVolumeTimer = Timer(const Duration(milliseconds: 400), () async {
+      _saveVolumeTimer = null;
+      try {
+        final preferences = await SharedPreferences.getInstance();
+        await preferences.setDouble(volumeLevelKey, _volumeLevel);
+      } catch (_) {
+        // 落盘失败只影响下次启动，本次会话内存值照常生效。
+      }
+    });
+  }
+
+  @visibleForTesting
+  static void resetVolumeForTesting() {
+    _saveVolumeTimer?.cancel();
+    _saveVolumeTimer = null;
+    _volumeLevel = 1;
+    _levelChosen = false;
+  }
 
   /// 官方读取（`FillScreenDataManager.a()`）：
   ///

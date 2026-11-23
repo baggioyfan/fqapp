@@ -15,18 +15,23 @@ import '../home/home_sheet.dart';
 
 typedef ClassicMineOpenEntry = void Function(Map<String, dynamic> entry);
 
-/// 读得最多：按时长排的前 5 本，超过 5 本时右上角「全部」打开完整列表。
-/// 取代旧统计页的 最近阅读 / 最近封面 / 阅读排行 三块。
+/// 读得最多：按时长排列的条目，超过 `previewCount` 条时右上角「全部」打开
+/// 完整列表。取代旧统计页的 最近阅读 / 最近封面 / 阅读排行 三块。
 class ClassicMineTopBooks extends StatelessWidget {
-  static const previewCount = 5;
+  /// 默认预览行数。
+  static const defaultPreviewCount = 5;
 
   final List<ReadingRankItem> rank;
   final ClassicMineOpenEntry onOpen;
+
+  /// 预览行数;超过本值时才出现「全部」入口。
+  final int previewCount;
 
   const ClassicMineTopBooks({
     super.key,
     required this.rank,
     required this.onOpen,
+    this.previewCount = defaultPreviewCount,
   });
 
   @override

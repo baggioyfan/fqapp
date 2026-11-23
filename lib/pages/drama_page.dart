@@ -5445,10 +5445,15 @@ class _LocalListState extends State<_LocalList> {
       await store.removeKeys(keys);
     } else {
       // 只删选中的记录：按 kind+contentId 精确匹配，其它记录一律不动。
+      // fork 的 `removeHistoryEntries` 只认 (kind, contentId) 两个字段（见其
+      // 注释），所以把上游 _targets 里的 source 在这里映射掉，不改库的语义。
       removed = await LibraryStore.instance.removeHistoryEntries(
-        _targets.where(
-          (target) => selected.contains('${target.kind}:${target.contentId}'),
-        ),
+        _targets
+            .where(
+              (target) =>
+                  selected.contains('${target.kind}:${target.contentId}'),
+            )
+            .map((target) => (contentId: target.contentId, kind: target.kind)),
       );
     }
     if (!mounted) return;

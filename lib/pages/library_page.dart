@@ -574,10 +574,9 @@ mixin _LibraryPageStateBase on State<LibraryPage>, WidgetsBindingObserver {
   int _todayReadMinutes() {
     final now = DateTime.now();
     final key = '${now.year}-${now.month}-${now.day}';
-    var seconds = 0.0;
-    for (final days in LibraryStore.instance.readTimeSnapshot().values) {
-      seconds += days[key] ?? 0;
-    }
+    // 今日阅读只需要按天表里的那一个 key，不用再逐书取、逐书相加
+    // （fork 的 LibraryStore 暴露的是 readTimeDailyTotals 这张按天表）。
+    final seconds = LibraryStore.instance.readTimeDailyTotals()[key] ?? 0;
     return seconds ~/ 60;
   }
 

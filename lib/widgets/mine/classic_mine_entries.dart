@@ -11,9 +11,105 @@ import '../home/home_design.dart';
 import '../home/home_shelf.dart';
 import '../home/home_sheet.dart';
 
-/// 我的 页底部的入口列表：离线缓存 / 备份与导入 / 关于。应用设置在标题栏齿轮。
+/// 手机「我的」的两个主要工具入口。
+///
+/// 复用桌面入口相同的路由与缓存分流（小说 / 短剧两套存储仍先弹层选择）。
+class ClassicMinePrimaryTools extends StatelessWidget {
+  const ClassicMinePrimaryTools({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = HomePalette.of(context);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(
+        homeGutter,
+        homeSectionGap,
+        homeGutter,
+        0,
+      ),
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          border: Border.all(color: palette.line, width: 0.8),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Row(
+          children: [
+            Expanded(
+              child: _PrimaryTool(
+                icon: LucideIcons.hard_drive_download,
+                label: '离线缓存',
+                onTap: () => _showCacheChoices(context),
+              ),
+            ),
+            Container(width: 0.8, height: 24, color: palette.line),
+            Expanded(
+              child: _PrimaryTool(
+                icon: LucideIcons.archive_restore,
+                label: '备份与导入',
+                onTap: () => _push(context, const LibraryBackupPage()),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// 半格工具：最小 56dp 触控高度，文案在格内折行以免横向溢出。
+class _PrimaryTool extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+
+  const _PrimaryTool({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = HomePalette.of(context);
+    return HomePressable(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(12),
+      semanticLabel: label,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(minHeight: 56),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(icon, size: 18, color: palette.ink),
+              const SizedBox(width: 8),
+              Flexible(
+                child: Text(
+                  label,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 14,
+                    height: 1.3,
+                    color: palette.ink,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// 我的 页底部的入口列表。应用设置在标题栏齿轮。
+///
+/// [showTools] 为 false 时只留「关于」，供手机把两个工具提到摘要下方。
 class ClassicMineEntries extends StatelessWidget {
-  const ClassicMineEntries({super.key});
+  final bool showTools;
+
+  const ClassicMineEntries({super.key, this.showTools = true});
 
   @override
   Widget build(BuildContext context) {
@@ -23,16 +119,18 @@ class ClassicMineEntries extends StatelessWidget {
       child: Column(
         children: [
           Divider(height: 1, thickness: 0.6, color: palette.line),
-          ClassicMineEntryRow(
-            icon: LucideIcons.hard_drive_download,
-            label: '离线缓存',
-            onTap: () => _showCacheChoices(context),
-          ),
-          ClassicMineEntryRow(
-            icon: LucideIcons.archive_restore,
-            label: '备份与导入',
-            onTap: () => _push(context, const LibraryBackupPage()),
-          ),
+          if (showTools) ...[
+            ClassicMineEntryRow(
+              icon: LucideIcons.hard_drive_download,
+              label: '离线缓存',
+              onTap: () => _showCacheChoices(context),
+            ),
+            ClassicMineEntryRow(
+              icon: LucideIcons.archive_restore,
+              label: '备份与导入',
+              onTap: () => _push(context, const LibraryBackupPage()),
+            ),
+          ],
           ClassicMineEntryRow(
             icon: LucideIcons.info,
             label: '关于',

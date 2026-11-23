@@ -57,6 +57,7 @@ import '../widgets/comment_emoji.dart';
 import '../widgets/comment_images.dart';
 import '../widgets/home/home_design.dart';
 import '../widgets/home/home_sheet.dart';
+import '../services/webdav_auto_sync.dart';
 import 'detail_page.dart';
 import 'reader_page.dart';
 import 'system_tts_settings_page.dart';
@@ -1199,7 +1200,6 @@ class _AudioPageState extends State<AudioPage> {
               c._index,
               restoreHistory: true,
               toneId: c._toneId,
-              refreshSource: true,
             ),
             style: FilledButton.styleFrom(backgroundColor: HomePalette.accent),
             icon: const Icon(LucideIcons.refresh_cw, size: 16),

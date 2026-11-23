@@ -14,6 +14,7 @@ import '../services/api_client.dart';
 import '../services/app_theme_style.dart';
 import '../services/backend_transport.dart';
 import '../services/desktop_platform.dart';
+import '../services/search_filters.dart';
 import '../services/search_history_store.dart';
 import '../services/user_facing_error.dart';
 import '../widgets/app_ui/app_ui_scope.dart';
