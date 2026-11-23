@@ -851,7 +851,15 @@ jobs:
           # 日期 —— `/etc/arch-snapshot` 记下用的是哪个，最终写进产物的
           # ACCEPTANCE.txt，事后可追溯。
           snapshot='https://archive.archlinux.org/repos/2026/11/09/$repo/os/$arch'
-          live='https://geo.mirror.pkgbuild.com/$repo/os/$arch'
+          # 回退用的滚动源。geo CDN 会按 GeoDNS 指到某个后端节点，节点没同步
+          # 完时 `extra.db` 直接 404（2026-11-23 实测），单点不可靠，所以列多个
+          # 官方镜像 —— pacman 会自己按顺序往下试。
+          live_mirrors=(
+            'https://geo.mirror.pkgbuild.com/$repo/os/$arch'
+            'https://mirror.rackspace.com/archlinux/$repo/os/$arch'
+            'https://mirrors.kernel.org/archlinux/$repo/os/$arch'
+            'https://mirror.leaseweb.net/archlinux/$repo/os/$arch'
+          )
           packages=(
             base-devel git clang cmake ninja pkgconf gtk3 libsecret mpv
             libepoxy libglvnd libx11 dbus xdg-utils xdg-user-dirs
@@ -861,20 +869,23 @@ jobs:
           )
 
           install_with() {
-            printf 'Server = %s\n' "$1" > /etc/pacman.d/mirrorlist
-            # 单包超时保留 pacman 默认判定（10 秒内低于 1 B/s 即断），慢到不可用
-            # 的镜像能立刻暴露；整体再加一层墙钟上限，防止「不快不慢」的镜像把
-            # job 拖到 60 分钟超时。timeout 杀掉 pacman 后可能留下数据库锁。
+            local sync_budget="$1" pkg_budget="$2"
+            shift 2
             rm -f /var/lib/pacman/db.lck
-            timeout 900 pacman -Syyuu --noconfirm &&
-              timeout 600 pacman -S --needed --noconfirm "${packages[@]}"
+            printf 'Server = %s\n' "$@" > /etc/pacman.d/mirrorlist
+            # 单包超时保留 pacman 默认判定（10 秒内低于 1 B/s 即断），慢到不可用
+            # 的镜像能立刻暴露；整体再加一层墙钟上限。预算要留够「回退一次」的
+            # 余量：job 总共 60 分钟，两次安装 + 编译必须塞得进去，所以快照只给
+            # 12 分钟 —— 12 分钟装不完说明它慢到不值得等，直接换镜像更划算。
+            timeout "$sync_budget" pacman -Syyuu --noconfirm &&
+              timeout "$pkg_budget" pacman -S --needed --noconfirm "${packages[@]}"
           }
 
-          if install_with "$snapshot"; then
+          if install_with 420 300 "$snapshot"; then
             echo snapshot > /etc/arch-snapshot
           else
-            echo '::warning::归档站不可用（下载被判超时或超过时间预算），回退到官方 CDN：本次产物未钉 2026-11-09 快照'
-            install_with "$live"
+            echo '::warning::归档站不可用（下载被判超时或超过时间预算），回退到滚动镜像：本次产物未钉 2026-11-09 快照'
+            install_with 600 480 "${live_mirrors[@]}"
             echo live > /etc/arch-snapshot
           fi
 
