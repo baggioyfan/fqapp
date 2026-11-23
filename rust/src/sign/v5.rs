@@ -838,7 +838,9 @@ mod tests {
         let ticket = query.find("&_rticket=").expect("ticket");
         assert!(device_id < ac && ac < pad && pad < ticket);
         assert!(!playback_envelope_is_full(&query.replace("&dpi=480", "")));
-        assert!(!playback_envelope_is_full("aid=8662&_rticket=1700000000000"));
+        assert!(!playback_envelope_is_full(
+            "aid=8662&_rticket=1700000000000"
+        ));
     }
 
     #[test]

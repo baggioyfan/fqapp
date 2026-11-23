@@ -483,7 +483,8 @@ fn handle_video<'a>(ctx: &'a Ctx, params: &'a Params) -> BoxFuture<'a, ApiResult
             STREAM_TRACE_SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
         // 取流请求的用途：前台/预取决定会不会主动探冷却中的门、会不会换身份。
         // Dart 侧没传就是 `other`，按前台处理。
-        let purpose = crate::upstream::playback_trace::purpose(&params.get_str("_playback_purpose"));
+        let purpose =
+            crate::upstream::playback_trace::purpose(&params.get_str("_playback_purpose"));
         // 取址现在只有 v5 一门（见 `STREAM_VIDEO_SOURCES`）。清晰度列表仍然要
         // 合并模型的 `fallback_api`：顶档只出现在那份列表里，且同一集在不同接口
         // 下的编码分布并不相同（实测 2026-10-12，shortplay 各档 h265、phoenix
@@ -1311,7 +1312,11 @@ const CODEC_RETRY_BUDGET: Duration = Duration::from_millis(2_500);
 const ROTATION_MIN_BUDGET: Duration = Duration::from_millis(1_500);
 
 /// 带 deadline 的身份轮换：返回新身份，超时或失败都算没换到。
-async fn rotate_playback_identity(ctx: &Ctx, deadline: Instant, pin: Option<&str>) -> Option<String> {
+async fn rotate_playback_identity(
+    ctx: &Ctx,
+    deadline: Instant,
+    pin: Option<&str>,
+) -> Option<String> {
     match tokio::time::timeout_at(deadline, ctx.up.rotate_playback_identity(pin)).await {
         Ok(Ok(device)) => Some(device.device_id),
         Ok(Err(_)) | Err(_) => None,
@@ -1407,7 +1412,8 @@ async fn playback_post(
 ) -> PlaybackAttempt {
     let up = Upstream::new(ctx.up.clone());
     let pin_device = pin.unwrap_or("");
-    match tokio::time::timeout_at(deadline, up.v5_playback_with_device(base, body, pin_device)).await
+    match tokio::time::timeout_at(deadline, up.v5_playback_with_device(base, body, pin_device))
+        .await
     {
         Err(_) => PlaybackAttempt {
             outcome: DoorOutcome::Deadline,
@@ -1473,8 +1479,11 @@ async fn attempt_playback_route_inner(
         Door::VideoTab => {
             let base = format!("{}{}", route.host(), VIDEO_TAB_PLAYER_PATH);
             let extra = video_tab_query(video_id);
-            match tokio::time::timeout_at(deadline, up.v5_get_with_device(&base, &extra, pin_device))
-                .await
+            match tokio::time::timeout_at(
+                deadline,
+                up.v5_get_with_device(&base, &extra, pin_device),
+            )
+            .await
             {
                 Err(_) => PlaybackAttempt {
                     outcome: DoorOutcome::Deadline,
@@ -1793,7 +1802,8 @@ async fn fetch_resolved_playback_model(
                 resolved,
             };
             if matches!(answer.resolved, VideoSourceResolution::Found(_, _))
-                || (retry_deadline.is_none() && legacy_raw_response_has_playable_url(&answer.parsed))
+                || (retry_deadline.is_none()
+                    && legacy_raw_response_has_playable_url(&answer.parsed))
             {
                 let answered = answer.model.route;
                 playback_routes::with_state(|state| {
@@ -1990,9 +2000,10 @@ async fn fetch_v5_video_model(
                     crate::upstream::playback_routes::with_state(|state| {
                         state.note_round(recovery.all_empty);
                     });
-                    let (empty_rounds, rotations) = crate::upstream::playback_routes::with_state(
-                        |state| (state.empty_rounds(), state.rotations()),
-                    );
+                    let (empty_rounds, rotations) =
+                        crate::upstream::playback_routes::with_state(|state| {
+                            (state.empty_rounds(), state.rotations())
+                        });
                     log::warn!(
                         "v5 trace event=final result=empty attempts={} empty_rounds={empty_rounds} rotations={rotations}",
                         recovery.attempts,
@@ -2000,7 +2011,11 @@ async fn fetch_v5_video_model(
                     return Err(error);
                 }
                 recovery.rotated = true;
-                match ctx.up.rotate_playback_identity(recovery.pin.as_deref()).await {
+                match ctx
+                    .up
+                    .rotate_playback_identity(recovery.pin.as_deref())
+                    .await
+                {
                     Ok(device) => {
                         log::info!("v5 trace event=rotate result=ok");
                         crate::upstream::playback_routes::with_state(|state| {
