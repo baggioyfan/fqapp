@@ -17,7 +17,6 @@ import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:smtc_windows/smtc_windows.dart';
-import 'package:wakelock_plus/wakelock_plus.dart';
 import 'package:window_manager/window_manager.dart';
 
 import '../widgets/desktop_login.dart';
@@ -729,16 +728,6 @@ class DesktopPlatform with WindowListener {
         'setKeepScreenOn',
         {'on': _readerAwake || _playerAwake},
       );
-      return;
-    }
-    if (isIOSPlatform) {
-      // iOS 只有一个进程级亮屏开关,reader/player 两份投票已经在 _setAwake
-      // 里合成为一个值:某一方撤回自己的票,不能让另一方的常亮跟着一起没。
-      if (_readerAwake || _playerAwake) {
-        await WakelockPlus.enable();
-      } else {
-        await WakelockPlus.disable();
-      }
       return;
     }
     final call = DynamicLibrary.open('kernel32.dll')

@@ -1,5 +1,4 @@
 import '../services/desktop_platform.dart';
-import '../services/linux_platform.dart';
 import '../widgets/desktop_chapter_sidebar.dart';
 import 'dart:async';
 import 'dart:io';
@@ -14,7 +13,6 @@ import '../models/book_detail.dart';
 import '../models/chapter_media.dart';
 import '../models/media_item.dart';
 import '../services/api_client.dart';
-import '../services/app_log.dart';
 import '../services/app_theme.dart';
 import '../services/audio_download_store.dart';
 import '../services/audio_history.dart';

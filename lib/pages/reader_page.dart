@@ -99,9 +99,6 @@ import '../widgets/wenku/wenku_ui.dart';
 // 并在阅读页里接管整窗尺寸。阅读页是独立路由，import 必须挂在主文件上
 // （各 reader_page_*.dart 都是 part，不能自带 import）。
 import '../widgets/desktop_shell_scope.dart';
-import '../widgets/wenku/src/performance_preferences.dart';
-import '../widgets/wenku/wenku_glass.dart';
-import '../widgets/wenku/wenku_overlay.dart';
 import 'audio_page.dart';
 import 'text_replacement_page.dart';
 import 'detail_page.dart';
