@@ -46,38 +46,38 @@ jobs:
 
           apk=$(find raw -name '*.apk' | head -1)
           mac=$(find raw -name 'fqapp-macos*.zip' | head -1 || true)
-          # Windows 那层用 fqapp.exe 定位：upload-artifact 的 `path: release`
-          # 不会保留目录名，artifact 的根就是 release 的内容。
-          win_exe=$(find raw -name 'fqapp.exe' | head -1 || true)
-          win=$( [ -n "$win_exe" ] && dirname "$win_exe" || true )
+          # Windows job 上传的是一个成品 zip（`fqapp-windows-x64-preview.zip`），
+          # 不是目录，所以直接当资产用，不再重新打包。
+          win=$(find raw -name '*windows*.zip' | head -1 || true)
           lin=$(find raw -name '*.pkg.tar.zst' | head -1 || true)
-          info=$(find raw -name 'build-info.txt' | head -1)
-          # 必需的是 APK 与 build-info；桌面包按这次实际产出的带上。
-          # 存在这个口子是因为 macOS runner 会连续拿不到（2026-11-23 连续 6 次
-          # 排队 15 分钟被判 cancelled），不能因此把已经编好的 APK 一起扣着。
-          for f in "$apk" "$info"; do
-            [ -n "$f" ] && [ -s "$f" ] || { echo "缺少必需产物：apk / build-info"; exit 1; }
-          done
+          info=$(find raw -name 'build-info.txt' | head -1 || true)
+          # 只有 APK 是硬性的；build-info 在 APK artifact 里偶尔拿不到，缺了
+          # 就少一个校验文件，不该因此把整次发布挡回去。
+          [ -n "$apk" ] && [ -s "$apk" ] || { echo "缺少必需产物：apk"; exit 1; }
 
-          cp "$apk"  "dist/fqapp-${TAG}-arm64-v8a.apk"
-          cp "$info" dist/build-info.txt
+          cp "$apk" "dist/fqapp-${TAG}-arm64-v8a.apk"
           if [ -n "$mac" ]; then
             cp "$mac" "dist/fqapp-${TAG}-macos.zip"
           else
             echo '::warning::本次运行没有 macOS 产物（runner 未分配到），先发其余资产'
           fi
           if [ -n "$win" ]; then
-            # artifact 里是整个 release 目录，打成「解压即用」的包：zip 根就是
-            # fqapp.exe / data / *.dll 那一层。
-            (cd "$win" && zip -qr "$GITHUB_WORKSPACE/dist/fqapp-${TAG}-windows-x64.zip" .)
+            cp "$win" "dist/fqapp-${TAG}-windows-x64.zip"
           fi
           if [ -n "$lin" ]; then
             cp "$lin" "dist/fqapp-${TAG}-linux-x86_64.pkg.tar.zst"
           fi
+          if [ -n "$info" ]; then
+            cp "$info" dist/build-info.txt
+          else
+            echo '::warning::artifact 里没有 build-info.txt，本次发布不带校验清单'
+          fi
 
           ls -l dist
-          echo "--- build-info 的 App commit ---"
-          grep -i '^App commit' dist/build-info.txt
+          if [ -n "$info" ]; then
+            echo "--- build-info 的 App commit ---"
+            grep -i '^App commit' dist/build-info.txt
+          fi
 
       - name: 建 Release
         env:
@@ -105,11 +105,20 @@ jobs:
             done
           } > "$notes"
 
+          # 只把 dist 里真实存在的文件交给 gh：glob 没匹配时 bash 会把字面量
+          # 原样传过去，gh 直接 `no matches found` 整条失败（2026-11-23 就这么
+          # 挂过一次，缺 macOS 时 dist 里没有 zip）。
+          assets=()
+          for f in dist/fqapp-*.apk dist/fqapp-*.zip dist/fqapp-*.zst dist/build-info.txt; do
+            if [ -f "$f" ]; then assets+=("$f"); fi
+          done
+          [ ${#assets[@]} -gt 0 ] || { echo 'dist 里没有可发布的资产'; exit 1; }
+
           gh release create "$TAG" \
             -R "$GITHUB_REPOSITORY" \
             --target "$sha" \
             --title "$TAG" \
             --notes-file "$notes" \
-            dist/fqapp-*.apk dist/fqapp-*.zip dist/fqapp-*.zst dist/build-info.txt
+            "${assets[@]}"
           gh release view "$TAG" -R "$GITHUB_REPOSITORY" --json url,assets \
             --jq '"\(.url)", (.assets[] | "  \(.name) \(.size) B")'
