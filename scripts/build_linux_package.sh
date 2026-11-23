@@ -32,7 +32,18 @@ python - "$FLUTTER_ROOT" <<'PY'
 import json, pathlib, sys
 assert json.loads((pathlib.Path(sys.argv[1])/'bin/cache/flutter.version.json').read_text())['frameworkRevision'] == 'ab2912035e160d9cad6306df307576da6128ebdb'
 PY
-[[ $(rustc --version) == 'rustc 1.99.1 '* ]]
+# 只有钉住快照（`/etc/arch-snapshot` = snapshot，或本地没有这个标记）时才要求
+# rustc 1.99.1：归档站不可用时 workflow 会回退到滚动镜像，rust 已随 Arch 往前
+# 走，这时硬断言会挡掉一个本来能编出来的包。实际版本记在 build-manifest.txt
+# （`rustc --version` + `pacman -Q`），事后可查。
+if [[ ! -f /etc/arch-snapshot || $(cat /etc/arch-snapshot) == snapshot ]]; then
+  # 显式 exit：`set -e` 对 if 体内的最后一条命令不生效，写成裸 `[[ ]]` 会让
+  # 版本漂移被静默放过。
+  if [[ $(rustc --version) != 'rustc 1.99.1 '* ]]; then
+    echo "rustc 不是快照版本：$(rustc --version)" >&2
+    exit 1
+  fi
+fi
 (cd "$source_root" && flutter pub get --offline --enforce-lockfile)
 # SDK-generated analysis exclusion is not a product build input. Locks must stay exact.
 for lock in pubspec.lock rust/Cargo.lock; do cmp "$source_root/$lock" "$root/$lock"; done
