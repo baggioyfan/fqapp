@@ -648,12 +648,21 @@ impl UpstreamClient {
     /// 把本次交换的状态码与正文长度记进 trace，供门级诊断行归因。
     fn record_exchange(status: u16, body_len: usize) {
         if let Some(trace) = super::playback_trace::current() {
-            let mut exchange = trace
-                .exchange
-                .lock()
-                .unwrap_or_else(|error| error.into_inner());
-            exchange.http_status = Some(status);
-            exchange.body_len = Some(body_len);
+            let method = trace.recorded_method();
+            {
+                let mut exchange = trace
+                    .exchange
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner());
+                exchange.http_status = Some(status);
+                exchange.body_len = Some(body_len);
+            }
+            log::info!(
+                "v5 trace request={} attempt={} route={} event=answer method={method} status={status} body_len={body_len}",
+                trace.request_id,
+                trace.attempt,
+                trace.route,
+            );
         }
     }
 

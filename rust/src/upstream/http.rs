@@ -196,6 +196,12 @@ impl HttpTransport {
         }
         let m = reqwest::Method::from_bytes(method.as_bytes())
             .map_err(|e| TransportError::Network(format!("bad method {method}: {e}")))?;
+        // 门诊断里报的是真正上线的 HTTP 方法：门既有 POST（v5 / model-a /
+        // model-c）也有 GET（tab-b），而 reqwest 在重定向时可能改写方法，
+        // 写死字面量会让日志说谎。
+        if let Some(context) = super::playback_trace::current() {
+            context.record_method(m.as_str());
+        }
         let mut builder = self.client.request(m, url).timeout(timeout);
         if !headers.is_empty() {
             let mut map = reqwest::header::HeaderMap::new();
