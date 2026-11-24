@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:cupertino_ui/cupertino_ui.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/rendering.dart' show ScrollDirection;
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
@@ -13,6 +14,7 @@ import '../models/shelf_view_state.dart';
 import '../models/shuqi_book.dart';
 import '../services/app_log.dart';
 import '../services/app_style_tokens.dart';
+import '../services/app_theme.dart';
 import '../services/book_open_preferences.dart';
 import '../services/book_updates.dart';
 import '../services/chapter_cache_store.dart';
@@ -623,7 +625,9 @@ class _LibraryPageState extends State<LibraryPage>
               padding: EdgeInsets.fromLTRB(24, topInset, 24, 0),
               child: _editing ? _editBar(context) : _tabSegments(context),
             ),
-            const SizedBox(height: 8),
+            // 一级 tab 与内容区间距 8 → 6（issue #478）：dense 胶囊已经矮了
+            // 6dp，再收紧夹缝让顶部整块回到“切换器”的体积。
+            const SizedBox(height: 6),
           ],
           Expanded(
             child: TabSwipeArea(

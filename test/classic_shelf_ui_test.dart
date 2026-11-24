@@ -25,6 +25,7 @@ import 'package:fqapp/services/shelf_store.dart';
 import 'package:fqapp/services/shelf_view_store.dart';
 import 'package:fqapp/widgets/bookshelf_card.dart';
 import 'package:fqapp/widgets/tab_swipe_area.dart';
+import 'package:fqapp/widgets/home/home_chip.dart';
 import 'package:fqapp/widgets/home/home_design.dart';
 import 'package:fqapp/widgets/shelf/shelf_collection_view.dart';
 import 'package:fqapp/widgets/shelf/shelf_design.dart';
@@ -181,6 +182,110 @@ void main() {
       ClassicShelfLayout.instance.resetForTest();
       ShelfViewStore.instance.resetForTest();
     });
+
+    for (final (width, scale, columns) in [
+      (360.0, 1.0, 6),
+      (320.0, 1.0, 3),
+      (360.0, 2.0, 3),
+    ]) {
+      testWidgets(
+        'shelf filters fit $columns columns at $width dp and ${scale}x',
+        (tester) async {
+          final size = Size(width, 900);
+          await tester.binding.setSurfaceSize(size);
+          addTearDown(() => tester.binding.setSurfaceSize(null));
+          await tester.pumpWidget(
+            _app(_style(), size: size, textScaler: TextScaler.linear(scale)),
+          );
+          await tester.pumpAndSettle();
+
+          final chips = [
+            for (final kind in [
+              'all',
+              'book',
+              'manga',
+              'video',
+              'manju',
+              'audio',
+            ])
+              find.byKey(Key('library-shelf-kind-$kind')),
+          ];
+          final bounds = chips.map(tester.getRect).toList();
+          expect(
+            bounds.where((rect) => rect.top == bounds.first.top),
+            hasLength(columns),
+          );
+          for (final rect in bounds) {
+            expect(rect.left, greaterThanOrEqualTo(0));
+            expect(rect.right, lessThanOrEqualTo(width));
+            expect(rect.width, greaterThanOrEqualTo(48));
+            expect(rect.height, greaterThanOrEqualTo(48));
+          }
+          await tester.tap(chips.last);
+          await tester.pumpAndSettle();
+          expect(chips.map(tester.getRect), orderedEquals(bounds));
+          expect(
+            find.byKey(const Key('classic-shelf-active-filters')),
+            findsOneWidget,
+          );
+          expect(tester.takeException(), isNull);
+        },
+      );
+    }
+
+    testWidgets('toolbar pills clip press feedback to the visible capsule', (
+      tester,
+    ) async {
+      final size = const Size(360, 900);
+      await tester.binding.setSurfaceSize(size);
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await tester.pumpWidget(_app(_style(), size: size));
+      await tester.pumpAndSettle();
+      for (final key in ['shelf-group-chip', 'shelf-layout-picker']) {
+        final button = find.byKey(Key(key));
+        final surface = find.descendant(
+          of: button,
+          matching: find.byType(Material),
+        );
+        final touchRect = tester.getRect(button);
+        final pillRect = tester.getRect(surface);
+        expect(touchRect.height, greaterThanOrEqualTo(48));
+        expect(pillRect.height, lessThan(touchRect.height));
+        expect(tester.widget<Material>(surface).clipBehavior, Clip.antiAlias);
+        final press = await tester.startGesture(touchRect.center);
+        await tester.pump(const Duration(milliseconds: 550));
+        expect(tester.getRect(surface), pillRect);
+        expect(find.text('书架分组：全部书籍'), findsNothing);
+        await press.cancel();
+        await tester.pumpAndSettle();
+      }
+    });
+
+    testWidgets(
+      'shelf categories stay visible and selected after a style change',
+      (tester) async {
+        await _size(tester);
+        final style = _style();
+        await tester.pumpWidget(_app(style));
+        await tester.pumpAndSettle();
+        const kinds = ['all', 'book', 'manga', 'video', 'manju', 'audio'];
+        final audio = find.byKey(const Key('library-shelf-kind-audio'));
+        await tester.tap(audio);
+        await tester.pumpAndSettle();
+        expect(tester.widget<HomeChip>(audio).selected, isTrue);
+
+        style.value = const AppStyleTokens.archive();
+        await tester.pumpAndSettle();
+        for (final kind in kinds) {
+          expect(
+            find.byKey(Key('library-shelf-kind-$kind')).hitTestable(),
+            findsOneWidget,
+          );
+        }
+        expect(tester.widget<HomeChip>(audio).selected, isTrue);
+        expect(tester.takeException(), isNull);
+      },
+    );
 
     for (final initial in [0, 2]) {
       for (final swipe in [false, true]) {
@@ -1178,6 +1283,45 @@ void main() {
       expect(tester.takeException(), isNull);
       await tester.pumpWidget(const SizedBox.shrink());
     });
+
+    testWidgets('下滑收起一级 tab 行，上滑与切 tab 露出', (tester) async {
+      await _size(tester);
+      await tester.runAsync(() async {
+        for (var index = 0; index < 12; index++) {
+          await ShelfStore.instance.add(_bookAt(index));
+        }
+      });
+      await tester.pumpWidget(_app(_style()));
+      await tester.pumpAndSettle();
+
+      final slot = find.byKey(const Key('classic-tab-row-slot'));
+      expect(tester.getSize(slot).height, greaterThan(30), reason: '初始应完整展开');
+
+      // 下滑（reverse）收起：收起是高度归零，不是只平移，宫格真的多出一行。
+      await tester.drag(find.byType(GridView).first, const Offset(0, -240));
+      await tester.pumpAndSettle();
+      expect(tester.getSize(slot).height, 0);
+
+      // 上滑（forward）露出。
+      await tester.drag(find.byType(GridView).first, const Offset(0, 240));
+      await tester.pumpAndSettle();
+      expect(tester.getSize(slot).height, greaterThan(30));
+
+      // 收起状态下横滑切 tab：换页是“回到入口”的动作，必须把条子带回来。
+      await tester.drag(find.byType(GridView).first, const Offset(0, -240));
+      await tester.pumpAndSettle();
+      expect(tester.getSize(slot).height, 0);
+      final gesture = await tester.startGesture(const Offset(200, 500));
+      for (var frame = 0; frame < 24; frame++) {
+        await gesture.moveBy(const Offset(-10, 0));
+        await tester.pump(const Duration(milliseconds: 16));
+      }
+      await gesture.up();
+      await tester.pumpAndSettle();
+      expect(tester.getSize(slot).height, greaterThan(30));
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox.shrink());
+    });
   });
 }
 
@@ -1223,6 +1367,17 @@ MediaItem _item() => MediaItem(
   title: '测试书籍',
   cover: '',
   author: '测试作者',
+  badge: '',
+  ep: '20',
+  kind: 'book',
+);
+
+/// 多本书用：宫格要能真滚起来才能触发收起。
+MediaItem _bookAt(int index) => MediaItem(
+  id: '$index',
+  title: '测试书籍$index',
+  cover: '',
+  author: '作者$index',
   badge: '',
   ep: '20',
   kind: 'book',
