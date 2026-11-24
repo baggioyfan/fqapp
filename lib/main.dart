@@ -18,6 +18,7 @@ import 'package:hive_ce_flutter/hive_flutter.dart';
 
 import 'dart:async';
 
+
 import 'pages/home_page.dart';
 import 'pages/api_service_page.dart';
 import 'pages/audio_page.dart';
@@ -130,30 +131,30 @@ Future<void> _prepareRuntime() async {
   RustLogSource.reader = BackendService.instance.readRustLog;
   if (isDesktopHost) {
     DesktopPlatform.instance.beforeClose = () async {
-      try {
-        try {
-          await BossKeyService.instance.shutdown();
-        } catch (error, stack) {
-          AppLog.w('exit', '退出前注销老板键失败', error: error, stack: stack);
-        }
-        DramaDownloader.instance.pauseAll();
-        AudioDownloader.instance.pauseAll();
-        await FairMemoryService.instance.flushForExit();
-        try {
-          if (isDesktopHost) await NativePlayer.pauseOthers();
-        } catch (error, stack) {
-          // 退出路径继续往下走，但失败要留痕：否则「关闭后还有声音」无从查起。
-          AppLog.w('exit', '退出前暂停播放器失败', error: error, stack: stack);
-        }
-        try {
-          await BackendService.instance.stop();
-        } catch (error, stack) {
-          AppLog.w('exit', '退出前停止后端失败', error: error, stack: stack);
-        }
-      } finally {
-        await Hive.close();
-      }
-    };
+          try {
+            try {
+              await BossKeyService.instance.shutdown();
+            } catch (error, stack) {
+              AppLog.w('exit', '退出前注销老板键失败', error: error, stack: stack);
+            }
+            DramaDownloader.instance.pauseAll();
+            AudioDownloader.instance.pauseAll();
+            await FairMemoryService.instance.flushForExit();
+            try {
+              if (isDesktopHost) await NativePlayer.pauseOthers();
+            } catch (error, stack) {
+              // 退出路径继续往下走，但失败要留痕：否则「关闭后还有声音」无从查起。
+              AppLog.w('exit', '退出前暂停播放器失败', error: error, stack: stack);
+            }
+            try {
+              await BackendService.instance.stop();
+            } catch (error, stack) {
+              AppLog.w('exit', '退出前停止后端失败', error: error, stack: stack);
+            }
+          } finally {
+            await Hive.close();
+          }
+        };
   }
 }
 
@@ -188,7 +189,7 @@ Future<void> _loadLocalData() async {
     optional(HapticPreferences.instance.load),
     // 短剧功能开关同理：壳层首帧就要决定 dock 画 3 项还是 4 项，
     // 放到 await 之后会先画 4 项再抽掉一项（SP 已由 spFuture 打开，
-    // 这里只是一次内存读，不增加启动串行等待）。
+    // 这里只是一次内存读，不额外增加串行等待）。
     optional(DramaFeaturePreferences.instance.load),
     LibraryStore.instance.init(),
     // The 加入书架 collection is optional data: a failure here must not block
@@ -821,8 +822,8 @@ class _RootShellState extends State<RootShell> with TickerProviderStateMixin {
   /// 短剧开关变化：收起/恢复入口，并把停在短剧页的壳层挪回首页。
   ///
   /// 短剧页是一个全屏视频流，关掉开关后不能让它继续留在 Stack 里播：
-  /// 先摘掉已挂载标记与 widget 缓存（下次进入是全新页面），再在不走
-  /// 滑动动画的情况下直接落位首页（目标页已经不存在，动画没有终点）。
+  /// 先摘掉已挂载标记与 widget 缓存（再进来是全新页面），再在不走滑动
+  /// 动画的情况下直接落位首页（目标页已经不存在，动画没有终点）。
   void _onDramaFeatureChanged() {
     if (!mounted) return;
     final enabled = DramaFeaturePreferences.instance.enabled.value;
