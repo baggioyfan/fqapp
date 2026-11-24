@@ -81,7 +81,7 @@ void main() {
 
       // 每一档都手算过的期望值。平板的三档（760 / 1024 / 1280 / 1440）
       // 正是 11-23 那次返工后变回 3 列的地方。
-      const expected = <double, int>{
+      final expected = <double, int>{
         400: 3, // 手机竖屏：(368)/168=2 → 下限 3
         760: 4, // (728)/168=4.33
         1024: 5, // (992)/168=5.90
@@ -140,7 +140,7 @@ void main() {
         await ClassicShelfLayout.instance.whenIdle();
       });
 
-      const expected = <double, int>{
+      final expected = <double, int>{
         400: 2, // 368/340=1.08 → 下限 2
         1024: 2, // 992/340=2.91
         1280: 3, // 1248/340=3.67
