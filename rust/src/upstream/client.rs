@@ -739,22 +739,24 @@ impl UpstreamClient {
             cdid: &device.cdid,
             egdi: &device.egdi,
         };
+        // 这扇门的请求由 `sign_anonymous_playback_v5` 自己签全（完整
+        // Medusa/Gorgon 信封），所以走 `no_sign` + `playback_sign: false`：
+        // 交给通用签名层再补一次会覆盖它，`playback_sign` 还会顺手删掉
+        // `x-medusa`。
+        let signed = crate::sign::v5::sign_anonymous_playback_v5(base, body, &identity)
+            .map_err(ClientError::Other)?;
+        let request = UpstreamRequest {
+            method: Some("POST".to_string()),
+            url: signed.url,
+            body: Some(body.to_vec()),
+            headers: signed.headers,
+            no_sign: true,
+            pin: None,
+            playback_sign: false,
+        };
         let send = self.do_resp_with_transient_retry(
-            || {
-                let signed = crate::sign::v5::sign_anonymous_playback_v5(base, body, &identity)
-                    .map_err(ClientError::Other)?;
-                Ok(UpstreamRequest {
-                    method: Some("POST".to_string()),
-                    url: signed.url,
-                    body: Some(body.to_vec()),
-                    headers: signed.headers,
-                    no_sign: true,
-                    pin: None,
-                })
-            },
+            &request,
             Some(crate::upstream::http::API_BODY_LIMIT_BYTES),
-            true,
-            false,
         );
         let (data, _) = super::playback_trace::with_device(&device.device_id, send).await?;
         Ok(data)
