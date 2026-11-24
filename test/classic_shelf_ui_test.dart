@@ -614,7 +614,17 @@ void main() {
       (tester) async {
         await _size(tester);
         final style = _style();
-        await tester.pumpWidget(_app(style));
+        // 空态的「找短剧」按钮只在拿到回调时才画（短剧功能关闭时上层
+        // 不给回调），这条测的是按钮存在时的锚点位置。
+        await tester.pumpWidget(
+          _app(
+            style,
+            page: LibraryPage(
+              cacheStore: MemoryChapterCache(),
+              onFindDrama: () {},
+            ),
+          ),
+        );
         await tester.pumpAndSettle();
         await tester.tap(find.text('收藏'));
         await tester.pumpAndSettle();
@@ -649,17 +659,7 @@ void main() {
         await _size(tester);
         await tester.runAsync(() => ShelfStore.instance.add(_item()));
         final style = _style();
-        // 空态里的「找短剧」文案与按钮只在拿到回调时才画（短剧功能关闭
-        // 时上层不给回调），这里给一个空回调，测的是按钮存在时的锚点。
-        await tester.pumpWidget(
-          _app(
-            style,
-            page: LibraryPage(
-              cacheStore: MemoryChapterCache(),
-              onFindDrama: () {},
-            ),
-          ),
-        );
+        await tester.pumpWidget(_app(style));
         await tester.pumpAndSettle();
         final state = tester.state(find.byType(LibraryPage));
         final density = ShelfViewStore.instance.state.density;
