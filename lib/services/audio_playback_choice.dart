@@ -1,11 +1,5 @@
 import 'package:flutter/foundation.dart';
 
-/// 连播倒计时的秒数。
-///
-/// 官方是 `te`「%s后播放下一集」的可取消倒计时，具体秒数没有从资源里取到；
-/// 这里取 3 秒：足够看清并点「取消」，又不会拖慢连续收听。
-const int kAdvanceCountdownSeconds = 3;
-
 /// 睡眠定时档位：关闭 / 听完本章 / N 分钟后，三者互斥。
 ///
 /// 官方 `cip` = 「听完本章」，`doc` = 「剩余本章」，`dod` = 「剩余播放」——

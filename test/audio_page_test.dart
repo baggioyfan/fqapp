@@ -180,19 +180,13 @@ void main() {
   ) async {
     final session = _Session();
     await _mount(tester, session);
-    // 官方 `te`「%s后播放下一集」：播完先进倒计时窗口，不再立刻跳章。
     session.players.first.emitCompleted();
     await _flush(tester);
-    expect(find.byKey(const Key('audio_advance_banner')), findsOneWidget);
-    expect(session.players, hasLength(1));
-    await tester.pump(const Duration(seconds: 3));
-    await _flush(tester);
+    expect(find.byKey(const Key('audio_advance_banner')), findsNothing);
     expect(session.players, hasLength(2));
     expect(session.store.entry?['chapterId'], '2');
     expect(session.players.last.isPlaying, true);
     session.players.last.emitCompleted();
-    await _flush(tester);
-    await tester.pump(const Duration(seconds: 3));
     await _flush(tester);
     expect(session.players, hasLength(3));
     // 末章播完：不再连播，改为官方 `v7` 的书末提示。
@@ -207,26 +201,6 @@ void main() {
     await _flush(tester);
     expect(session.players.last.position, Duration.zero);
     expect(session.players.last.isPlaying, true);
-  });
-
-  testWidgets('cancelling the advance countdown stays on the chapter', (
-    tester,
-  ) async {
-    final session = _Session();
-    await _mount(tester, session);
-    session.players.first.emitCompleted();
-    await _flush(tester);
-    expect(find.byKey(const Key('audio_advance_banner')), findsOneWidget);
-
-    await tester.tap(find.byKey(const Key('audio_advance_cancel')));
-    await _flush(tester);
-    expect(find.byKey(const Key('audio_advance_banner')), findsNothing);
-
-    // 取消之后即使等过倒计时窗口，也不能自己跳章。
-    await tester.pump(const Duration(seconds: 5));
-    await _flush(tester);
-    expect(session.players, hasLength(1));
-    expect(find.text('本章已播完'), findsOneWidget);
   });
 
   testWidgets(
@@ -549,6 +523,29 @@ void main() {
   );
 
   testWidgets(
+    'the voice sheet shows the automatically selected voice without a separate row',
+    (tester) async {
+      final session = _Session(
+        extras: (_) async => const AudioExtras(
+          tones: AudioToneSet(
+            ttsTones: [
+              AudioTone(id: '96', title: '多角色对话升级版'),
+              AudioTone(id: '64', title: '成熟大叔音'),
+            ],
+          ),
+        ),
+      );
+      await _mount(tester, session);
+      expect(session.requests, ['1:96']);
+      await tester.ensureVisible(find.byKey(const ValueKey('audio-voice')));
+      await tester.tap(find.byKey(const ValueKey('audio-voice')));
+      await tester.pumpAndSettle();
+      expect(find.text('自动选音色'), findsNothing);
+      expect(find.byKey(const ValueKey('voice_option_96')), findsOneWidget);
+    },
+  );
+
+  testWidgets(
     'voice discovery failure uses the default voice and keeps playback available',
     (tester) async {
       final session = _Session(
@@ -602,7 +599,7 @@ void main() {
       await tester.ensureVisible(find.byKey(const ValueKey('audio-voice')));
       await tester.tap(find.byKey(const ValueKey('audio-voice')));
       await tester.pumpAndSettle();
-      expect(find.text('多角色对话升级版'), findsOneWidget);
+      expect(find.text('多角色对话升级版'), findsNWidgets(2));
     },
   );
 

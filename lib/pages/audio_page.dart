@@ -3,6 +3,7 @@ import '../widgets/desktop_chapter_sidebar.dart';
 import 'dart:async';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart' show listEquals;
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
 
@@ -13,11 +14,13 @@ import '../models/book_detail.dart';
 import '../models/chapter_media.dart';
 import '../models/media_item.dart';
 import '../services/api_client.dart';
+import '../services/app_log.dart';
 import '../services/app_theme.dart';
 import '../services/audio_download_store.dart';
 import '../services/audio_history.dart';
 import '../services/audio_floating_routes.dart';
 import '../services/audio_page_theme.dart';
+import '../services/ios_audio_session.dart';
 import '../services/audio_play_error.dart';
 import '../services/audio_playback_choice.dart';
 import '../services/audio_subtitle_synth.dart';
@@ -40,7 +43,6 @@ import '../services/transient_retry.dart';
 import '../services/system_tts.dart';
 import '../widgets/audio/audio_offline_section.dart';
 import '../widgets/audio/audio_floating_player.dart';
-import '../widgets/audio/audio_advance_banner.dart';
 import '../widgets/audio/audio_control_rows.dart';
 import '../widgets/audio/audio_quick_rows.dart';
 import '../widgets/audio/audio_real_expanded.dart';
@@ -226,10 +228,14 @@ typedef _RoutePlayback = ({
   bool autoplay,
 });
 
-Future<AudioExtras> _defaultAudioExtras(String bookId) async {
+Future<AudioExtras> _defaultAudioExtras(
+  String bookId, {
+  ValueChanged<AudioToneSet>? onTones,
+}) async {
   final tones = await ApiClient.instance
       .bookTones(bookId)
       .catchError((Object _) => const AudioToneSet());
+  onTones?.call(tones);
   final related = await ApiClient.instance
       .relatedWorks(bookId)
       .catchError((Object _) => const <RelatedWork>[]);
@@ -1240,7 +1246,9 @@ class _AudioPageState extends State<AudioPage> {
     String toneId, {
     BuildContext? replaceContext,
   }) async {
-    if (c._switchingVersion || !c._selectableTone(toneId)) return;
+    if (c._switchingVersion || !c._selectableTone(toneId)) {
+      return;
+    }
     final novel = c._extras.tones.relatedNovel;
     if (c._ttsBookId != c._bookId && novel != null) {
       await _switchBookVersion(
@@ -1253,7 +1261,13 @@ class _AudioPageState extends State<AudioPage> {
       return;
     }
     _popSheet(replaceContext);
-    if (toneId == c._toneId) return;
+    if (toneId == c._toneId) {
+      c._update(() => c._automaticTone = false);
+      c._discardNextAudio();
+      c._syncListenClock();
+      await c._persistProgress();
+      return;
+    }
     await c._openChapter(
       c._index,
       position: c._player?.position ?? c._position.value,
@@ -1568,20 +1582,14 @@ class _AudioPageState extends State<AudioPage> {
                               ? null
                               : (enabled) {
                                   if (!mounted || c._loading) return;
-                                  c._update(() => c._autoAdvance = enabled);
-                                  c._publishMoreState();
-                                  unawaited(c._persistProgress());
+                                  c._setAutoAdvance(enabled);
                                 },
                         ),
                         onTap: snapshot.loading
                             ? null
                             : () {
                                 if (!mounted || c._loading) return;
-                                c._update(
-                                  () => c._autoAdvance = !snapshot.autoAdvance,
-                                );
-                                c._publishMoreState();
-                                unawaited(c._persistProgress());
+                                c._setAutoAdvance(!snapshot.autoAdvance);
                               },
                       ),
                       Divider(

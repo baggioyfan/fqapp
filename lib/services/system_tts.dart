@@ -733,6 +733,10 @@ class SystemTtsPlayback extends ChangeNotifier with WidgetsBindingObserver {
             minimumRate: 0.25,
             title: book.title,
             episode: '系统朗读 · ${chapter.title}',
+            chapterId: chapter.itemId,
+            // 上游这一版把语速上限放开到 4×（`maxRate` 同口径），
+            // 桌面媒体卡片上的倍速滑杆才有意义。
+            maximumRate: 4,
             coverUrl: book.coverUrl,
             playing: wantPlay && !loading && error == null,
             hasPrev: index > 0,

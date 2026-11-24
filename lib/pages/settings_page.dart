@@ -26,6 +26,7 @@ import 'package:material_ui/material_ui.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../models/audio_extra.dart';
 import '../services/app_theme.dart';
 import '../services/app_style_tokens.dart';
 import '../services/audio_preferences.dart';
@@ -153,8 +154,9 @@ class _SettingsPageState extends State<SettingsPage> {
       SettingsCategory(
         icon: SettingsCategoryIcons.listening,
         title: '听书',
-        subtitle: '后台播放、通知栏控制与系统朗读',
+        subtitle: '默认音色、后台播放与系统朗读',
         items: [
+          _defaultVoiceItem(),
           _backgroundAudioItem(),
           if (!isDesktopHost) _audioRateEngineItem(),
           SettingsItem(
@@ -612,6 +614,36 @@ class _SettingsPageState extends State<SettingsPage> {
   );
 
   // ── 听书 ──────────────────────────────────────────────────────────────
+
+  /// 全局默认音色。章节里显式指定的音色优先，这里只在没有指定、或自动
+  /// 排序生效时兜底（见 `audio_extra.dart` 的 `rankListeningVoices`）。
+  SettingsItem _defaultVoiceItem() => SettingsItem(
+    icon: CupertinoIcons.headphones,
+    title: '默认音色',
+    rowBuilder: (context) => ValueListenableBuilder<DefaultListeningVoice>(
+      valueListenable: AudioPreferences.instance.defaultVoice,
+      builder: (context, value, _) => GlassSettingMenu<DefaultListeningVoice>(
+        icon: CupertinoIcons.headphones,
+        label: '默认音色',
+        value: value,
+        options: {
+          for (final voice in DefaultListeningVoice.values) voice: voice.label,
+        },
+        reduceMotion: MediaQuery.disableAnimationsOf(context),
+        onChanged: (voice) async {
+          try {
+            await AudioPreferences.instance.setDefaultVoice(voice);
+          } catch (_) {
+            if (context.mounted) {
+              ScaffoldMessenger.of(
+                context,
+              ).showSnackBar(const SnackBar(content: Text('默认音色保存失败，请重试')));
+            }
+          }
+        },
+      ),
+    ),
+  );
 
   SettingsItem _backgroundAudioItem() => SettingsItem(
     icon: CupertinoIcons.headphones,

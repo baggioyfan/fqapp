@@ -3,6 +3,46 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:fqapp/models/audio_extra.dart';
 
 void main() {
+  test('a chosen default voice comes before the usual fallback order', () {
+    const tones = AudioToneSet(
+      ttsTones: [
+        AudioTone(id: '96', title: '多角色对话升级版'),
+        AudioTone(id: '74', title: '成熟大叔升级版'),
+        AudioTone(id: '64', title: '成熟大叔'),
+      ],
+    );
+    expect(
+      tones
+          .listeningTones(DefaultListeningVoice.matureClassic)
+          .map((voice) => voice.id),
+      ['64', '96', '74'],
+    );
+    expect(
+      tones
+          .listeningTones(DefaultListeningVoice.dialogueClassic)
+          .map((voice) => voice.id),
+      ['96', '74', '64'],
+    );
+  });
+
+  test('ranked voices recognize short server labels and upgrade badges', () {
+    const tones = AudioToneSet(
+      ttsTones: [
+        AudioTone(id: '10', title: '升级版'),
+        AudioTone(id: '64', title: '成熟大叔音'),
+        AudioTone(id: '74', title: '成熟大叔音', badge: '升级'),
+        AudioTone(id: '57', title: '经典版', isMultiTone: true),
+        AudioTone(id: '96', title: '升级版', isMultiTone: true),
+      ],
+    );
+    expect(tones.preferredListeningTones.map((tone) => tone.id), [
+      '96',
+      '57',
+      '74',
+      '64',
+    ]);
+  });
+
   group('AudioToneSet', () {
     /// `/api/v1/books/{id}/tones` uses lowercase keys, unlike the PascalCase
     /// ToneInfo RPC model, and narrators identify themselves with `abook_id`.

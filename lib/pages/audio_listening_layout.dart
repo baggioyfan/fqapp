@@ -199,18 +199,6 @@ extension _AudioListeningLayout on _AudioPageState {
                     ),
                   ),
               ],
-              Align(
-                alignment: Alignment.bottomCenter,
-                child: ValueListenableBuilder<int?>(
-                  valueListenable: c.advanceCountdown,
-                  builder: (context, seconds, _) => seconds == null
-                      ? const SizedBox.shrink()
-                      : AudioAdvanceBanner(
-                          seconds: seconds,
-                          onCancel: () => _cancelAdvanceCountdown(c),
-                        ),
-                ),
-              ),
             ],
           );
         },

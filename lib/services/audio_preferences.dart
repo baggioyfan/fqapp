@@ -1,6 +1,8 @@
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../models/audio_extra.dart';
+
 /// 听书入口默认走哪条链路。
 ///
 /// - [smart] 智能朗读：作品音频，服务端合成，音色取自 `tts_tones`；
@@ -21,6 +23,17 @@ class AudioPreferences {
 
   /// 听书入口的默认引擎（[ListenEngine]）。
   static const _listenEngineKey = 'audio_listen_engine';
+
+  static const _defaultVoiceKey = 'audio_default_listening_voice';
+  final defaultVoice = ValueNotifier(DefaultListeningVoice.automatic);
+
+  Future<void> setDefaultVoice(DefaultListeningVoice voice) async {
+    final preferences = await SharedPreferences.getInstance();
+    if (!await preferences.setString(_defaultVoiceKey, voice.name)) {
+      throw StateError('Could not save default listening voice');
+    }
+    defaultVoice.value = voice;
+  }
 
   /// 倍速锁定：锁定后点倍速项不再弹面板（官方 `a4g`「已经锁定2x倍速」）。
   static const _rateLockedKey = 'audio_rate_locked';
@@ -73,6 +86,11 @@ class AudioPreferences {
     _loaded = true;
     try {
       final sp = await SharedPreferences.getInstance();
+      final voice = sp.getString(_defaultVoiceKey);
+      defaultVoice.value = DefaultListeningVoice.values.firstWhere(
+        (option) => option.name == voice,
+        orElse: () => DefaultListeningVoice.automatic,
+      );
       backgroundPlayback.value = sp.getBool(_backgroundPlaybackKey) ?? true;
       rateEngine.value = AudioRateEngine.fromName(sp.getString(_rateEngineKey));
       rateLocked = sp.getBool(_rateLockedKey) ?? false;
@@ -89,6 +107,7 @@ class AudioPreferences {
   @visibleForTesting
   void resetForTest() {
     _loaded = false;
+    defaultVoice.value = DefaultListeningVoice.automatic;
     backgroundPlayback.value = true;
     rateEngine.value = AudioRateEngine.builtIn;
     rateLocked = false;
