@@ -43,8 +43,8 @@ void main() {
     await tester.tap(find.byTooltip('筛选日志'));
     await tester.pumpAndSettle();
 
-    final selected = _chipDecoration(tester, '全部级别');
-    final unselected = _chipDecoration(tester, '调试');
+    final selected = _chipSurface(tester, '全部级别');
+    final unselected = _chipSurface(tester, '调试');
     expect(selected.color, Colors.black);
     expect((selected.shape as StadiumBorder).side, BorderSide.none);
     expect(unselected.color, Colors.white);
@@ -52,10 +52,9 @@ void main() {
   });
 }
 
-ShapeDecoration _chipDecoration(WidgetTester tester, String label) {
+Material _chipSurface(WidgetTester tester, String label) {
   final chip = find.widgetWithText(HomeChip, label);
-  final container = tester.widget<Container>(
-    find.descendant(of: chip, matching: find.byType(Container)).first,
+  return tester.widget<Material>(
+    find.descendant(of: chip, matching: find.byType(Material)),
   );
-  return container.decoration! as ShapeDecoration;
 }
