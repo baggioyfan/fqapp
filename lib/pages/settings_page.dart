@@ -82,7 +82,9 @@ class _SettingsPageState extends State<SettingsPage> {
   Widget build(BuildContext context) {
     // 开关读的是 ValueNotifier：先把持久化的值读出来，读到后自动重绘。
     unawaited(BookOpenPreferences.instance.load());
-    if (!isMediaDesktop) return _buildContent(context);
+    // 老板键在三端都可用（Win32/X11/Carbon），订阅门也按这个能力算，
+    // 否则 macOS 上改完快捷键，首页那条 value 不刷新。
+    if (!isBossKeyHost) return _buildContent(context);
     unawaited(BossKeyPreferences.instance.load());
     return ListenableBuilder(
       listenable: Listenable.merge([
@@ -103,7 +105,7 @@ class _SettingsPageState extends State<SettingsPage> {
       SettingsCategory(
         icon: SettingsCategoryIcons.appearance,
         title: '外观',
-        subtitle: isMediaDesktop
+        subtitle: isDesktopHost
             ? '主题模式、OLED 纯黑'
             : HapticPreferences.supported
             ? '主题模式、振动反馈、播放页布局'
@@ -118,7 +120,7 @@ class _SettingsPageState extends State<SettingsPage> {
             systemBrightness: MediaQuery.platformBrightnessOf(context),
           ))
             _oledModeItem(),
-          if (!isMediaDesktop) _playerLayoutItem(),
+          if (!isDesktopHost) _playerLayoutItem(),
         ],
       ),
       SettingsCategory(
@@ -154,7 +156,7 @@ class _SettingsPageState extends State<SettingsPage> {
         subtitle: '后台播放、通知栏控制与系统朗读',
         items: [
           _backgroundAudioItem(),
-          if (!isMediaDesktop) _audioRateEngineItem(),
+          if (!isDesktopHost) _audioRateEngineItem(),
           SettingsItem(
             icon: CupertinoIcons.mic,
             title: '系统朗读',
@@ -173,11 +175,11 @@ class _SettingsPageState extends State<SettingsPage> {
           subtitle: '播放',
           items: [
             _muteWhenColdStartItem(),
-            if (!isMediaDesktop) _floatingWindowItem(),
-            if (!isMediaDesktop) _videoDecoderItem(),
+            if (!isDesktopHost) _floatingWindowItem(),
+            if (!isDesktopHost) _videoDecoderItem(),
           ],
         ),
-      if (isMediaDesktop)
+      if (isBossKeyHost)
         SettingsCategory(
           icon: SettingsCategoryIcons.bossKey,
           title: '老板键',
@@ -239,7 +241,9 @@ class _SettingsPageState extends State<SettingsPage> {
 
     // Keep the desktop body at one element path while switching themes: its
     // nested Navigator owns the theme picker and must not be recreated mid-tap.
-    if (isWindowsDesktop) {
+    // Windows / macOS 走两栏 Fluent 设置体；Linux 仍走经典单列表，
+    // test/settings_player_layout_test.dart 第 153 行守着这条。
+    if (isWindowsDesktop || isMacDesktop) {
       final palette = HomePalette.of(context);
       return Scaffold(
         backgroundColor: palette.canvas,

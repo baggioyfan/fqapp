@@ -240,6 +240,30 @@ class _DetailPageState extends State<DetailPage> {
   /// 所以一次请求最长能拖到 50 秒以上。页面不该陪着一起等。
   static const _directoryBudget = Duration(seconds: 20);
 
+  /// 目录为空时该给用户的提示；null 表示「空是正常结果」（小说常见）。
+  ///
+  /// 剧集条目（episodeId 与内容 id 不同）的空目录一定是取失败：pseries 对单集
+  /// id 回 code=101104 + 空列表，且失败是间歇的（实测同一部剧 36s / 1.7s / 2.0s
+  /// 三种耗时，还有一次 53s 后直接 `device request failed`）。这种时候不能渲染
+  /// 成「这部剧只有正在看的这一集」，也不能静默留一张空白目录 —— 用户会以为
+  /// 这部剧就一集，而且没有任何重试入口。
+  ///
+  /// 上游版的判据是 `error != null`，正常返回空列表时 error 是 null，于是上面
+  /// 那种情况会静默通过。这里把「剧集 + 空」单独判成失败。
+  String? _directoryErrorText({
+    required List<List<Chapter>> volumes,
+    required Object? error,
+  }) {
+    final empty = volumes.every((volume) => volume.isEmpty);
+    if (!empty) return null;
+    final knownSeries =
+        widget.item.episodeId != null && widget.item.episodeId != _contentId;
+    if (_isVideo && knownSeries) {
+      return '没取到这部短剧的目录，可能是数据暂时不全，稍后重试。';
+    }
+    return error == null ? null : userFacingError(error);
+  }
+
   /// 一次原始的目录请求，不做重试与预算。
   Future<List<List<Chapter>>> _rawDirectory() {
     final injected = widget.directoryLoader;
@@ -560,9 +584,10 @@ class _DetailPageState extends State<DetailPage> {
       _detailError = detail == null && detailResult.error != null
           ? userFacingError(detailResult.error!)
           : null;
-      _directoryError = directoryFailed
-          ? userFacingError(directoryResult.error!)
-          : null;
+      _directoryError = _directoryErrorText(
+        volumes: volumes,
+        error: directoryResult.error,
+      );
       _loading = false;
     });
     unawaited(_loadCachedChapterIds(generation));
@@ -626,11 +651,14 @@ class _DetailPageState extends State<DetailPage> {
       return;
     }
     final volumes = result.value ?? const <List<Chapter>>[];
-    final failed =
-        volumes.every((volume) => volume.isEmpty) && result.error != null;
+    final errorText = _directoryErrorText(
+      volumes: volumes,
+      error: result.error,
+    );
+    final failed = errorText != null;
     setState(() {
       _directoryRetrying = false;
-      _directoryError = failed ? userFacingError(result.error!) : null;
+      _directoryError = errorText;
       if (!failed) {
         _allChapters = volumes.expand((volume) => volume).toList();
         _volumes = detailArchiveVolumes(_allChapters);

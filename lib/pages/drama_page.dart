@@ -1,4 +1,5 @@
 import '../widgets/video_player_chrome.dart';
+import '../services/app_breakpoints.dart';
 import '../services/desktop_platform.dart';
 
 import 'dart:async';
@@ -1881,7 +1882,7 @@ class _DramaPageState extends ConsumerState<DramaPage>
       }
       return _GridMessage(key: Key('$gridKey.empty'), message: '暂无内容');
     }
-    final wide = isDesktopHost || MediaQuery.sizeOf(context).width >= 840;
+    final wide = appIsWideLayout(context);
     if (wide) {
       columns = dramaDesktopColumns(context);
     }
@@ -4355,7 +4356,7 @@ class _InlineVideoLayer extends StatelessWidget {
     return LayoutBuilder(
       builder: (context, constraints) {
         final window = constraints.biggest;
-        final wide = isDesktopHost || window.width >= 840;
+        final wide = appIsWideLayout(context, width: window.width);
         final cacheWidth =
             (window.width * MediaQuery.devicePixelRatioOf(context)).ceil();
         return AnimatedBuilder(
@@ -5059,8 +5060,7 @@ class _LocalListState extends State<_LocalList> {
           // 桌面端跟看剧/漫剧同口径铺列（[dramaDesktopColumns]，行距也放到
           // 16）；手机保持官方的双列 8dp。原先这里恒写 2 列，桌面上两列会被
           // 拉到近 700dp 宽，和隔壁频道完全两种排版。
-          final desktopGrid =
-              isDesktopHost || MediaQuery.sizeOf(context).width >= 840;
+          final desktopGrid = appIsWideLayout(context);
           final columns = desktopGrid ? dramaDesktopColumns(context) : 3;
           final body = filtered.isEmpty
               ? empty

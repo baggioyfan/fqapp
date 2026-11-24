@@ -1,0 +1,44 @@
+# fork 自有测试清单 —— 由 `test/fork_suite_guard_test.dart` 守着，CI 单独跑一条。
+#
+# 为什么要有这份清单：换基底时「整份 checkout 上游版」会把 fork 在同名文件里
+# 加的用例一起静默吃掉 —— 全量 flutter test 依然全绿，只是少了几条。2026-11-24
+# 就因此丢过 5 条（macOS 老板键 4 条 + 短剧空目录 1 条），连带两处产品回归
+# 无人看守。
+#
+# 格式：`路径 基线用例数`。基线只许涨不许跌：
+# - 给 fork 功能加用例 → 顺手把这里的数字加上去
+# - 合并上游后这个数字变大了 → 改大它（正常，上游也在加）
+# - 变小了 → 一定是被覆盖/删掉了，先查清再改，别直接调小蒙过去
+#
+# --- fork 独有：外壳 / 品牌 / 主题风格
+test/app_breakpoints_test.dart               3
+test/app_display_name_test.dart              3
+test/app_theme_style_lock_test.dart          4
+
+# --- fork 独有：备份、首页、听书、进度、WebDAV、密钥
+test/backup_capture_collision_test.dart      4
+test/home_manual_refresh_test.dart           4
+test/home_tab_alignment_test.dart            3
+test/library_backup_sync_test.dart           15
+test/linux_platform_test.dart                6
+test/listening_anchor_test.dart              11
+test/platform_capabilities_test.dart         5
+test/progress_chapter_mirror_test.dart       8
+test/progress_shard_test.dart                18
+test/progress_shard_wire_test.dart           5
+test/read_time_store_test.dart               6
+test/reader_brightness_gesture_test.dart     5
+test/reader_theme_isolation_test.dart        3
+test/secret_store_test.dart                  7
+test/shelf_tombstone_test.dart               7
+test/system_tts_rate_limit_test.dart         6
+test/webdav_auto_sync_test.dart              11
+test/webdav_client_test.dart                 35
+test/webdav_config_test.dart                 9
+test/webdav_sync_service_test.dart           20
+
+# --- 与上游同名，但 fork 往里加过用例（整份 checkout 上游版会连坐）
+test/boss_key_test.dart                      20
+test/classic_shelf_ui_test.dart              23
+test/detail_page_test.dart                   19
+

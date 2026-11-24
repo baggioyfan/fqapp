@@ -8,6 +8,7 @@ import '../models/home_cell.dart';
 import '../models/search_discovery.dart';
 import '../models/media_item.dart';
 import '../services/api_client.dart';
+import '../services/app_breakpoints.dart';
 import '../services/app_log.dart';
 import '../services/app_style_tokens.dart';
 import '../services/app_theme_style.dart';
@@ -387,10 +388,9 @@ class _HomePageState extends ConsumerState<HomePage> {
         // 窗口再宽只把卡片放大，不会往格子里塞更多小封面。
         child: ConstrainedBox(
           constraints: BoxConstraints(
-            maxWidth:
-                isDesktopHost || MediaQuery.sizeOf(context).width >= 840
+            maxWidth: appIsWideLayout(context)
                 ? double.infinity
-                : 840,
+                : appWideBreakpoint,
           ),
           child: SafeArea(
             bottom: false,

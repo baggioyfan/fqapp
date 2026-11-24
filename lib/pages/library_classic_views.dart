@@ -206,6 +206,9 @@ mixin _LibraryClassicViews on _LibraryClassicChrome {
       // 以前只有 `isDesktopHost` 才按宽度加列，Android 平板再宽也固定 3 列
       // （1440dp 横屏同样 3 列，卡片被拉成 469dp 宽）。手机按这个公式算出来
       // 本来就 ≤3，下限兜回 3 列，视觉不变。
+      //
+      // 刻意不设平台判据：这个坑 2026-11 修过两次都被换基底时改回去，
+      // `test/classic_shelf_ui_test.dart` 里的 1024dp 平板用例守着。
       final columns =
           ((constraints.maxWidth - ShelfTokens.screenPadding * 2) / 168)
               .floor()

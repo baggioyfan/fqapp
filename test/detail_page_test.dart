@@ -16,6 +16,8 @@ import 'package:fqapp/services/app_style_tokens.dart';
 import 'package:fqapp/services/app_theme_style.dart';
 import 'package:fqapp/services/chapter_cache_store.dart';
 import 'package:fqapp/services/chapter_text_formatter.dart';
+import 'package:fqapp/widgets/detail/detail_archive.dart';
+import 'package:fqapp/widgets/detail/detail_states.dart';
 
 import 'support/fakes.dart';
 
@@ -186,6 +188,54 @@ void main() {
       },
     );
   }
+
+  testWidgets('剧集条目的目录为空时不再降级成只有一集', (tester) async {
+    var calls = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: DetailPage(
+          item: MediaItem(
+            id: 'series',
+            seriesId: 'series',
+            episodeId: 'ep25',
+            title: '同步来的短剧',
+            cover: '',
+            author: '',
+            badge: '',
+            ep: '25',
+            kind: 'video',
+          ),
+          readerStore: MemoryReaderStore(),
+          detailLoader: (id, {String tab = '小说'}) async => {},
+          directoryLoader: (id, {String tab = '小说'}) async {
+            calls++;
+            return <List<Chapter>>[];
+          },
+        ),
+      ),
+    );
+    // 短剧目录空会再取一次（_directoryWithRetry），中间隔 300ms；轮询一次
+    // pumpAndSettle 在没有动画的骨架上会立刻返回，得把这 300ms 显式走掉。
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pumpAndSettle();
+    // 目录为空说明取目录失败（pseries 对单集 id 回 code=101104 + 空列表），
+    // 不能把它渲染成「这部剧只有正在看的这一集」：页面要给失败态和重试，
+    // 主按钮也不能可点——否则用户会被带进只有一集的播放器。
+    //
+    // 文案不在这里钉死：失败态走通用的 DetailInlineError，具体的短剧说明
+    // 文案在换基底时并入了 userFacingError，钉文案会随改词反复红。
+    expect(find.byType(DetailInlineError), findsOneWidget);
+    expect(
+      tester
+          .widget<DetailArchiveDock>(find.byType(DetailArchiveDock))
+          .onPrimary,
+      isNull,
+    );
+    // 短剧的空目录会被当成一次失败重试（同一次地址连打两次都空才下结论）。
+    expect(calls, 2);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
 
   testWidgets('a long directory error can be scrolled to retry', (
     tester,
