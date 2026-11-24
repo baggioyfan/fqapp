@@ -202,11 +202,14 @@ mixin _LibraryClassicViews on _LibraryClassicChrome {
 
   Widget _classicGrid(List<_ShelfEntry> entries, int tab) => LayoutBuilder(
     builder: (context, constraints) {
-      final columns = isDesktopHost
-          ? ((constraints.maxWidth - ShelfTokens.screenPadding * 2) / 168)
-                .floor()
-                .clamp(ShelfTokens.gridColumns, 8)
-          : ShelfTokens.gridColumns;
+      // 列数一律按可用宽度算：一格 168dp，最少 [ShelfTokens.gridColumns] 列。
+      // 以前只有 `isDesktopHost` 才按宽度加列，Android 平板再宽也固定 3 列
+      // （1440dp 横屏同样 3 列，卡片被拉成 469dp 宽）。手机按这个公式算出来
+      // 本来就 ≤3，下限兜回 3 列，视觉不变。
+      final columns =
+          ((constraints.maxWidth - ShelfTokens.screenPadding * 2) / 168)
+              .floor()
+              .clamp(ShelfTokens.gridColumns, 8);
       return GridView.builder(
         physics: const AlwaysScrollableScrollPhysics(),
         key: PageStorageKey('classic-shelf-grid-$tab'),
@@ -247,11 +250,12 @@ mixin _LibraryClassicViews on _LibraryClassicChrome {
   Widget _classicDoubleGrid(List<_ShelfEntry> entries, int tab) =>
       LayoutBuilder(
         builder: (context, constraints) {
-          final columns = isDesktopHost
-              ? ((constraints.maxWidth - ShelfTokens.screenPadding * 2) / 340)
-                    .floor()
-                    .clamp(2, 4)
-              : 2;
+          // 双列版同口径：一格 340dp，最低 2 列。平板横屏从固定 2 列变成
+          // 按宽度铺到 4 列，手机仍是 2 列。
+          final columns =
+              ((constraints.maxWidth - ShelfTokens.screenPadding * 2) / 340)
+                  .floor()
+                  .clamp(2, 4);
           return GridView.builder(
             physics: const AlwaysScrollableScrollPhysics(),
             key: PageStorageKey('classic-shelf-double-$tab'),
