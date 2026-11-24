@@ -202,7 +202,14 @@ mixin _LibraryClassicViews on _LibraryClassicChrome {
 
   Widget _classicGrid(List<_ShelfEntry> entries, int tab) => LayoutBuilder(
     builder: (context, constraints) {
-      final columns = isDesktopHost
+      // 宽屏按可用宽度排：每格约 168dp，夹在官方的三列到 8 列。
+      //
+      // 判据必须走全站口径 appIsWideLayout（窗口宽 ≥840 或桌面三端），
+      // 不能写 isDesktopHost —— 后者只认 Windows/macOS/Linux，Android 平板
+      // 会恒 3 列，而隔壁短剧页早已按宽度铺开。这个坑 2026-11 修过一次，
+      // 换上游基底时又被改了回去（`test/classic_shelf_ui_test.dart` 里的
+      // 平板用例守着）。
+      final columns = appIsWideLayout(context)
           ? ((constraints.maxWidth - ShelfTokens.screenPadding * 2) / 168)
                 .floor()
                 .clamp(ShelfTokens.gridColumns, 8)

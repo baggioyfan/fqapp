@@ -11,6 +11,7 @@ import '../models/shelf_categories.dart';
 import '../models/shelf_identity.dart';
 import '../models/shelf_view_state.dart';
 import '../models/shuqi_book.dart';
+import '../services/app_breakpoints.dart';
 import '../services/app_log.dart';
 import '../services/app_style_tokens.dart';
 import '../services/book_open_preferences.dart';

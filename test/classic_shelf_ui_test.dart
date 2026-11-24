@@ -533,6 +533,40 @@ void main() {
     );
 
     testWidgets(
+      'wide shelf grid lays out by width, not a fixed three columns',
+      (tester) async {
+        // 回归守卫：换上游基底时这里的判据被改回 isDesktopHost（只认桌面三端），
+        // Android 平板（宽 ≥840 但不属于桌面）恒 3 列、右边一片空白，而全量
+        // flutter test 全绿 —— 因为没有任何用例在宽屏下量过列数。
+        //
+        // flutter test 的 defaultTargetPlatform 恒为 android，正好就是「平板」
+        // 这个条件：宽 1024 ≥ 840 走宽屏，但 isDesktopHost 为假。
+        const size = Size(1024, 768);
+        await tester.binding.setSurfaceSize(size);
+        addTearDown(() => tester.binding.setSurfaceSize(null));
+        await tester.runAsync(() => ShelfStore.instance.add(_item()));
+        await tester.pumpWidget(_app(_style(), size: size));
+        await tester.pumpAndSettle();
+
+        final grid = tester.widget<GridView>(
+          find.byKey(const PageStorageKey('classic-shelf-grid-0')),
+        );
+        final columns =
+            (grid.gridDelegate as SliverGridDelegateWithFixedCrossAxisCount)
+                .crossAxisCount;
+        // 不钉死具体数字（算式微调不该红），只要求「真的按宽度铺开了」：
+        // 1024dp 扣掉两侧栏距约 5 列，恒 3 列就是被落回去了。
+        expect(
+          columns,
+          greaterThan(3),
+          reason: '1024dp 平板书架宫格应按宽度铺开，恒 3 列说明宽屏判据又用了 isDesktopHost',
+        );
+        expect(columns, lessThanOrEqualTo(8), reason: '列数上限 8');
+        await tester.pumpWidget(const SizedBox.shrink());
+      },
+    );
+
+    testWidgets(
       'collection empty: manju filter flips the action copy and the notice sits above the screen center',
       (tester) async {
         await _size(tester);

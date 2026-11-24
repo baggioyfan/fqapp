@@ -39,5 +39,6 @@ test/webdav_sync_service_test.dart           20
 
 # --- 与上游同名，但 fork 往里加过用例（整份 checkout 上游版会连坐）
 test/boss_key_test.dart                      20
+test/classic_shelf_ui_test.dart              23
 test/detail_page_test.dart                   19
 
