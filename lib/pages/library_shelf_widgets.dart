@@ -11,37 +11,52 @@ class _ShelfKindFilter extends StatelessWidget {
   final String? selected;
   final ValueChanged<String?> onChanged;
 
-  static const _options = <({String key, String label, String? value})>[
-    (key: 'all', label: '全部', value: null),
-    (key: 'book', label: '小说', value: 'book'),
-    (key: 'manga', label: '漫画', value: 'manga'),
-    (key: 'video', label: '短剧', value: 'video'),
-    (key: 'manju', label: '漫剧', value: 'manju'),
-    (key: 'audio', label: '听书', value: 'audio'),
-  ];
-
   @override
-  Widget build(BuildContext context) => SingleChildScrollView(
-    scrollDirection: Axis.horizontal,
-    child: Row(
-      children: [
-        for (final option in _options)
-          Padding(
-            padding: const EdgeInsets.only(right: 8),
-            child: Semantics(
-              key: Key('library-shelf-kind-${option.key}'),
-              selected: selected == option.value,
-              inMutuallyExclusiveGroup: true,
-              child: GlassTextButton(
-                compact: true,
-                selected: selected == option.value,
-                onPressed: () => onChanged(option.value),
-                child: AppText(option.label),
+  Widget build(BuildContext context) => LayoutBuilder(
+    builder: (context, constraints) {
+      const kinds = [
+        (null, '全部'),
+        ('book', '小说'),
+        ('manga', '漫画'),
+        ('video', '短剧'),
+        ('manju', '漫剧'),
+        ('audio', '听书'),
+      ];
+      const gap = 6.0;
+      const padding = 9.0;
+      final labelWidth = MediaQuery.textScalerOf(context).scale(13) * 2;
+      final minimum = (labelWidth + padding * 2).clamp(
+        HomeChip.minTapTarget,
+        double.infinity,
+      );
+      final available = constraints.maxWidth;
+      final capacity = ((available + gap) / (minimum + gap)).floor().clamp(
+        1,
+        kinds.length,
+      );
+      final rows = (kinds.length / capacity).ceil();
+      final columns = (kinds.length / rows).ceil();
+      final width = ((available - gap * (columns - 1)) / columns)
+          .floorToDouble()
+          .clamp(0.0, rows == 1 ? minimum + 12 : available);
+      return Wrap(
+        spacing: gap,
+        runSpacing: gap,
+        children: [
+          for (final (value, label) in kinds)
+            SizedBox(
+              width: width,
+              child: HomeChip(
+                key: Key('library-shelf-kind-${value ?? 'all'}'),
+                label: label,
+                horizontalPadding: padding,
+                selected: selected == value,
+                onTap: () => onChanged(value),
               ),
             ),
-          ),
-      ],
-    ),
+        ],
+      );
+    },
   );
 }
 

@@ -42,9 +42,17 @@ class ClassicShellDock extends StatefulWidget {
 class _ClassicShellDockState extends State<ClassicShellDock> {
   /// 同心圆角规则：dock 外轮廓是 [_dockHeight] 高的全胶囊（圆角 = 高/2），
   /// 选中背景从 dock 内壁四周内缩 [_innerInset]，圆角取 `外圆角 − 内缩间距`
-  /// （内层背景高 64 − 8 = 56 = 2 × 28，同样是全胶囊），两层圆弧圆心同在
+  /// （内层背景高 56 − 8 = 48 = 2 × 24，同样是全胶囊），两层圆弧圆心同在
   /// dock 中线上、四周间距均匀，观感是外轮廓正好比高亮背景大一圈。
-  static const _dockHeight = 64.0;
+  ///
+  /// 高度取 56 而不是更早的 64（issue #478）：图标 20 + 间距 2 + 标签
+  /// ≈ 16 共 38dp，减高后内层仍有 48dp，装得下且与档案主题的
+  /// `DockLayout.height`（54）基本齐平，两套主题的底部占位不再差 10dp。
+  /// 少掉的 8dp 全部还给内容区（[ShelfTokens.contentBottomInset]）。
+  /// 两层都画成 [RoundedSuperellipseBorder]（M3 连续曲率 squircle，对齐
+  /// PiliPlus 的 FloatingNavigationBar）：普通圆弧在胶囊两端有曲率突变，
+  /// 连续曲率的过渡更软，高亮块与外轮廓的弧度看起来是同一套。
+  static const _dockHeight = 56.0;
   static const _dockRadius = _dockHeight / 2;
   static const _innerInset = 4.0;
   static const _innerRadius = _dockRadius - _innerInset;
@@ -524,7 +532,10 @@ class _ClassicDockDestination extends StatelessWidget {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Icon(icon, size: 22, color: iconColor),
+                // 图标 22 → 20（issue #478）：胶囊从 64 收到 56 后，内层只剩
+                // 48dp，图标缩回 20 才能让内容块（20 + 2 + 16）上下各留 5dp
+                // 呼吸，而不是贴着选中背景的 4dp 内缩边。
+                Icon(icon, size: 20, color: iconColor),
                 const SizedBox(height: 2),
                 Text(
                   label,

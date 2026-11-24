@@ -154,9 +154,11 @@ void main() {
       final bar = tester.widget<SizedBox>(
         find.byKey(const ValueKey('classic-navigation-bar')),
       );
-      expect(bar.height, 64);
-      // 同心圆角：选中背景圆角 28 = 外轮廓 32 − 内缩间距 4；高亮是全局
-      // 唯一的浮动背景块，selectedIndex=2 时落在“书架”位置。
+      expect(bar.height, 56);
+      // 同心圆角：选中背景圆角 24 = 外轮廓 28 − 内缩间距 4；高亮是全局
+      // 唯一的浮动背景块，selectedIndex=2 时落在“书架”位置。形状必须是
+      // 连续曲率 squircle（对齐 PiliPlus FloatingNavigationBar）。
+      // 胶囊 64 → 56 是 issue #478 的收窄。
       final selection = tester.widget<DecoratedBox>(
         find.byKey(const ValueKey('classic-dock-selection')),
       );
@@ -165,7 +167,7 @@ void main() {
             .resolve(TextDirection.ltr)
             .topLeft
             .x,
-        28,
+        24,
       );
       // 背景块中心与“书架”文字中心对齐（屏宽无关）。
       expect(

@@ -334,8 +334,10 @@ class FqApp extends StatefulWidget {
 class _FqAppState extends State<FqApp> {
   AppThemeStyleStore get _styleStore =>
       widget.styleStore ?? AppThemeStyleStore.instance;
-  // Official tabbar + 18dp applies on every page. Our floating dock is 64
-  // high with an 8px gap; the desktop shell has no bottom bar.
+  // Official tabbar + 18dp applies on every page. Our bottom chrome is a
+  // floating dock: 56 high with an 8dp gap in the classic style, 54 high with
+  // a 12dp gap in the archive style (issue #478). 72 keeps the floating audio
+  // pill clear of both; the desktop shell has no bottom bar.
   final _audioRoutes = AudioFloatingRoutes(
     defaultBottomInset: isDesktopHost ? 0 : 72,
   );

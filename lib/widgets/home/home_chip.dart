@@ -9,7 +9,7 @@ import 'home_design.dart';
 /// 会和未选中态撞色，选中态直接消失；这里显式给出墨水屏分支：选中 =
 /// 黑底白字，未选中 = 白底黑字 + 1px 黑描边，保证可区分。
 ///
-/// 视觉高度 32dp，触控高度不小于 48dp（InkWell 铺满整块可点区域）。
+/// 视觉高度 32dp，触控高度不小于 48dp（Material 补足透明触控区域）。
 class HomeChip extends StatelessWidget {
   const HomeChip({
     super.key,
@@ -17,6 +17,7 @@ class HomeChip extends StatelessWidget {
     required this.selected,
     required this.onTap,
     this.semanticLabel,
+    this.horizontalPadding = 14,
   });
 
   /// 视觉胶囊高度；触控高度见 [minTapTarget]。
@@ -29,6 +30,7 @@ class HomeChip extends StatelessWidget {
   final bool selected;
   final VoidCallback? onTap;
   final String? semanticLabel;
+  final double horizontalPadding;
 
   @override
   Widget build(BuildContext context) {
@@ -43,44 +45,29 @@ class HomeChip extends StatelessWidget {
     return Semantics(
       label: semanticLabel,
       selected: selected,
-      button: true,
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          onTap: onTap,
-          customBorder: const StadiumBorder(),
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(minHeight: minTapTarget),
-            child: Center(
-              widthFactor: 1,
-              heightFactor: 1,
-              child: Container(
-                height: height,
-                padding: const EdgeInsets.symmetric(horizontal: 14),
-                // 宽度必须收缩到文字宽度：Wrap / Center 给的是有限最大宽，
-                // 带 alignment 的 Container 会撑满整行，胶囊就变成整条。
-                decoration: ShapeDecoration(
-                  color: background,
-                  shape: StadiumBorder(side: side),
-                ),
-                child: Center(
-                  widthFactor: 1,
-                  child: Text(
-                    label,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontSize: 13,
-                      height: 1.2,
-                      fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
-                      color: foreground,
-                    ),
-                  ),
-                ),
-              ),
-            ),
+      child: TextButton(
+        onPressed: onTap,
+        clipBehavior: Clip.antiAlias,
+        style: TextButton.styleFrom(
+          backgroundColor: background,
+          foregroundColor: foreground,
+          disabledBackgroundColor: background,
+          disabledForegroundColor: foreground,
+          minimumSize: const Size(minTapTarget, height),
+          padding: EdgeInsets.symmetric(
+            horizontal: horizontalPadding,
+            vertical: 6,
           ),
-        ),
+          tapTargetSize: MaterialTapTargetSize.padded,
+          visualDensity: VisualDensity.standard,
+          shape: StadiumBorder(side: side),
+          textStyle: const TextStyle(
+            fontSize: 13,
+            height: 1.2,
+            fontWeight: FontWeight.w600,
+          ),
+        ).copyWith(side: WidgetStatePropertyAll(side)),
+        child: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis),
       ),
     );
   }

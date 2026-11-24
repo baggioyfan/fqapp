@@ -16,8 +16,9 @@ import 'package:fqapp/widgets/home/home_design.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  // dock 外轮廓：64 高全胶囊（圆角 32）；选中背景内缩 4、圆角 28 = 32 − 4。
-  const outerRadius = 32.0;
+  // dock 外轮廓：56 高全胶囊（圆角 28）；选中背景内缩 4、圆角 24 = 28 − 4。
+  // 64 → 56 是 issue #478 的收窄：底部条更矮，宫格多露一截。
+  const outerRadius = 28.0;
   const inset = 4.0;
   const innerRadius = outerRadius - inset;
 
@@ -139,8 +140,8 @@ void main() {
     );
     final bgRect = selectionRect(tester);
 
-    // 外轮廓 64 高、圆角 32 = 高/2 的全胶囊。
-    expect(dockRect.height, 64);
+    // 外轮廓 56 高、圆角 28 = 高/2 的全胶囊。
+    expect(dockRect.height, 56);
     expect(radiusOf(surfaceDecoration(tester)), outerRadius);
 
     // 贴边侧（左侧、上下）内缩均匀 4px；右侧是相邻项边界不贴边。
@@ -527,7 +528,7 @@ void main() {
       find.byKey(const ValueKey('classic-dock-surface')),
     );
     // 同心几何在 eink 下不变。
-    expect(bgRect.height, 64 - 2 * inset);
+    expect(bgRect.height, 56 - 2 * inset);
     expect(bgRect.top - dockRect.top, inset);
     expect(radiusOf(selectionDecoration(tester)), innerRadius);
 

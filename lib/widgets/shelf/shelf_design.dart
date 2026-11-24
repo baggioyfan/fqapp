@@ -23,7 +23,10 @@ class ShelfTokens {
   static const double screenPadding = 16.0;
 
   /// 内容区底部留白：三档版式的最后一行不被悬浮底栏与手势条压住。
-  static const double contentBottomInset = 88.0;
+  ///
+  /// 88 → 80（issue #478）：根底栏胶囊 64 → 56，留白里的底栏占位跟着
+  /// 收缩，最后一行与底栏之间的视觉间距（16dp）不变。
+  static const double contentBottomInset = 80.0;
 
   /// 编辑态顶部操作栏高度（全选 / 已选择 N 本 / 完成）。
   static const double editBarHeight = 52.0;

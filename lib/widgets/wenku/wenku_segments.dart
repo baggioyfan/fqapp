@@ -49,10 +49,17 @@ class AppGlassSegments<T extends Object> extends StatelessWidget {
     this.selectedForegroundColor,
     this.disabledChildren = const {},
     this.haptics = true,
+    this.dense = false,
   });
 
   /// fqapp addition: e-ink draws a solid ink pill, so its label inverts.
   final Color? selectedForegroundColor;
+
+  /// fqapp addition（issue #478）：窄框模式。书架页的一级 tab 只承担切换，
+  /// 不需要 48dp 的从容框，胶囊 48 → 44、外圈竖向留白 4 → 3，整行少 6dp；
+  /// 选中胶囊行进中的 growHeight 膨胀（14dp，上下各 7）刚好被这 3dp
+  /// 外留白 + 无裁剪的 Stack 容下。其他页面的段控件仍走默认宽度。
+  final bool dense;
   final T? groupValue;
   final bool haptics;
   final Map<T, Widget> children;
@@ -84,18 +91,21 @@ class AppGlassSegments<T extends Object> extends StatelessWidget {
           .ceilToDouble();
       final width = math.max(1.0, constraints.maxWidth - gutter * 2);
       final cellWidth = math.max(1.0, (width - 8) / keys.length);
-      var height = 48.0;
+      var height = dense ? 44.0 : 48.0;
       for (final label in labels) {
         final painter = TextPainter(
           text: TextSpan(text: label, style: textStyle),
           textScaler: MediaQuery.textScalerOf(context),
           textDirection: Directionality.of(context),
         )..layout(maxWidth: cellWidth);
-        height = math.max(height, painter.height + 12);
+        height = math.max(height, painter.height + (dense ? 10 : 12));
         painter.dispose();
       }
       return Padding(
-        padding: EdgeInsets.symmetric(horizontal: gutter, vertical: 4),
+        padding: EdgeInsets.symmetric(
+          horizontal: gutter,
+          vertical: dense ? 3 : 4,
+        ),
         child: easy.LiquidGlassSegmented(
           segments: labels,
           selectedIndex: math.max(
@@ -443,6 +453,7 @@ abstract final class WenkuControls {
     required ValueChanged<T?> onValueChanged,
     Set<T> disabledChildren = const {},
     bool haptics = true,
+    bool dense = false,
   }) {
     final scheme = Theme.of(context).colorScheme;
     // fqapp e-ink / high contrast: no grey shadow halo or translucent pill;
@@ -462,6 +473,7 @@ abstract final class WenkuControls {
         children: children,
         disabledChildren: disabledChildren,
         haptics: haptics,
+        dense: dense,
         onValueChanged: onValueChanged,
         foregroundColor: scheme.onSurface,
         selectedForegroundColor: plain ? scheme.surface : null,

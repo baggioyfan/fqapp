@@ -18,9 +18,12 @@ mixin _LibraryClassicChrome on _LibraryShelfViews {
   }
 
   Widget _classicTabRow(HomePalette palette) => Padding(
+    // 页头收缩（issue #478）：上 12 → 6、下 7 → 4。一级 tab 与状态栏、
+    // 工具条各自留 6/4 的呼吸，仍看得出层级，但比原来少占 9dp，
+    // 这 9dp 直接变成了书封宫格的高度。
     padding: const EdgeInsets.only(
-      top: ShelfTokens.spaceM,
-      bottom: 7,
+      top: 6,
+      bottom: 4,
       left: ShelfTokens.screenPadding,
     ),
     child: Row(
@@ -188,11 +191,13 @@ mixin _LibraryClassicChrome on _LibraryShelfViews {
 
   /// 手机使用紧凑工具栏，宽屏保持原有分段版式开关。
   Widget _classicToolbar(HomePalette palette, int tab) => Padding(
+    // 上下留白 4/8 → 2/6（issue #478）：tab 行已经提供了分隔，工具条
+    // 只需要不贴边的余量。
     padding: const EdgeInsets.fromLTRB(
       ShelfTokens.screenPadding,
-      ShelfTokens.spaceXS,
+      2,
       ShelfTokens.screenPadding,
-      ShelfTokens.spaceS,
+      6,
     ),
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -282,33 +287,14 @@ mixin _LibraryClassicChrome on _LibraryShelfViews {
           },
         ),
         if (tab == 0) ...[
-          const SizedBox(height: ShelfTokens.spaceXS),
-          _classicShelfKindFilter(),
+          const SizedBox(height: 2),
+          _ShelfKindFilter(
+            selected: _shelfKindFilter,
+            onChanged: (value) => setState(() => _shelfKindFilter = value),
+          ),
         ],
       ],
     ),
-  );
-
-  /// 书架 tab 的媒介类型筛选(全部 / 小说 / 漫画 / 短剧 / 漫剧 / 听书)。
-  Widget _classicShelfKindFilter() => Wrap(
-    spacing: 8,
-    runSpacing: 8,
-    children: [
-      for (final (value, label) in const [
-        (null, '全部'),
-        ('book', '小说'),
-        ('manga', '漫画'),
-        ('video', '短剧'),
-        ('manju', '漫剧'),
-        ('audio', '听书'),
-      ])
-        HomeChip(
-          key: Key('library-shelf-kind-${value ?? 'all'}'),
-          label: label,
-          selected: _shelfKindFilter == value,
-          onTap: () => setState(() => _shelfKindFilter = value),
-        ),
-    ],
   );
 
   /// 窄屏或大字号时让整块控件换行，保留每个入口的触控宽度。

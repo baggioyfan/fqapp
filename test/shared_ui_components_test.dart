@@ -92,23 +92,12 @@ void main() {
       ),
     );
     const palette = HomePalette(false);
-    ShapeDecoration decoration(String key) =>
-        tester
-                .widget<Container>(
-                  find.descendant(
-                    of: find.byKey(Key(key)),
-                    matching: find.byType(Container),
-                  ),
-                )
-                .decoration
-            as ShapeDecoration;
-    expect(decoration('chip-light-selected').color, palette.ink);
-    expect(decoration('chip-light-plain').color, palette.soft);
-    expect(
-      (decoration('chip-light-plain').shape as StadiumBorder).side,
-      BorderSide.none,
-    );
-    expect(tester.widget<Text>(find.text('已选')).style!.color, palette.canvas);
+    final selected = _chipMaterial(tester, 'chip-light-selected');
+    final plain = _chipMaterial(tester, 'chip-light-plain');
+    expect(selected.color, palette.ink);
+    expect(plain.color, palette.soft);
+    expect((plain.shape as StadiumBorder).side, BorderSide.none);
+    expect(_chipForeground(tester, 'chip-light-selected'), palette.canvas);
   });
 
   testWidgets('墨水屏下 HomeChip 选中黑底白字、未选中白底黑字并描边', (tester) async {
@@ -137,32 +126,62 @@ void main() {
       ),
     );
 
-    ShapeDecoration decoration(String key) =>
-        tester
-                .widget<Container>(
-                  find.descendant(
-                    of: find.byKey(Key(key)),
-                    matching: find.byType(Container),
-                  ),
-                )
-                .decoration
-            as ShapeDecoration;
-    final selected = decoration('chip-eink-selected');
-    final plain = decoration('chip-eink-plain');
+    final selected = _chipMaterial(tester, 'chip-eink-selected');
+    final plain = _chipMaterial(tester, 'chip-eink-plain');
     expect(selected.color, Colors.black);
     expect((selected.shape as StadiumBorder).side, BorderSide.none);
     expect(plain.color, Colors.white);
     final plainSide = (plain.shape as StadiumBorder).side;
     expect(plainSide.color, Colors.black);
     expect(plainSide.width, 1);
-    expect(tester.widget<Text>(find.text('已选')).style!.color, Colors.white);
-    expect(tester.widget<Text>(find.text('未选')).style!.color, Colors.black);
+    expect(_chipForeground(tester, 'chip-eink-selected'), Colors.white);
+    expect(_chipForeground(tester, 'chip-eink-plain'), Colors.black);
     for (final key in ['chip-eink-selected', 'chip-eink-plain']) {
       expect(
         tester.getSize(find.byKey(Key(key))).height,
         greaterThanOrEqualTo(HomeChip.minTapTarget),
       );
     }
+  });
+
+  testWidgets('HomeChip keeps its surface inside the touch area when pressed', (
+    tester,
+  ) async {
+    const key = Key('adaptive-chip');
+    final selected = ValueNotifier(false);
+    addTearDown(selected.dispose);
+    await tester.pumpWidget(
+      _app(
+        MediaQuery(
+          data: const MediaQueryData(textScaler: TextScaler.linear(2)),
+          child: ValueListenableBuilder(
+            valueListenable: selected,
+            builder: (context, value, _) => HomeChip(
+              key: key,
+              label: '听书',
+              selected: value,
+              onTap: () => selected.value = !value,
+            ),
+          ),
+        ),
+      ),
+    );
+    final button = find.byKey(key);
+    final surface = _chipSurface('adaptive-chip');
+    final before = tester.getRect(surface);
+    final touchArea = tester.getRect(button);
+    expect(before.height, greaterThan(HomeChip.height));
+    expect(before.center, touchArea.center);
+    expect(_chipMaterial(tester, 'adaptive-chip').clipBehavior, Clip.antiAlias);
+    final tap = await tester.startGesture(
+      Offset(touchArea.center.dx, touchArea.top + 1),
+    );
+    await tester.pump();
+    expect(tester.getRect(surface), before);
+    await tap.up();
+    await tester.pumpAndSettle();
+    expect(selected.value, isTrue);
+    expect(tester.getRect(surface), before);
   });
 
   testWidgets('墨水屏下 SettingsSwitch 纯黑白且两种状态可区分', (tester) async {
@@ -499,4 +518,20 @@ void main() {
       Colors.white,
     );
   });
+}
+
+Finder _chipSurface(String key) =>
+    find.descendant(of: find.byKey(Key(key)), matching: find.byType(Material));
+
+Material _chipMaterial(WidgetTester tester, String key) =>
+    tester.widget<Material>(_chipSurface(key));
+
+Color? _chipForeground(WidgetTester tester, String key) {
+  final button = tester.widget<TextButton>(
+    find.descendant(
+      of: find.byKey(Key(key)),
+      matching: find.byType(TextButton),
+    ),
+  );
+  return button.style?.foregroundColor?.resolve({});
 }

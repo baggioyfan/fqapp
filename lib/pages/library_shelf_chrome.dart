@@ -139,10 +139,14 @@ mixin _LibraryShelfChrome on _LibraryPageActions {
   }
 
   /// 一级 tab：上游 `WenkuControls.segments` 三段（书架 / 浏览历史 / 收藏）。
+  ///
+  /// dense（issue #478）：这一行只是切换器，不是阅读内容；矮 6dp 换给宫格，
+  /// 与经典主题下的一级 tab 行同一套紧凑口径。
   Widget _tabSegments(BuildContext context) => WenkuControls.segments<int>(
     context,
     key: const Key('library-tabs'),
     groupValue: _tab,
+    dense: true,
     children: const {0: Text('书架'), 1: Text('浏览历史'), 2: Text('收藏')},
     onValueChanged: (value) {
       if (value != null) _selectTab(value);
@@ -171,7 +175,9 @@ mixin _LibraryShelfChrome on _LibraryPageActions {
               filterKey: const Key('shelf-filter'),
               viewKey: const Key('shelf-view'),
             ),
-            const SizedBox(height: 10),
+            // 竖向间距链 10 → 8（issue #478）：工具条与筛选行本来就是
+            // 同一组控件，收紧后整块顶部更紧凑，宫格多出 4dp。
+            const SizedBox(height: 8),
             _CollectionTypeFilter(
               selected: _collectionFilter,
               onChanged: (value) => setState(() => _collectionFilter = value),
@@ -210,7 +216,7 @@ mixin _LibraryShelfChrome on _LibraryPageActions {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             toolbar,
-            const SizedBox(height: 10),
+            const SizedBox(height: 8),
             kindFilter,
             _cacheStatus(),
           ],
@@ -223,9 +229,9 @@ mixin _LibraryShelfChrome on _LibraryPageActions {
             alignment: Alignment.centerLeft,
             child: ShelfTodayReadingPill(minutes: _todayMinutes),
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 6),
           toolbar,
-          const SizedBox(height: 10),
+          const SizedBox(height: 8),
           kindFilter,
           _cacheStatus(),
         ],
