@@ -1204,6 +1204,9 @@ class _AudioPageState extends State<AudioPage> {
               c._index,
               restoreHistory: true,
               toneId: c._toneId,
+              // 用户点「重新播放」通常是因为源过期/取流失败，必须重取地址，
+              // 复用旧 URL 会立刻再失败一次。
+              refreshSource: true,
             ),
             style: FilledButton.styleFrom(backgroundColor: HomePalette.accent),
             icon: const Icon(LucideIcons.refresh_cw, size: 16),

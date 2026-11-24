@@ -301,6 +301,22 @@ class _AudioPlaybackController extends ChangeNotifier
         .registerFlushHandler(_persistProgress);
     NativePlayer.setRemoteCommandHandler(
       owner: _mediaOwner,
+      // 系统媒体卡上的音量/倍速/进度回写。少这段时桌面媒体键能暂停却不能调
+      // 音量，锁屏卡片拖进度也是空操作（native 侧把 setting/seek 都发出来了）。
+      onSetting: (property, value) async {
+        final player = _player;
+        final generation = _generation;
+        if (player == null) throw StateError('No player');
+        if (property == 'Volume') {
+          await player.setVolume(value);
+        } else {
+          await player.setRate(value);
+        }
+        if (!_current(generation, player)) throw StateError('Stale player');
+        if (property == 'Rate') _update(() => _rate = value);
+        return value;
+      },
+      onSeek: (ms) => unawaited(_seekTo(Duration(milliseconds: ms))),
       onAction: _handleRemoteAction,
       onBecomingNoisy: _handleBecomingNoisy,
     );
@@ -311,7 +327,7 @@ class _AudioPlaybackController extends ChangeNotifier
     AudioPreferences.instance.defaultVoice.addListener(_defaultVoiceChanged);
     _history = AudioHistory(request.historyStore ?? LibraryStore.instance);
     final lifecycle = WidgetsBinding.instance.lifecycleState;
-    _appActive = lifecycle == null || lifecycle == AppLifecycleState.resumed;
+    _appActive = lifecycle == null || desktopInactiveStillVisible(lifecycle);
     _bookId = request.bookId;
     _title = request.title;
     _cover = request.cover;
@@ -679,9 +695,7 @@ class _AudioPlaybackController extends ChangeNotifier
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (_closed) return;
-    _appActive = isLinuxDesktop
-        ? desktopInactiveStillVisible(state)
-        : state == AppLifecycleState.resumed;
+    _appActive = desktopInactiveStillVisible(state);
     if (isLinuxDesktop && state == AppLifecycleState.detached) {
       _visibilityResumeGeneration = null;
       unawaited(close());
@@ -699,12 +713,15 @@ class _AudioPlaybackController extends ChangeNotifier
       // 也算「不可见」，但那里不撤会话 —— 只暂停，回来还要用它续播。
       if (!AudioPreferences.instance.backgroundPlayback.value ||
           (isLinuxDesktop && DesktopSystemSession.instance.suspended)) {
-        // 上游在这一版去掉了自动续播倒计时（`_cancelAdvanceCountdown`），
-        // 所以这里不再需要取消它；保留我们自己的「暂停后留着会话续播」写法。
-        final resume = isLinuxDesktop && _wantPlay;
-        _visibilityPause = _pauseForOtherMedia();
-        if (resume) _visibilityResumeGeneration = _generation;
-        unawaited(NativePlayer.stopListenForeground(owner: _mediaOwner));
+        // 只有还打算播的时候才暂停并留续播标记：锁屏 → 挂起 → 唤醒 → 解锁
+        // 会连发多次会话事件，第二次进来时 _wantPlay 已是 false，再写一次
+        // 会把「回来要续播」的世代号覆盖掉（上游 abc9abba 修的正是这个）。
+        if (_wantPlay) {
+          final resume = isLinuxDesktop;
+          _visibilityPause = _pauseForOtherMedia();
+          if (resume) _visibilityResumeGeneration = _generation;
+          unawaited(NativePlayer.stopListenForeground(owner: _mediaOwner));
+        }
       }
     }
     _syncListenClock();
