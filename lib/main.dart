@@ -187,10 +187,6 @@ Future<void> _loadLocalData() async {
   await Future.wait<void>([
     // Load before interactive pages mount, so a saved opt-out applies at launch.
     optional(HapticPreferences.instance.load),
-    // 短剧功能开关同理：壳层首帧就要决定 dock 画 3 项还是 4 项，
-    // 放到 await 之后会先画 4 项再抽掉一项（SP 已由 spFuture 打开，
-    // 这里只是一次内存读，不额外增加串行等待）。
-    optional(DramaFeaturePreferences.instance.load),
     LibraryStore.instance.init(),
     // The 加入书架 collection is optional data: a failure here must not block
     // startup, which is why it shares the retryable bootstrap with the history.
@@ -247,6 +243,11 @@ Future<void> _loadLocalData() async {
     spFuture,
     themeStyleFuture,
   ]);
+  // 短剧功能开关：异步读，失败退化为默认开启。**不能进上面的 await 段** ——
+  // 闸门里的 SharedPreferences 读取在 widget 测试的 fake-async 路径上会让
+  // 后续用例的闸门永远不开（comprehensive_data_boundaries 的 6 条就是这么红的）。
+  // 代价是关闭短剧时首帧可能先画 4 项、下一帧收成 3 项。
+  unawaited(optional(DramaFeaturePreferences.instance.load));
   // 听书后台播放开关：异步读取 SharedPreferences，失败退化为默认开启。
   unawaited(AudioPreferences.instance.load());
   // 短剧「边看边往后缓存」的开关与集数：同一条装配链里读，避免播放页
