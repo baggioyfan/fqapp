@@ -585,3 +585,47 @@ async fn the_playback_request_declares_a_device_level_that_gets_h265() {
         "device_level=3 makes upstream serve bytevc2 (H.266), which this player cannot decode: {plain}"
     );
 }
+
+/// 匿名增强门（`.../player/v1/`，注意结尾斜杠）排在 v5 门前面，且它答空包
+/// 时门链必须继续往下走 —— 否则上游给的「HTTP 200 零字节」会直接变成
+/// 「视频取流失败」，而这正是加这扇门要解决的问题。
+///
+/// 门健康状态是进程级的，所以本用例先清一次，避免同文件其它用例留下的
+/// 30 秒空包冷却把它挡在门外。
+#[tokio::test]
+async fn the_anonymous_enhanced_door_is_tried_before_the_v5_door() {
+    fqapi_core::upstream::reset_playback_route_state_for_tests();
+    let upstream = MockUpstream::start(|req| {
+        if let Some(reply) = common::identity_setup_reply(req) {
+            return reply;
+        }
+        if req.path == common::ANON_PLAYER_PATH {
+            // 匿名门这次答零字节：门链必须继续往 v5 门走。
+            return MockReply::status(200);
+        }
+        MockReply::json(json!({"data": {"video_model": {
+            "key_seed": "AAAA",
+            "video_list": {
+                "video_1": {"main_url": ALLOWED_URL, "codec_type": "h264", "spade_a": SPADE_A}
+            }
+        }}}))
+    })
+    .await;
+    let dir = TempDir::new("video-anon-door");
+    let server = build_server(&dir, Some(upstream.origin.clone()), &[], &[], &pool_json(5)).await;
+
+    let (status, body) = request_video(&server, "mode=stream").await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(body["video_url"], ALLOWED_URL, "{body}");
+
+    let paths: Vec<String> = upstream.requests().into_iter().map(|r| r.path).collect();
+    let anon = paths
+        .iter()
+        .position(|p| p == common::ANON_PLAYER_PATH)
+        .unwrap_or_else(|| panic!("匿名门没有被请求：{paths:?}"));
+    let v5 = paths
+        .iter()
+        .position(|p| p == common::LEGACY_V5_PLAYER_PATH)
+        .unwrap_or_else(|| panic!("v5 门没有被请求：{paths:?}"));
+    assert!(anon < v5, "匿名门必须排在 v5 门之前：{paths:?}");
+}
