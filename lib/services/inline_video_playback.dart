@@ -182,6 +182,10 @@ class InlineVideoPlayback {
   bool _disposed = false;
   bool _reusedFromPool = false;
 
+  /// 首帧前可重试的取流/播放失败还能静默恢复几次。每次显式 [activate]
+  /// 重新装填一次；内部恢复直接走 [_activate]，避免持续失败时循环取流。
+  int _silentMediaRetriesLeft = 0;
+
   /// True while a player instance exists (playing or paused).
   bool get hasPlayer => _player != null;
 
@@ -289,6 +293,22 @@ class InlineVideoPlayback {
     MediaItem series, {
     int? startEpisodeIndex,
     Duration? startPosition,
+  }) {
+    _silentMediaRetriesLeft = 1;
+    return _activate(
+      series,
+      startEpisodeIndex: startEpisodeIndex,
+      startPosition: startPosition,
+    );
+  }
+
+  /// [activate] 的共享实现。静默恢复沿用会话当前的播放意图：用户若在
+  /// 拆除旧解码器期间已手动暂停，重建不会把视频重新拉起来。
+  Future<void> _activate(
+    MediaItem series, {
+    int? startEpisodeIndex,
+    Duration? startPosition,
+    bool preservePlayIntent = false,
   }) async {
     if (_disposed) return;
     if (!isVideoKind(series.kind)) {
@@ -308,7 +328,7 @@ class InlineVideoPlayback {
     _active = series;
     _hasDisplayed = false;
     _progressDirty = false;
-    _wantsPlay = true;
+    if (!preservePlayIntent) _wantsPlay = true;
     _playIssued = false;
     _reusedFromPool = false;
     activeId.value = series.id;
@@ -1088,14 +1108,48 @@ class InlineVideoPlayback {
 
   Future<void> _fail(Object failure) async {
     if (_disposed) return;
-    ++_generation;
+    final issue = PlaybackIssue.fromError(failure);
+    final retry =
+        !_hasDisplayed &&
+            _wantsPlay &&
+            issue.retryable &&
+            _silentMediaRetriesLeft > 0 &&
+            _active != null &&
+            _activeIndex != null
+        ? (series: _active!, index: _activeIndex!)
+        : null;
+    if (retry != null) _silentMediaRetriesLeft--;
+    final resume = position.value;
+    final failureGeneration = ++_generation;
+    // The address may have expired or failed during native preparation. Drop
+    // this episode before teardown clears its identity: a retry must fetch a
+    // fresh source, not re-open the same failed two-minute cache entry.
+    final episode = activeEpisode;
+    if (episode != null) _sources.invalidate(episode.itemId);
+    _currentSource = null;
     AppLog.e('drama', '内联短剧取流或播放失败', error: failure);
-    error.value = failure is NativePlaybackException
-        ? PlaybackIssue.fromError(failure).title
-        : userFacingError(failure);
+    if (retry == null) {
+      error.value = failure is NativePlaybackException
+          ? issue.title
+          : userFacingError(failure);
+    } else {
+      AppLog.w('drama-inline', '首帧前媒体失败，静默重新取流一次: ${issue.name}');
+    }
     firstFrame.value = false;
     playing.value = false;
     await _teardown();
+    if (retry == null ||
+        _disposed ||
+        failureGeneration != _generation ||
+        !identical(_active, retry.series)) {
+      return;
+    }
+    await _activate(
+      retry.series,
+      startEpisodeIndex: retry.index,
+      startPosition: resume,
+      preservePlayIntent: true,
+    );
   }
 
   /// Detach the current player and queue its **release**. Every later creation

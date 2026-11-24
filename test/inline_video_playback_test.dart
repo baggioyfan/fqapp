@@ -6,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/services/episode_source_cache.dart';
 import 'package:fqapp/services/inline_video_playback.dart';
+import 'package:fqapp/services/native_player.dart';
 import 'package:fqapp/services/quality_memory.dart';
 
 import 'support/controlled_player.dart';
@@ -76,6 +77,91 @@ void main() {
     expect(session.playing.value, isTrue);
     expect(session.hasPlayer, isTrue);
     expect(players[1].disposed, isFalse);
+  });
+
+  test('首帧前媒体失败静默换新地址一次，再失败才结束会话', () async {
+    final releaseGate = Completer<void>();
+    addTearDown(() {
+      if (!releaseGate.isCompleted) releaseGate.complete();
+    });
+    final players = <ControlledNativePlayer>[];
+    var sourceCalls = 0;
+    final store = MemoryReaderStore(
+      entry: {
+        'id': 'a',
+        'kind': 'video',
+        'episodeId': 'a-1',
+        'episode': 0,
+        'position': 17.0,
+        'duration': 120.0,
+      },
+    );
+    final session = InlineVideoPlayback(
+      directoryLoader: (id, tab) async => [
+        [Chapter(itemId: '$id-1', title: '第 1 集', volumeName: '剧集')],
+      ],
+      contentLoader: (itemId, tab) async => {
+        'video_url': 'https://example.invalid/$itemId-${++sourceCalls}.mp4',
+      },
+      playerFactory: () {
+        final first = players.isEmpty;
+        final player = ControlledNativePlayer(
+          hasFirstFrame: !first,
+          releaseGate: first ? releaseGate : null,
+        );
+        players.add(player);
+        return player;
+      },
+      historyStore: store,
+    );
+    addTearDown(() async {
+      if (!releaseGate.isCompleted) releaseGate.complete();
+      await session.dispose();
+    });
+
+    await session.activate(_series('a'));
+    expect(sourceCalls, 1);
+    expect(players.single.createdStartMs, [17000]);
+    players.single.errors.add(
+      const NativePlaybackException(
+        'synthetic media DNS failure',
+        errorCode: 2001,
+      ),
+    );
+    await Future<void>.delayed(Duration.zero);
+    expect(session.error.value, isNull, reason: '首帧前失败应静默恢复');
+    expect(session.variants, isEmpty);
+    expect(
+      store.entry?['position'],
+      17.0,
+      reason: 'failed first frame must preserve resume',
+    );
+    expect(sourceCalls, 1, reason: '旧解码器释放完成前不能并发创建新播放器');
+
+    releaseGate.complete();
+    for (var i = 0; i < 20 && players.length < 2; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+    }
+    expect(players, hasLength(2));
+    expect(players.first.calls, contains('released'));
+    expect(
+      players.last.calls,
+      contains('create:https://example.invalid/a-1-2.mp4'),
+    );
+    expect(players.last.createdStartMs, [17000]);
+    expect(session.error.value, isNull);
+    expect(session.playing.value, isTrue);
+
+    players.last.errors.add(
+      const NativePlaybackException(
+        'synthetic media DNS failure',
+        errorCode: 2001,
+      ),
+    );
+    await Future<void>.delayed(Duration.zero);
+    expect(session.error.value, isNotNull, reason: '同一次激活只静默恢复一次');
+    expect(sourceCalls, 2);
+    expect(players, hasLength(2));
   });
 
   test('quality choice carries to the next episode by name (#60)', () async {

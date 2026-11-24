@@ -24,6 +24,11 @@ use fqapi_core::upstream::UpstreamClient;
 
 static COUNTER: AtomicU64 = AtomicU64::new(0);
 
+pub const ANON_PLAYER_PATH: &str = "/novel/player/multi_video_model/player/v1/";
+pub const LEGACY_V5_PLAYER_PATH: &str = "/novel/player/multi_video_model/player/v1";
+pub const DEVICE_REGISTER_PATH: &str = "/service/2/device_register/";
+pub const DEVICE_ACTIVATE_PATH: &str = "/service/2/app_alert_check/";
+
 /// A temporary directory removed on drop.
 pub struct TempDir {
     path: PathBuf,
@@ -234,6 +239,13 @@ impl Recorded {
     }
 }
 
+pub fn is_identity_setup(request: &Recorded) -> bool {
+    matches!(
+        request.path.as_str(),
+        DEVICE_REGISTER_PATH | DEVICE_ACTIVATE_PATH
+    )
+}
+
 #[derive(Debug, Clone)]
 pub struct MockReply {
     pub status: u16,
@@ -256,6 +268,21 @@ impl MockReply {
             headers: Vec::new(),
             body: Vec::new(),
         }
+    }
+}
+
+/// The anonymous playback identity is lazily registered by the client. Tests
+/// that need the anonymous door to reach playback answer these two setup calls
+/// before their own route-specific response.
+pub fn identity_setup_reply(request: &Recorded) -> Option<MockReply> {
+    match request.path.as_str() {
+        DEVICE_REGISTER_PATH => Some(MockReply::json(serde_json::json!({
+            "device_id_str": "7000000000000000001",
+            "install_id_str": "7100000000000000001",
+            "klink_egdi": "7200000000000000001",
+        }))),
+        DEVICE_ACTIVATE_PATH => Some(MockReply::status(200)),
+        _ => None,
     }
 }
 

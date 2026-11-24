@@ -26,6 +26,9 @@ const DEVICE_BRAND: &str = "HONOR";
 const OS_API: &str = "31";
 const RESOLUTION: &str = "1312*2848";
 const DPI: &str = "480";
+const ANONYMOUS_RESOLUTION: &str = "1920*1080";
+const ANONYMOUS_DPI: &str = "280";
+const ANONYMOUS_ROM_VERSION: &str = "V417IR+release-keys";
 const LICENSE: i64 = 646_637_794;
 const USER_AGENT: &str =
     "com.phoenix.read/73932 (Linux; U; Android 12; zh_CN_#Hans; PGT-AN10; Build/V417IR;tt-ok/3.12.13.20)";
@@ -49,6 +52,15 @@ pub struct V5Identity<'a> {
     pub cdid: &'a str,
 }
 
+/// Anonymous registration identity used only by the enhanced playback door.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct AnonymousV5Identity<'a> {
+    pub device_id: &'a str,
+    pub install_id: &'a str,
+    pub cdid: &'a str,
+    pub egdi: &'a str,
+}
+
 /// A request ready to be sent with the caller's original compressed body.
 #[derive(Debug, Clone)]
 pub struct V5Request {
@@ -67,6 +79,17 @@ struct Entropy {
     medusa_nonce: u32,
     packed: u32,
     message: u32,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct AnonymousEntropy {
+    gorgon: u16,
+    helios: u32,
+    env_launch: i64,
+    env_pid: i64,
+    message: u32,
+    medusa_nonce: u32,
+    packed: u32,
 }
 
 fn le32(value: u32) -> [u8; 4] {
@@ -102,6 +125,19 @@ fn entropy() -> Entropy {
     }
 }
 
+fn anonymous_entropy() -> AnonymousEntropy {
+    let mut rng = rand::thread_rng();
+    AnonymousEntropy {
+        gorgon: rng.gen(),
+        helios: rng.gen(),
+        env_launch: rng.gen_range(0..21) + 100,
+        env_pid: rng.gen_range(0..2000) + 10001,
+        message: rng.gen(),
+        medusa_nonce: rng.gen(),
+        packed: rng.gen(),
+    }
+}
+
 fn varint(mut value: u64, output: &mut Vec<u8>) {
     while value > 0x7f {
         output.push(((value & 0x7f) as u8) | 0x80);
@@ -121,6 +157,7 @@ const fn zigzag(value: i64) -> u64 {
 enum Field {
     Sint(i64),
     Bytes(Vec<u8>),
+    Float(f32),
 }
 
 fn proto(fields: &[(u32, Field)]) -> Vec<u8> {
@@ -138,6 +175,10 @@ fn proto(fields: &[(u32, Field)]) -> Vec<u8> {
                 varint(((*tag as u64) << 3) | 2, &mut output);
                 varint(value.len() as u64, &mut output);
                 output.extend_from_slice(value);
+            }
+            Field::Float(value) => {
+                varint(((*tag as u64) << 3) | 5, &mut output);
+                output.extend_from_slice(&value.to_le_bytes());
             }
         }
     }
@@ -623,6 +664,175 @@ fn medusa(
     Ok(base64::engine::general_purpose::STANDARD.encode(output))
 }
 
+fn anonymous_medusa_token(nonce: &str) -> String {
+    if nonce.len() == 25 && nonce.starts_with('A') {
+        return nonce.to_string();
+    }
+    if nonce.len() >= 24 {
+        return format!("A{}", &nonce[..24]);
+    }
+    format!("A{nonce}{}", "A".repeat(24 - nonce.len()))
+}
+
+/// Enhanced Medusa envelope for the anonymous playback route.
+///
+/// Ported field-for-field from `Amor5207/lvguo-tv` v2.0.8 commit `32fcdfdb`,
+/// `web/internal/sign/v5.go::medusaV5`. The older [medusa] above remains
+/// untouched because the legacy playback door still depends on its profile.
+fn anonymous_medusa(
+    query_hash: &[u8; 32],
+    body_md5: &[u8; 16],
+    ts: u32,
+    now_ms: i64,
+    identity: &AnonymousV5Identity<'_>,
+    state: &ProcessState,
+    entropy: AnonymousEntropy,
+) -> Result<String, String> {
+    const FLAGS: [u8; 8] = [0x44, 0x80, 0, 0, 0, 0, 0, 0];
+    const ENV_13: i64 = -2;
+    const ENV_14: i64 = 200;
+    const NESTED: [(i64, i64); 4] = [(1, 305), (2, 4), (3, 694367), (5, 1621072674)];
+
+    let app_id = APP_ID.to_string();
+    let license = LICENSE.to_string();
+    let f13 = hash_f13_v5(query_hash, body_md5, ts);
+    let sec_token = anonymous_medusa_token(&state.nonce);
+
+    let device = proto(&[
+        (1, Field::Sint(1)),
+        (2, Field::Sint(2)),
+        string_field(3, &app_id),
+        string_field(4, identity.device_id),
+        string_field(5, &sec_token),
+        string_field(6, "!noperm!"),
+        (7, Field::Sint(-888888)),
+        (8, Field::Sint(-888888)),
+        (9, Field::Sint(3)),
+        (10, Field::Sint(-888888)),
+        string_field(11, "!notset!"),
+        string_field(12, "Asia/Shanghai,8"),
+        string_field(13, "zh_CN"),
+        (14, Field::Sint(4)),
+        (16, Field::Float(0.0)),
+        (17, Field::Float(0.0)),
+        (18, Field::Float(0.0)),
+        (19, Field::Float(0.0)),
+        (20, Field::Float(0.0)),
+        (21, Field::Float(0.0)),
+        string_field(22, OS_VERSION),
+        (23, Field::Sint(41)),
+        (24, Field::Sint(36)),
+        (25, Field::Sint(state.started_ms)),
+        (26, Field::Sint(state.started_ms)),
+        (27, Field::Sint(state.started_ms)),
+        (28, Field::Sint(now_ms)),
+        (29, Field::Sint(-1)),
+        string_field(30, DEVICE_TYPE),
+        string_field(31, DEVICE_BRAND),
+        string_field(32, DEVICE_TYPE),
+        string_field(33, DEVICE_TYPE),
+        string_field(34, DEVICE_BRAND),
+        string_field(35, DEVICE_BRAND),
+        string_field(36, DEVICE_BRAND),
+        (38, Field::Sint(31)),
+    ]);
+
+    let env_13 = proto(&[
+        (1, Field::Sint(ts as i64)),
+        (2, Field::Sint(ENV_13)),
+        (4, Field::Sint(ENV_14)),
+    ]);
+    let environment = proto(&[
+        (1, Field::Sint(entropy.env_launch)),
+        (2, Field::Sint(247235599)),
+        (3, Field::Sint(247235596)),
+        (5, Field::Sint(7)),
+        string_field(6, "v04.10.03.04-bugfix"),
+        (7, Field::Sint(entropy.env_pid)),
+        string_field(8, CHANNEL),
+        bytes_field(12, &device),
+        bytes_field(13, &env_13),
+        string_field(14, VERSION_NAME),
+    ]);
+    let nested = proto(
+        &NESTED
+            .iter()
+            .map(|(tag, value)| (*tag as u32, Field::Sint(*value)))
+            .collect::<Vec<_>>(),
+    );
+    let message = proto(&[
+        bytes_field(1, &MAGIC),
+        (2, Field::Sint(5)),
+        (3, Field::Sint(entropy.message as i64)),
+        string_field(4, &app_id),
+        string_field(5, identity.device_id),
+        string_field(6, &license),
+        string_field(7, VERSION_NAME),
+        string_field(8, "v04.10.03-ml-android"),
+        (9, Field::Sint(0x040a_0300)),
+        bytes_field(10, &FLAGS),
+        (12, Field::Sint(ts as i64)),
+        bytes_field(13, &f13),
+        bytes_field(14, &query_hash[..6]),
+        bytes_field(15, &nested),
+        string_field(16, &sec_token),
+        (17, Field::Sint(ts as i64)),
+        string_field(20, "none"),
+        (21, Field::Sint(312)),
+        bytes_field(23, &environment),
+        string_field(
+            24,
+            r#"{"cmr":16777216,"cmr2":16777216,"un_h":11,"vpn":0,"kd":0,"dyn":"","do":1,"tk":true}"#,
+        ),
+    ]);
+
+    let mut seed_input = Vec::with_capacity(68);
+    seed_input.extend_from_slice(&SIGN_KEY);
+    seed_input.extend_from_slice(&le32(entropy.medusa_nonce));
+    seed_input.extend_from_slice(&SIGN_KEY);
+    let seed_hash = sm3_hash(&seed_input);
+
+    let high = (entropy.medusa_nonce >> 16) & 0xff;
+    let seed_word = (high.wrapping_shl(11) | (entropy.medusa_nonce >> 24)) ^ (high >> 5) ^ high;
+    let seed = le32(!seed_word);
+
+    let mut transformed = FLAGS.to_vec();
+    transformed.extend_from_slice(&xmxor(&message, &seed_hash));
+    transformed.reverse();
+    for (index, value) in transformed.iter_mut().enumerate() {
+        *value ^= seed[3 - (index & 3)];
+    }
+
+    let check =
+        0x1800_0001u32 | (((query_hash[0] as u32) & 63) << 14) | (((f13[0] as u32) & 63) << 8);
+    let mut packed = Vec::with_capacity(11 + transformed.len());
+    packed.push(0xca);
+    packed.extend_from_slice(&le32(entropy.packed));
+    packed.extend_from_slice(&le32(check));
+    packed.extend_from_slice(&transformed);
+    packed.push((entropy.medusa_nonce >> 16) as u8);
+    packed.push((entropy.medusa_nonce >> 24) as u8);
+
+    let key = md5_bytes(&SIGN_KEY[..16]);
+    let iv = md5_bytes(&SIGN_KEY[16..]);
+    let encrypted = AesV5::new(&key, ts).encrypt(&packed, &iv)?;
+
+    let mut prefix = le32(5).to_vec();
+    prefix.extend_from_slice(&MAGIC);
+    let timestamp = le32(ts);
+    for (index, value) in prefix.iter_mut().enumerate() {
+        *value ^= timestamp[index & 3];
+    }
+
+    let mut output = prefix;
+    output.push(entropy.medusa_nonce as u8);
+    output.push((entropy.medusa_nonce >> 8) as u8);
+    output.push(0);
+    output.push(1);
+    output.extend_from_slice(&encrypted);
+    Ok(base64::engine::general_purpose::STANDARD.encode(output))
+}
+
 fn encode_component(value: &str) -> String {
     let mut output = String::with_capacity(value.len());
     for byte in value.bytes() {
@@ -757,6 +967,138 @@ pub fn sign_playback_v5_get(
     sign_v5_request(base, extra, None, identity)
 }
 
+fn push_query_pair(output: &mut String, key: &str, value: &str) {
+    if !output.is_empty() {
+        output.push('&');
+    }
+    output.push_str(&encode_component(key));
+    output.push('=');
+    output.push_str(&encode_component(value));
+}
+
+/// The ordered query envelope used by the anonymous enhanced V5 route.
+///
+/// Ported from `Amor5207/lvguo-tv` v2.0.8 commit `32fcdfdb`,
+/// `web/internal/lvguoplay/legacy.go::requestLegacy` and
+/// `web/internal/sign/v5.go::SignMobileV5`. `_rticket` keeps its early
+/// position; the signing loop only changes its value.
+fn anonymous_playback_query(identity: &AnonymousV5Identity<'_>, ticket: i64) -> String {
+    let ticket = ticket.to_string();
+    let pairs = [
+        ("device_platform", "android"),
+        ("os", "android"),
+        ("ssmix", "a"),
+        ("_rticket", ticket.as_str()),
+        ("cdid", identity.cdid),
+        ("channel", CHANNEL),
+        ("aid", "8662"),
+        ("app_name", "novelread"),
+        ("version_code", VERSION_CODE),
+        ("version_name", VERSION_NAME),
+        ("manifest_version_code", VERSION_CODE),
+        ("update_version_code", VERSION_CODE),
+        ("resolution", ANONYMOUS_RESOLUTION),
+        ("dpi", ANONYMOUS_DPI),
+        ("device_type", DEVICE_TYPE),
+        ("device_brand", DEVICE_BRAND),
+        ("language", "zh"),
+        ("os_api", OS_API),
+        ("os_version", OS_VERSION),
+        ("ac", "wifi"),
+        ("host_abi", "arm64-v8a"),
+        ("dragon_device_type", "phone"),
+        ("pv_player", VERSION_CODE),
+        ("compliance_status", "0"),
+        ("need_personal_recommend", "1"),
+        ("player_so_load", "1"),
+        ("is_android_pad_screen", "0"),
+        ("rom_version", ANONYMOUS_ROM_VERSION),
+        ("iid", identity.install_id),
+        ("device_id", identity.device_id),
+    ];
+    let mut query = String::new();
+    for (key, value) in pairs {
+        push_query_pair(&mut query, key, value);
+    }
+    if !identity.egdi.is_empty() {
+        push_query_pair(&mut query, "klink_egdi", identity.egdi);
+    }
+    query
+}
+
+/// Signs the enhanced anonymous playback POST.
+///
+/// Ported from `Amor5207/lvguo-tv` v2.0.8 commit `32fcdfdb`,
+/// `web/internal/sign/v5.go::SignMobileV5`. The caller supplies the exact gzip
+/// bytes that will be sent.
+pub(crate) fn sign_anonymous_playback_v5(
+    base: &str,
+    compressed_body: &[u8],
+    identity: &AnonymousV5Identity<'_>,
+) -> Result<V5Request, String> {
+    if base.is_empty() {
+        return Err("anonymous V5 playback base URL is empty".to_string());
+    }
+    if base.contains('?') || base.contains('#') {
+        return Err(
+            "anonymous V5 playback base URL must not contain a query or fragment".to_string(),
+        );
+    }
+    if identity.device_id.is_empty() || identity.install_id.is_empty() || identity.cdid.is_empty() {
+        return Err("anonymous V5 playback identity is incomplete".to_string());
+    }
+
+    let now_ms = crate::timeutil::now_millis();
+    let ts = u32::try_from(now_ms / 1000)
+        .map_err(|_| "anonymous V5 timestamp is outside the protocol range".to_string())?;
+    let body_md5 = md5_bytes(compressed_body);
+    let state = process_state(now_ms);
+
+    for offset in 0..1024i64 {
+        let ticket = now_ms
+            .checked_add(offset)
+            .ok_or_else(|| "anonymous V5 request ticket overflow".to_string())?;
+        let query = anonymous_playback_query(identity, ticket);
+        let query_hash = sm3_hash(query.as_bytes());
+        if branch_iv(&query_hash, &body_md5, ts) & 15 != 12 {
+            continue;
+        }
+        let entropy = anonymous_entropy();
+        let medusa =
+            anonymous_medusa(&query_hash, &body_md5, ts, now_ms, identity, state, entropy)?;
+        let url = format!("{base}?{query}");
+        let headers = vec![
+            ("x-khronos".to_string(), ts.to_string()),
+            (
+                "x-gorgon".to_string(),
+                super::gorgon::generate_v5_gorgon(&query, compressed_body, ts, entropy.gorgon),
+            ),
+            (
+                "x-argus".to_string(),
+                base64::engine::general_purpose::STANDARD.encode(le32(ts)),
+            ),
+            (
+                "x-ladon".to_string(),
+                base64::engine::general_purpose::STANDARD.encode(ts.to_be_bytes()),
+            ),
+            ("x-helios".to_string(), helios(ts, entropy.helios)),
+            ("x-medusa".to_string(), medusa),
+            ("x-xs-from-web".to_string(), "0".to_string()),
+            ("x-ss-stub".to_string(), hex::encode_upper(body_md5)),
+            (
+                "Content-Type".to_string(),
+                "application/json; charset=utf-8".to_string(),
+            ),
+            ("Content-Encoding".to_string(), "gzip".to_string()),
+            ("User-Agent".to_string(), USER_AGENT.to_string()),
+            ("Accept".to_string(), "application/json".to_string()),
+        ];
+        return Ok(V5Request { url, headers });
+    }
+
+    Err("anonymous V5 playback signing could not find the branch-12 ticket".to_string())
+}
+
 fn sign_v5_request(
     base: &str,
     extra: &[(&str, &str)],
@@ -817,6 +1159,7 @@ fn sign_v5_request(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sha2::{Digest, Sha256};
 
     fn identity<'a>(device_id: &'a str, install_id: &'a str, cdid: &'a str) -> V5Identity<'a> {
         V5Identity {
@@ -925,5 +1268,99 @@ mod tests {
             .expect_err("an incomplete identity must not sign");
             assert!(error.contains("incomplete"), "{error}");
         }
+    }
+
+    #[test]
+    fn the_anonymous_query_matches_the_lvguo_reference_vector() {
+        let query = anonymous_playback_query(
+            &AnonymousV5Identity {
+                device_id: "1234567890",
+                install_id: "install-test",
+                cdid: "cdid-test",
+                egdi: "egdi-test",
+            },
+            1_700_000_000_000,
+        );
+        assert!(
+            query.starts_with(
+                "device_platform=android&os=android&ssmix=a&_rticket=1700000000000\
+                 &cdid=cdid-test&channel=vivo_8662_64&aid=8662&app_name=novelread"
+            ),
+            "{query}"
+        );
+        assert_eq!(
+            hex::encode(Sha256::digest(query.as_bytes())),
+            "8aa5299b13ca4f08159a1b96f15baff67c59a094f1526d5f2082c2e1d808bae8"
+        );
+    }
+
+    #[test]
+    fn the_anonymous_gorgon_matches_the_lvguo_reference_vector() {
+        let query = anonymous_playback_query(
+            &AnonymousV5Identity {
+                device_id: "1234567890",
+                install_id: "install-test",
+                cdid: "cdid-test",
+                egdi: "egdi-test",
+            },
+            1_700_000_000_000,
+        );
+        assert_eq!(
+            super::super::gorgon::generate_v5_gorgon(
+                &query,
+                b"fixture-gzip-body",
+                1_700_000_000,
+                0x1234,
+            ),
+            "840434124001185d1e30dc93eebe1364e71df6105a46126993f2"
+        );
+    }
+
+    #[test]
+    fn the_anonymous_helios_and_medusa_match_the_lvguo_reference_vectors() {
+        let query = anonymous_playback_query(
+            &AnonymousV5Identity {
+                device_id: "1234567890",
+                install_id: "install-test",
+                cdid: "cdid-test",
+                egdi: "egdi-test",
+            },
+            1_700_000_000_000,
+        );
+        let body = b"fixture-gzip-body";
+        assert_eq!(
+            hex::encode(Sha256::digest(helios(1_700_000_000, 0x11223344))),
+            "ec80528b33a651318025292ef6969bb841634eb142ebe5679b6ad562baa2ae76"
+        );
+        let medusa = anonymous_medusa(
+            &sm3_hash(query.as_bytes()),
+            &md5_bytes(body),
+            1_700_000_000,
+            1_700_000_000_000,
+            &AnonymousV5Identity {
+                device_id: "1234567890",
+                install_id: "install-test",
+                cdid: "cdid-test",
+                egdi: "egdi-test",
+            },
+            &ProcessState {
+                nonce: "AAAAAAAAAAAAAAAAAAAAAAAA".to_string(),
+                started_ms: 1_700_000_000_000,
+            },
+            AnonymousEntropy {
+                gorgon: 0x1234,
+                helios: 0x11223344,
+                env_launch: 105,
+                env_pid: 10124,
+                message: 0x55667788,
+                medusa_nonce: 0x99aabbcc,
+                packed: 0xddeeff00,
+            },
+        )
+        .expect("anonymous medusa");
+        assert_eq!(
+            hex::encode(Sha256::digest(medusa.as_bytes())),
+            "1dcbde6e6b80b7270d7276a129fc88ff71596f478549e0b5f09893a19c8ae35d"
+        );
     }
 }

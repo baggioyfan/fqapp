@@ -42,6 +42,9 @@ pub(crate) const VIDEO_TAB_HOSTS: [&str; 1] = ["https://api5-normal-sinfonlineb.
 /// Which upstream door a route addresses.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum Door {
+    /// The enhanced anonymous V5 door registered with the mini-reel device
+    /// profile and signed with the full Medusa/Gorgon envelope.
+    AnonymousV5,
     /// `POST /novel/player/multi_video_model/player/v1` with the v5 signature.
     V5Player,
     /// `POST /novel/player/video_model/v1/`, the official single-episode door,
@@ -63,6 +66,7 @@ pub(crate) struct Route {
 impl Route {
     pub fn host(self) -> &'static str {
         match self.door {
+            Door::AnonymousV5 => V5_PLAYER_HOST,
             Door::V5Player => V5_PLAYER_HOST,
             Door::VideoModel => VIDEO_MODEL_HOSTS
                 .get(self.host_index as usize)
@@ -78,6 +82,7 @@ impl Route {
     /// Short label for diagnostics; hosts themselves are not logged.
     pub fn tag(self) -> &'static str {
         match self.door {
+            Door::AnonymousV5 => "anon",
             Door::V5Player => "v5",
             Door::VideoModel if self.host_index == 1 => "model-c",
             Door::VideoModel => "model-a",
@@ -88,10 +93,16 @@ impl Route {
 
 /// Every route the playback chain may use, in preference order.
 pub(crate) fn routes() -> Vec<Route> {
-    let mut all = vec![Route {
-        door: Door::V5Player,
-        host_index: 0,
-    }];
+    let mut all = vec![
+        Route {
+            door: Door::AnonymousV5,
+            host_index: 0,
+        },
+        Route {
+            door: Door::V5Player,
+            host_index: 0,
+        },
+    ];
     all.extend((0..VIDEO_MODEL_HOSTS.len()).map(|index| Route {
         door: Door::VideoModel,
         host_index: index as u8,
@@ -404,8 +415,8 @@ mod tests {
     #[test]
     fn route_tags_stay_short_and_address_free() {
         let tags: Vec<&str> = routes().iter().map(|route| route.tag()).collect();
-        assert_eq!(tags, vec!["v5", "model-a", "model-c", "tab-b"]);
-        assert_ne!(routes()[1].host(), routes()[2].host());
+        assert_eq!(tags, vec!["anon", "v5", "model-a", "model-c", "tab-b"]);
+        assert_ne!(routes()[2].host(), routes()[3].host());
         assert!(tags.iter().all(|tag| !tag.contains("fqnovel")));
         assert!(routes()
             .iter()

@@ -4,6 +4,67 @@
 use md5::{Digest, Md5};
 use rand::Rng;
 
+/// The playback/enrollment x-gorgon variant.
+///
+/// Ported from `Amor5207/lvguo-tv` v2.0.8 (commit `32fcdfdb`),
+/// `web/internal/sign/sign.go::gorgon`. Its KSA/PRGA intentionally differ from
+/// the legacy signer below: the KSA assigns `s[i] = s[j]` instead of swapping,
+/// and that quirk is part of the accepted wire output.
+pub(crate) fn generate_v5_gorgon(query: &str, body: &[u8], ts: u32, nonce: u16) -> String {
+    let mut data = Vec::with_capacity(20);
+    data.extend_from_slice(&Md5::digest(query.as_bytes())[..4]);
+    data.extend_from_slice(&Md5::digest(body)[..4]);
+    data.extend_from_slice(&[0u8; 4]);
+    data.extend_from_slice(&67503104u32.to_le_bytes());
+    data.extend_from_slice(&ts.to_be_bytes());
+
+    let key = [
+        0x4a,
+        0x40,
+        0x16,
+        (nonce >> 8) as u8,
+        0x47,
+        0x6c,
+        1,
+        nonce as u8,
+    ];
+    let mut table = [0u8; 256];
+    for (index, value) in table.iter_mut().enumerate() {
+        *value = index as u8;
+    }
+    let mut j = 0usize;
+    for index in 0..256 {
+        j = (j + table[index] as usize + key[index % 8] as usize) & 255;
+        table[index] = table[j];
+    }
+
+    j = 0;
+    for index in 0..data.len() {
+        j = (j + table[index + 1] as usize) & 255;
+        let value = table[j];
+        table[index + 1] = value;
+        data[index] ^= table[(value as usize * 2) & 255];
+    }
+
+    // In-place mutation matters: the final iteration reads the already-written
+    // first byte as its `next` value, exactly like the reference loop.
+    for index in 0..data.len() {
+        let value = data[index].rotate_left(4);
+        let next = data.get(index + 1).copied().unwrap_or(data[0]);
+        data[index] = !((next ^ value).reverse_bits() ^ 20);
+    }
+
+    let mut out = String::with_capacity(6 + data.len() * 2);
+    out.push_str("8404");
+    for byte in [nonce as u8, (nonce >> 8) as u8, 0x40, 1] {
+        out.push_str(&format!("{byte:02x}"));
+    }
+    for byte in data {
+        out.push_str(&format!("{byte:02x}"));
+    }
+    out
+}
+
 // The `(x | x)` / `(x & x)` pair below is intentionally kept: it is dead
 // arithmetic that the upstream scheme carries, and changing it would change
 // the emitted bytes, so the lint is silenced deliberately rather than "fixed".

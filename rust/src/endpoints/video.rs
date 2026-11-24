@@ -1284,6 +1284,13 @@ const PLAYBACK_DEVICE_LEVEL: i64 = 5;
 const V5_PLAYER_URL: &str =
     "https://api5-normal-sinfonlinea.fqnovel.com/novel/player/multi_video_model/player/v1";
 
+/// 匿名增强门的地址（注意结尾多一个 `/`，与 v5 门是两个不同端点）。
+///
+/// 官方短视频页在登录/未登录状态下都先打这扇门：它用「匿名 mini-reel 设备」
+/// 的身份与完整 Medusa/Gorgon 信封签名，返回的模型档位比 v5 门更全。
+const ANONYMOUS_PLAYER_URL: &str =
+    "https://api5-normal-sinfonlinea.fqnovel.com/novel/player/multi_video_model/player/v1/";
+
 /// The official app's `GET` playback-model door carrying the model list, used
 /// as the second attempt when the v5 player door answers an empty body.
 const VIDEO_TAB_PLAYER_PATH: &str = "/reading/bookapi/video_tab/multi_video_model/v1/";
@@ -1471,6 +1478,36 @@ async fn attempt_playback_route_inner(
     let up = Upstream::new(ctx.up.clone());
     let pin_device = pin.unwrap_or("");
     match route.door {
+        Door::AnonymousV5 => {
+            match tokio::time::timeout_at(
+                deadline,
+                ctx.up
+                    .anonymous_playback(ANONYMOUS_PLAYER_URL, &bodies.anonymous),
+            )
+            .await
+            {
+                Err(_) => PlaybackAttempt {
+                    outcome: DoorOutcome::Deadline,
+                    device_id: None,
+                    exchange: Default::default(),
+                },
+                Ok(Ok((data, _device_id))) => PlaybackAttempt {
+                    outcome: if data.is_empty() {
+                        DoorOutcome::Empty
+                    } else {
+                        DoorOutcome::Body(data)
+                    },
+                    // 匿名身份绝不能变成设备池的 pin：它不进池，也轮换不了。
+                    device_id: None,
+                    exchange: Default::default(),
+                },
+                Ok(Err(_)) => PlaybackAttempt {
+                    outcome: DoorOutcome::Failed,
+                    device_id: None,
+                    exchange: Default::default(),
+                },
+            }
+        }
         Door::V5Player => playback_post(ctx, V5_PLAYER_URL, &bodies.v5, pin, deadline).await,
         Door::VideoModel => {
             let base = format!("{}{}", route.host(), VIDEO_MODEL_PLAYER_PATH);
@@ -1610,6 +1647,9 @@ async fn fetch_playback_model(
         };
         recovery.skip_routes.insert(route);
         let now = playback_routes::now_ms();
+        // 预取（speculative）遇到空包不能把匿名门停 30 秒：它是后台工作，
+        // 前台点击还指着这扇门，停掉等于让用户为一次预取多等半分钟。
+        let skip_empty_cooldown = speculative && route.door == playback_routes::Door::AnonymousV5;
         match attempt.outcome {
             DoorOutcome::Body(raw) => {
                 return Ok(PlaybackModel {
@@ -1618,6 +1658,7 @@ async fn fetch_playback_model(
                     device_id: attempt.device_id,
                 });
             }
+            DoorOutcome::Empty if skip_empty_cooldown => {}
             DoorOutcome::Empty => {
                 playback_routes::with_state(|state| state.failed(route, now, true));
             }
@@ -1666,6 +1707,41 @@ fn v5_playback_body(video_id: &str) -> ApiResult<Vec<u8>> {
         .map_err(|e| ApiError::Internal(format!("gzip v5 playback body: {e}")))
 }
 
+/// 匿名增强门的请求体，已 gzip。
+///
+/// 与 v5 门逐字不同的两点：`device_level` 是 **1**（匿名 mini-reel 设备自报的
+/// 档位，用 5 会被上游按「设备与实际不符」拒），且 `dr_scene` 排在
+/// `mixed_video_id_map` 之前（v5 门在之后）。签名仍然覆盖压缩后的字节。
+fn anonymous_playback_body(video_id: &str) -> ApiResult<Vec<u8>> {
+    let plain = serde_json::to_vec(&json!({
+        "biz_param": {
+            "detail_page_version": 0,
+            "device_level": 1,
+            "disable_digg_stat": false,
+            "disable_video_relate_book": false,
+            "need_all_video_definition": true,
+            "need_mp4_align": false,
+            "use_os_player": false,
+            "use_server_dns": false,
+            "video_platform": 1024,
+        },
+        "dr_scene": "player",
+        "mixed_video_id_map": {
+            "1004": [video_id],
+        },
+        "video_id": video_id,
+        "content_type": 1,
+    }))
+    .map_err(|e| ApiError::Internal(format!("marshal anonymous playback body: {e}")))?;
+    let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+    encoder
+        .write_all(&plain)
+        .map_err(|e| ApiError::Internal(format!("gzip anonymous playback body: {e}")))?;
+    encoder
+        .finish()
+        .map_err(|e| ApiError::Internal(format!("gzip anonymous playback body: {e}")))
+}
+
 /// 官方单集门 `video_model` 的请求体，已 gzip。
 ///
 /// 与 v5 批量门不同：这里按官方抓包逐字构造（`biz_param` 里 `device_level`
@@ -1700,6 +1776,7 @@ fn video_model_body(video_id: &str) -> ApiResult<Vec<u8>> {
 
 /// 每扇门的请求体：v5 批量门与单集门各一份，一次请求内复用。
 struct PlaybackBodies {
+    anonymous: Vec<u8>,
     v5: Vec<u8>,
     model: Vec<u8>,
 }
@@ -1707,6 +1784,7 @@ struct PlaybackBodies {
 impl PlaybackBodies {
     fn build(video_id: &str) -> ApiResult<Self> {
         Ok(Self {
+            anonymous: anonymous_playback_body(video_id)?,
             v5: v5_playback_body(video_id)?,
             model: video_model_body(video_id)?,
         })

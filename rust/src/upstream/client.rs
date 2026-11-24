@@ -6,6 +6,7 @@ use std::time::Duration;
 use crate::device::{Device, DevicePool};
 use crate::sign::Manager;
 use crate::upstream::http::{HttpTransport, TransportError};
+use crate::upstream::playback_identity::{PlaybackDevice, PlaybackIdentity};
 
 pub const DEFAULT_USER_AGENT: &str = "com.dragon.read/66732 (Linux; U; Android 10; zh_CN; Pixel 4 XL; Build/QD1A.190821.007;tt-ok/3.12.13.4-tiktok)";
 
@@ -105,6 +106,8 @@ pub struct UpstreamClient {
     /// therefore every signature input - are untouched, so a local mock server
     /// can answer real signed requests without touching the network.
     mock_origin: Option<String>,
+    /// Anonymous playback identity, intentionally separate from the pool.
+    playback_identity: PlaybackIdentity,
 }
 
 impl UpstreamClient {
@@ -126,12 +129,14 @@ impl UpstreamClient {
         sign: Manager,
         mock_origin: Option<String>,
     ) -> Result<Self, String> {
+        let playback_identity = PlaybackIdentity::new(mock_origin.clone())?;
         Ok(UpstreamClient {
             http: HttpTransport::new(15)?,
             sign,
             pool,
             max_retries: 3,
             mock_origin,
+            playback_identity,
         })
     }
 
@@ -681,6 +686,78 @@ impl UpstreamClient {
                 .unwrap_or_else(|error| error.into_inner())
                 .envelope = envelope;
         }
+    }
+
+    /// Calls the enhanced anonymous V5 playback door.
+    ///
+    /// The identity never enters `DevicePool`, so this path neither reads nor
+    /// writes the generic playback pin. An empty HTTP 200 body may refresh the
+    /// cached anonymous identity once, paced by the identity cache; it is then
+    /// returned as an empty body so the endpoint's route ladder can fall back.
+    pub async fn anonymous_playback(
+        &self,
+        base: &str,
+        body: &[u8],
+    ) -> Result<(Vec<u8>, String), ClientError> {
+        let device = self
+            .playback_identity
+            .current()
+            .await
+            .map_err(ClientError::Other)?;
+        let data = self
+            .send_anonymous_playback_once(base, body, &device)
+            .await?;
+        if !data.is_empty() {
+            return Ok((data, device.device_id));
+        }
+        log::info!("v5 playback empty response route=anon event=refresh");
+        match self
+            .playback_identity
+            .refresh_after_empty(&device.device_id)
+            .await
+        {
+            Ok(Some(refreshed)) => {
+                let data = self
+                    .send_anonymous_playback_once(base, body, &refreshed)
+                    .await?;
+                Ok((data, refreshed.device_id))
+            }
+            Ok(None) => Ok((Vec::new(), device.device_id)),
+            Err(error) => Err(ClientError::Other(error)),
+        }
+    }
+
+    async fn send_anonymous_playback_once(
+        &self,
+        base: &str,
+        body: &[u8],
+        device: &PlaybackDevice,
+    ) -> Result<Vec<u8>, ClientError> {
+        let identity = crate::sign::v5::AnonymousV5Identity {
+            device_id: &device.device_id,
+            install_id: &device.install_id,
+            cdid: &device.cdid,
+            egdi: &device.egdi,
+        };
+        let send = self.do_resp_with_transient_retry(
+            || {
+                let signed = crate::sign::v5::sign_anonymous_playback_v5(base, body, &identity)
+                    .map_err(ClientError::Other)?;
+                Ok(UpstreamRequest {
+                    method: Some("POST".to_string()),
+                    url: signed.url,
+                    body: Some(body.to_vec()),
+                    headers: signed.headers,
+                    no_sign: true,
+                    pin: None,
+                })
+            },
+            Some(crate::upstream::http::API_BODY_LIMIT_BYTES),
+            true,
+            false,
+        );
+        let (data, _) = super::playback_trace::with_device(&device.device_id, send).await?;
+        Ok(data)
     }
 
     /// One bounded identity rotation for playback recovery.
