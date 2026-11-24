@@ -65,6 +65,9 @@ import 'services/shelf_store.dart';
 import 'services/shelf_view_store.dart';
 import 'services/swipe_guide_store.dart';
 import 'services/third_party_licenses.dart';
+import 'services/webdav_auto_sync.dart';
+import 'services/webdav_client.dart' show WebdavException;
+import 'services/webdav_sync_service.dart' show describeSyncReport;
 import 'widgets/lazy_indexed_stack.dart';
 import 'widgets/app_ui/app_ui_scope.dart';
 import 'widgets/shell_dock.dart';
@@ -151,6 +154,12 @@ Future<void> _prepareRuntime() async {
             } catch (error, stack) {
               AppLog.w('exit', '退出前停止后端失败', error: error, stack: stack);
             }
+            // 桌面没有「退到后台」，关窗口是最后一次可靠的上云机会，且必须在
+            // Hive.close() 之前（同步要读书架与进度）。给 5 秒上限：网络卡住时
+            // 宁可丢这一页进度，也不能让窗口关不掉。
+            await WebdavAutoSync.instance
+                .flush()
+                .timeout(const Duration(seconds: 5), onTimeout: () => false);
           } finally {
             await Hive.close();
           }
@@ -631,7 +640,8 @@ class RootShell extends StatefulWidget {
   State<RootShell> createState() => _RootShellState();
 }
 
-class _RootShellState extends State<RootShell> with TickerProviderStateMixin {
+class _RootShellState extends State<RootShell>
+    with WidgetsBindingObserver, TickerProviderStateMixin {
   int _index = 0;
 
   /// 页面滑动过渡动画：dock 点击 / 拖动松手 / 页面回调统一经 [_selectTab]
@@ -786,9 +796,15 @@ class _RootShellState extends State<RootShell> with TickerProviderStateMixin {
 
   String? _backendError;
 
+  /// 检查云端是否有更新时置位：回到前台可能连续触发几次，别把弹窗叠起来。
+  bool _checkingRemote = false;
+
   @override
   void initState() {
     super.initState();
+    // WebDAV 自动同步的触发点全在壳层：退后台/切走应用静默推一次、回前台
+    // 问一句云端有没有新版本。这条观察者一旦漏掉，同步就只剩「手动点」。
+    WidgetsBinding.instance.addObserver(this);
     // 短剧频道在推荐（视频流）与浅色页之间切换时，悬浮 dock 和系统导航栏
     // 要跟着换肤，所以停在壳层的 build 里监听。
     dramaLightPageNotifier.addListener(_onDramaChromeChanged);
@@ -801,6 +817,10 @@ class _RootShellState extends State<RootShell> with TickerProviderStateMixin {
       _onDramaFeatureChanged,
     );
     _startBackend();
+    // 首帧之后再问云端：启动不该等一次网络往返，检查失败也不该挡住首页。
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) unawaited(_checkRemoteUpdate());
+    });
   }
 
   void _onDramaChromeChanged() {
@@ -876,6 +896,7 @@ class _RootShellState extends State<RootShell> with TickerProviderStateMixin {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     dramaLightPageNotifier.removeListener(_onDramaChromeChanged);
     einkModeNotifier.removeListener(_onEinkModeChanged);
     _pageMotion.removeStatusListener(_onPageMotionStatus);
@@ -886,6 +907,105 @@ class _RootShellState extends State<RootShell> with TickerProviderStateMixin {
     _pageMotion.dispose();
     super.dispose();
   }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    switch (state) {
+      case AppLifecycleState.resumed:
+        unawaited(_checkRemoteUpdate());
+      case AppLifecycleState.paused:
+      case AppLifecycleState.hidden:
+        // 兜底触发点：页面自己的「离开时同步」可能还没跑完，或者根本来不及
+        // （用户直接回到桌面）。这里再推一次，`minInterval` 保证不会连成串。
+        //
+        // Flutter 没有「保证请求在退出前完成」的 API（Android 没有
+        // `onTaskRemoved`，iOS 没有 `beginBackgroundTask`），所以真正的保证
+        // 不是「退出时传完」，而是**平时就把脏数据推上去**，让退出时几乎没事可做。
+        unawaited(WebdavAutoSync.instance.flush());
+      case AppLifecycleState.inactive:
+        // 移动端 inactive 只是下拉通知栏、来电，太频繁，不当作退出。
+        //
+        // 桌面端没有 paused：切到别的应用、点 Dock 只到 inactive，窗口最小化
+        // 才是 hidden。不在这里兜一手，桌面就只剩「关窗口」一次同步机会
+        // （见 beforeClose）。`flush` 自带 30 秒间隔，频繁切窗口不会把请求连成串。
+        if (isDesktopHost) unawaited(WebdavAutoSync.instance.flush());
+      case AppLifecycleState.detached:
+        // 进程即将结束，只做「把待发标记落定」这种同步动作；真正的网络
+        // 请求在这里不保证有结果，兜底仍然是上面的 paused/hidden。
+        unawaited(WebdavAutoSync.instance.flush());
+    }
+  }
+
+  /// 云端出现本机没见过的版本时，问一句「同步 / 忽略」。
+  ///
+  /// 判据是云端那一版的标识（ETag）与本机上次同步时记下的标识是否相同，
+  /// 不是「谁的时间更晚」—— 时间比较会被设备时钟偏移搞乱，版本比较不会。
+  /// 也不是「本地旧」：谁更新必须下载后逐条合并才知道，那就是同步本身。
+  Future<void> _checkRemoteUpdate() async {
+    if (_checkingRemote || !mounted) return;
+    _checkingRemote = true;
+    try {
+      final update = await WebdavAutoSync.instance.check();
+      if (update == null || !mounted) return;
+      final lastSyncedAt = update.lastSyncedAt;
+      final answer = await showDialog<bool>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('云端有更新'),
+          content: Text(
+            '云端备份${update.remoteModified == null ? '' : '在 ${_stamp(update.remoteModified!)} '}'
+            '有更新，与本机上次同步时看到的不是同一版'
+            '${lastSyncedAt == null ? '（本机还没有同步过）' : '（上次同步：${_stamp(lastSyncedAt)}）'}。\n\n'
+            '现在同步吗？',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('忽略'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text('立即同步'),
+            ),
+          ],
+        ),
+      );
+      if (!mounted) return;
+      if (answer == true) {
+        await _syncFromPrompt(update);
+      } else if (answer == false) {
+        // 只有明确点了「忽略」才算「这一版先不管」：同一个云端版本不再追问，
+        // 云端再被改过才会重新提示。点遮罩或按返回键是 null —— 那只是
+        // 「先不回答」，不该被记成一次回答，否则用户下次打开就再也看不到提示。
+        await WebdavAutoSync.instance.dismiss(update);
+      }
+    } finally {
+      _checkingRemote = false;
+    }
+  }
+
+  Future<void> _syncFromPrompt(WebdavRemoteUpdate update) async {
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    messenger?.showSnackBar(const SnackBar(content: Text('正在同步，请不要退出…')));
+    try {
+      final report = await WebdavAutoSync.instance.syncNow(update);
+      messenger
+        ?..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(content: Text(describeSyncReport(report, brief: true))),
+        );
+    } on WebdavException catch (error) {
+      messenger
+        ?..hideCurrentSnackBar()
+        ..showSnackBar(SnackBar(content: Text(error.message)));
+    } catch (_) {
+      messenger
+        ?..hideCurrentSnackBar()
+        ..showSnackBar(const SnackBar(content: Text('同步未完成，请稍后重试')));
+    }
+  }
+
+  static String _stamp(DateTime at) => at.toLocal().toString().split('.').first;
 
   @override
   Widget build(BuildContext context) {

@@ -33,6 +33,7 @@ test/secret_store_test.dart                  7
 test/shelf_columns_by_width_test.dart        2
 test/shelf_tombstone_test.dart               7
 test/system_tts_rate_limit_test.dart         6
+test/webdav_auto_sync_lifecycle_test.dart    3
 test/webdav_auto_sync_test.dart              11
 test/webdav_client_test.dart                 35
 test/webdav_config_test.dart                 9
