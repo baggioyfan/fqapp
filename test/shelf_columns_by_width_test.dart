@@ -121,6 +121,10 @@ void main() {
           expect(tester.takeException(), isNull);
         }
       }
+      // 平台覆盖必须在用例体内清掉：框架的 postTest 不变量检查在
+      // group tearDown 之前跑，「foundation debug variable was changed」
+      // 就是这么红的（45367767910）。
+      debugDefaultTargetPlatformOverride = null;
     });
 
     testWidgets('双列：平板横屏同样按宽度加列', (tester) async {
@@ -166,6 +170,8 @@ void main() {
         );
         expect(tester.takeException(), isNull);
       }
+      // 同上：平台覆盖在用例体内复位，别等 tearDown。
+      debugDefaultTargetPlatformOverride = null;
     });
   });
 }

@@ -156,7 +156,8 @@ void main() {
         home: Scaffold(
           body: const SizedBox.expand(),
           bottomNavigationBar: ShellDock(
-            selectedIndex: 1,
+            // 2 = 书架（短剧关闭后壳层不会停在 1，那是收起来的短剧页）。
+            selectedIndex: 2,
             onSelected: selected.add,
             overVideo: false,
             staticMaterial: false,
@@ -171,8 +172,8 @@ void main() {
     expect(find.text('短剧'), findsNothing);
     expect(find.text('书架'), findsOneWidget);
 
-    // 下标换算：选中短剧（壳层 1）时绘制的是第 2 项（书架）；点「我的」
-    // 必须回 3 而不是 2，否则壳层会切到书架。
+    // 下标换算：壳层选中书架（2）时，3 项 dock 上画的是第 1 项；点
+    // 「我的」必须回 3 而不是 2，否则壳层会切到书架。
     final dock = tester.widget<GlassDock>(find.byType(GlassDock));
     expect(dock.items.length, 3);
     expect(dock.selectedIndex, 1);

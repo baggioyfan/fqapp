@@ -10,6 +10,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:fqapp/services/app_style_tokens.dart';
 import 'package:fqapp/services/app_theme.dart';
 import 'package:fqapp/widgets/classic_shell_dock.dart';
+import 'package:fqapp/widgets/shell_dock.dart';
 import 'package:fqapp/widgets/home/home_design.dart';
 
 void main() {
@@ -616,10 +617,13 @@ void main() {
           data: const MediaQueryData(size: Size(400, 900)),
           child: Scaffold(
             body: const SizedBox.expand(),
-            bottomNavigationBar: ClassicShellDock(
-              selectedIndex: 1,
+            // 走 ShellDock 而不是 ClassicShellDock：3 项的点击下标换算是
+            // 壳层入口那一层的职责，直接测 ClassicShellDock 测不到。
+            bottomNavigationBar: ShellDock(
+              selectedIndex: 2,
               onSelected: selected.add,
               overVideo: false,
+              staticMaterial: false,
               showDrama: false,
             ),
           ),
@@ -630,7 +634,7 @@ void main() {
 
     expect(find.text('短剧'), findsNothing);
     expect(find.text('书架'), findsOneWidget);
-    // 选中项落到「书架」这一格（壳层 1 = 短剧，但短剧不画）。
+    // 选中项落到「书架」这一格（壳层 2，3 项 dock 上是第 1 格）。
     expect(selectionDecoration(tester), isA<BoxDecoration>());
     await tester.tap(find.text('我的'));
     await tester.pumpAndSettle();
