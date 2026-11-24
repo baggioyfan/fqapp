@@ -30,6 +30,7 @@ test/read_time_store_test.dart               6
 test/reader_brightness_gesture_test.dart     5
 test/reader_theme_isolation_test.dart        3
 test/secret_store_test.dart                  7
+test/shelf_columns_by_width_test.dart        2
 test/shelf_tombstone_test.dart               7
 test/system_tts_rate_limit_test.dart         6
 test/webdav_auto_sync_test.dart              11
