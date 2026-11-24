@@ -139,4 +139,48 @@ void main() {
     expect(find.byType(GlassDock), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('短剧功能关闭：dock 只画 3 项，点击仍回壳层的 4 页下标', (tester) async {
+    final selected = <int>[];
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: AppTheme.createTheme(
+          Brightness.light,
+          style: AppThemeStyle.archive,
+        ),
+        themeAnimationDuration: Duration.zero,
+        builder: (context, child) => MediaQuery(
+          data: MediaQuery.of(context).copyWith(disableAnimations: true),
+          child: child!,
+        ),
+        home: Scaffold(
+          body: const SizedBox.expand(),
+          bottomNavigationBar: ShellDock(
+            selectedIndex: 1,
+            onSelected: selected.add,
+            overVideo: false,
+            staticMaterial: false,
+            showDrama: false,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // 入口收起：屏幕上也找不到「短剧」。
+    expect(find.text('短剧'), findsNothing);
+    expect(find.text('书架'), findsOneWidget);
+
+    // 下标换算：选中短剧（壳层 1）时绘制的是第 2 项（书架）；点「我的」
+    // 必须回 3 而不是 2，否则壳层会切到书架。
+    final dock = tester.widget<GlassDock>(find.byType(GlassDock));
+    expect(dock.items.length, 3);
+    expect(dock.selectedIndex, 1);
+    await tester.tap(
+      find.descendant(of: find.byType(GlassDock), matching: find.text('我的')),
+    );
+    await tester.pumpAndSettle();
+    expect(selected, [3]);
+    expect(tester.takeException(), isNull);
+  });
 }

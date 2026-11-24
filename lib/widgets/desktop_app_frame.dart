@@ -3,6 +3,7 @@ import 'package:material_ui/material_ui.dart';
 
 import '../pages/settings_page.dart';
 import '../services/desktop_platform.dart';
+import '../services/drama_feature_preferences.dart';
 import 'desktop_shell_scope.dart';
 import 'desktop_window_bar.dart';
 import 'home/home_design.dart';
@@ -21,6 +22,9 @@ class DesktopAppFrame extends StatelessWidget {
   ];
 
   void _select(int index) {
+    // 短剧功能关闭时导航栏上根本没有这一项，任何残留入口（空态按钮、
+    // 深链）都不该把壳层切过去。
+    if (index == 1 && !DramaFeaturePreferences.instance.enabled.value) return;
     DesktopPlatform.navigatorKey.currentState?.popUntil(
       (route) => route.isFirst,
     );
@@ -165,59 +169,69 @@ class _DesktopNavPane extends StatelessWidget {
       child: LayoutBuilder(
         builder: (context, constraints) {
           final visualExpanded = expanded && constraints.maxWidth >= 140;
-          return ValueListenableBuilder<int>(
-            valueListenable: desktopTab,
-            builder: (context, selectedIndex, _) =>
-                ValueListenableBuilder<bool>(
-                  valueListenable: DesktopShellState.onSettingsPage,
-                  builder: (context, inSettings, _) => Column(
-                    children: [
-                      const SizedBox(height: 6),
-                      Expanded(
-                        child: SingleChildScrollView(
-                          padding: const EdgeInsets.only(bottom: 8),
-                          child: Column(
-                            children: [
-                              for (
-                                var i = 0;
-                                i < DesktopAppFrame._destinations.length;
-                                i++
-                              )
-                                _FluentNavItem(
-                                  key: ValueKey('desktop-nav-tab-$i'),
-                                  icon: DesktopAppFrame._destinations[i].icon,
-                                  label: DesktopAppFrame._destinations[i].label,
-                                  selected: !inSettings && selectedIndex == i,
-                                  expanded: visualExpanded,
-                                  palette: palette,
-                                  onTap: () => onSelectTab(i),
-                                ),
-                            ],
+          // 短剧开关决定导航栏是否画第二项；关掉时下标仍按原顺序发给
+          // 壳层（第 2 项 = 书架），所以只过滤绘制、不改下标。
+          return ValueListenableBuilder<bool>(
+            valueListenable: DramaFeaturePreferences.instance.enabled,
+            builder: (context, showDrama, _) => ValueListenableBuilder<int>(
+              valueListenable: desktopTab,
+              builder: (context, selectedIndex, _) =>
+                  ValueListenableBuilder<bool>(
+                    valueListenable: DesktopShellState.onSettingsPage,
+                    builder: (context, inSettings, _) => Column(
+                      children: [
+                        const SizedBox(height: 6),
+                        Expanded(
+                          child: SingleChildScrollView(
+                            padding: const EdgeInsets.only(bottom: 8),
+                            child: Column(
+                              children: [
+                                for (
+                                  var i = 0;
+                                  i < DesktopAppFrame._destinations.length;
+                                  i++
+                                )
+                                  if (showDrama || i != 1)
+                                    _FluentNavItem(
+                                      key: ValueKey('desktop-nav-tab-$i'),
+                                      icon:
+                                          DesktopAppFrame._destinations[i].icon,
+                                      label: DesktopAppFrame
+                                          ._destinations[i]
+                                          .label,
+                                      selected:
+                                          !inSettings && selectedIndex == i,
+                                      expanded: visualExpanded,
+                                      palette: palette,
+                                      onTap: () => onSelectTab(i),
+                                    ),
+                              ],
+                            ),
                           ),
                         ),
-                      ),
-                      Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 12),
-                        child: Divider(
-                          height: 1,
-                          thickness: 1,
-                          color: palette.line,
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 12),
+                          child: Divider(
+                            height: 1,
+                            thickness: 1,
+                            color: palette.line,
+                          ),
                         ),
-                      ),
-                      const SizedBox(height: 6),
-                      _FluentNavItem(
-                        key: const Key('desktop-settings'),
-                        icon: LucideIcons.settings,
-                        label: '设置',
-                        selected: inSettings,
-                        expanded: visualExpanded,
-                        palette: palette,
-                        onTap: onOpenSettings,
-                      ),
-                      const SizedBox(height: 10),
-                    ],
+                        const SizedBox(height: 6),
+                        _FluentNavItem(
+                          key: const Key('desktop-settings'),
+                          icon: LucideIcons.settings,
+                          label: '设置',
+                          selected: inSettings,
+                          expanded: visualExpanded,
+                          palette: palette,
+                          onTap: onOpenSettings,
+                        ),
+                        const SizedBox(height: 10),
+                      ],
+                    ),
                   ),
-                ),
+            ),
           );
         },
       ),

@@ -18,6 +18,7 @@ class ShellDock extends StatelessWidget {
     required this.overVideo,
     required this.staticMaterial,
     this.animating = false,
+    this.showDrama = true,
   });
 
   final int selectedIndex;
@@ -33,6 +34,16 @@ class ShellDock extends StatelessWidget {
   /// 页面切换动画进行中：经典 dock 跳过 BackdropFilter 实时模糊；档案
   /// GlassDock 同样改用轻量预设，不做实时折射与边缘模糊。
   final bool animating;
+
+  /// 短剧功能开关关闭时不画「短剧」项：dock 只剩 3 项，点击下标要换回
+  /// 壳层的 4 页下标（见 [_selectDisplayIndex]）。
+  final bool showDrama;
+
+  int get _displayIndex =>
+      !showDrama && selectedIndex > 0 ? selectedIndex - 1 : selectedIndex;
+
+  void _selectDisplayIndex(int index) =>
+      onSelected(!showDrama && index > 0 ? index + 1 : index);
 
   static const _items = [
     GlassDockItem(CupertinoIcons.house, '首页'),
@@ -68,10 +79,11 @@ class ShellDock extends StatelessWidget {
   Widget _buildShell(BuildContext context) {
     if (AppStyleTokens.of(context).isClassic) {
       return ClassicShellDock(
-        selectedIndex: selectedIndex,
-        onSelected: onSelected,
+        selectedIndex: _displayIndex,
+        onSelected: _selectDisplayIndex,
         overVideo: overVideo,
         animating: animating,
+        showDrama: showDrama,
       );
     }
     // 页面切换动画期间与静态底板同待遇：轻量预设关掉 glass/blur/edgeBlur，
@@ -168,11 +180,14 @@ class ShellDock extends StatelessWidget {
               ),
               child: GlassDock(
                 key: const ValueKey('liquid-dock'),
-                selectedIndex: selectedIndex,
+                selectedIndex: _displayIndex,
                 reduceMotion: eink,
-                onSelected: onSelected,
-                onReselected: onSelected,
-                items: _items,
+                onSelected: _selectDisplayIndex,
+                onReselected: _selectDisplayIndex,
+                items: [
+                  for (final (index, item) in _items.indexed)
+                    if (showDrama || index != 1) item,
+                ],
               ),
             ),
           ),

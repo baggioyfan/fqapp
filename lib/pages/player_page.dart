@@ -1,4 +1,5 @@
 import '../services/desktop_platform.dart';
+import '../services/drama_feature_preferences.dart';
 import '../services/audio_floating_routes.dart';
 import '../services/app_log.dart';
 import 'dart:async';
@@ -121,7 +122,21 @@ class PlayerPage extends StatefulWidget {
   });
 
   @override
-  State<PlayerPage> createState() => _PlayerPageState();
+  // 短剧功能关闭时不构造播放状态：连播放器实例和取流请求都不该起来，
+  // 只留一张说明页（正常入口已收起，这里兜深链与播放中的切换）。
+  State<PlayerPage> createState() =>
+      // ignore: no_logic_in_create_state
+      DramaFeaturePreferences.instance.enabled.value
+      ? _PlayerPageState()
+      : _DramaDisabledPlayerState();
+}
+
+class _DramaDisabledPlayerState extends State<PlayerPage> {
+  @override
+  Widget build(BuildContext context) => Scaffold(
+    appBar: AppBar(title: const Text('短剧')),
+    body: const Center(child: Text('短剧功能已关闭，可在设置中开启。')),
+  );
 }
 
 class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {

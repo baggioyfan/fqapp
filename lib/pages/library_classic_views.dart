@@ -158,7 +158,11 @@ mixin _LibraryClassicViews on _LibraryClassicChrome {
           'manju' => '暂无漫剧',
           _ => '暂无收藏内容',
         },
-        actionLabel: _collectionFilter == 'manju' ? '找漫剧' : '找短剧',
+        actionLabel: widget.onFindDrama == null
+            ? null
+            : _collectionFilter == 'manju'
+            ? '找漫剧'
+            : '找短剧',
         actionKey: const Key('collection-find-drama-button'),
         onAction: widget.onFindDrama,
         headerHeight: headerHeight,

@@ -604,4 +604,37 @@ void main() {
       handle.dispose();
     }
   });
+
+  testWidgets('短剧功能关闭：经典 dock 只画 3 项，点击回壳层的 4 页下标', (tester) async {
+    final selected = <int>[];
+    await tester.binding.setSurfaceSize(const Size(400, 900));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData(extensions: const [AppStyleTokens.classic()]),
+        home: MediaQuery(
+          data: const MediaQueryData(size: Size(400, 900)),
+          child: Scaffold(
+            body: const SizedBox.expand(),
+            bottomNavigationBar: ClassicShellDock(
+              selectedIndex: 1,
+              onSelected: selected.add,
+              overVideo: false,
+              showDrama: false,
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('短剧'), findsNothing);
+    expect(find.text('书架'), findsOneWidget);
+    // 选中项落到「书架」这一格（壳层 1 = 短剧，但短剧不画）。
+    expect(selectionDecoration(tester), isA<BoxDecoration>());
+    await tester.tap(find.text('我的'));
+    await tester.pumpAndSettle();
+    expect(selected, [3]);
+    expect(tester.takeException(), isNull);
+  });
 }

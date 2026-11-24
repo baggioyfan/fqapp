@@ -30,6 +30,7 @@ import '../models/audio_extra.dart';
 import '../services/app_theme.dart';
 import '../services/app_style_tokens.dart';
 import '../services/audio_preferences.dart';
+import '../services/drama_feature_preferences.dart';
 import '../services/desktop_platform.dart';
 import '../services/native_player.dart';
 import '../services/player_layout_preferences.dart';
@@ -176,6 +177,7 @@ class _SettingsPageState extends State<SettingsPage> {
           title: '短剧',
           subtitle: '播放',
           items: [
+            _dramaFeatureItem(),
             _muteWhenColdStartItem(),
             if (!isDesktopHost) _floatingWindowItem(),
             if (!isDesktopHost) _videoDecoderItem(),
@@ -683,6 +685,33 @@ class _SettingsPageState extends State<SettingsPage> {
   );
 
   // ── 短剧 ──────────────────────────────────────────────────────────────
+
+  /// 短剧功能总开关：关掉后壳层收起短剧入口、播放页不再起播放器。
+  SettingsItem _dramaFeatureItem() => SettingsItem(
+    icon: LucideIcons.clapperboard,
+    title: '短剧功能',
+    rowBuilder: (context) => ValueListenableBuilder<bool>(
+      valueListenable: DramaFeaturePreferences.instance.enabled,
+      builder: (context, enabled, _) => SettingsToggleRow(
+        icon: LucideIcons.clapperboard,
+        title: '短剧功能',
+        description: '关闭后隐藏短剧入口并停用短剧播放',
+        optimistic: false,
+        value: enabled,
+        onChanged: (value) async {
+          try {
+            await DramaFeaturePreferences.instance.setEnabled(value);
+          } catch (_) {
+            if (context.mounted) {
+              ScaffoldMessenger.of(
+                context,
+              ).showSnackBar(const SnackBar(content: Text('短剧设置保存失败，请重试')));
+            }
+          }
+        },
+      ),
+    ),
+  );
 
   /// 官方设置项「开启应用时默认静音」（`GlobalMuteConfig` 标题，持久层
   /// `open_mute_when_cold_start`，默认 false＝有声起播）。

@@ -18,7 +18,6 @@ import 'package:hive_ce_flutter/hive_flutter.dart';
 
 import 'dart:async';
 
-
 import 'pages/home_page.dart';
 import 'pages/api_service_page.dart';
 import 'pages/audio_page.dart';
@@ -37,6 +36,7 @@ import 'services/api_client.dart';
 import 'services/audio_download_store.dart';
 import 'services/audio_floating_routes.dart';
 import 'services/drama_cache_preferences.dart';
+import 'services/drama_feature_preferences.dart';
 import 'services/audio_preferences.dart';
 import 'services/player_panel_preferences.dart';
 import 'services/player_preferences.dart';
@@ -130,30 +130,30 @@ Future<void> _prepareRuntime() async {
   RustLogSource.reader = BackendService.instance.readRustLog;
   if (isDesktopHost) {
     DesktopPlatform.instance.beforeClose = () async {
-          try {
-            try {
-              await BossKeyService.instance.shutdown();
-            } catch (error, stack) {
-              AppLog.w('exit', '退出前注销老板键失败', error: error, stack: stack);
-            }
-            DramaDownloader.instance.pauseAll();
-            AudioDownloader.instance.pauseAll();
-            await FairMemoryService.instance.flushForExit();
-            try {
-              if (isDesktopHost) await NativePlayer.pauseOthers();
-            } catch (error, stack) {
-              // 退出路径继续往下走，但失败要留痕：否则「关闭后还有声音」无从查起。
-              AppLog.w('exit', '退出前暂停播放器失败', error: error, stack: stack);
-            }
-            try {
-              await BackendService.instance.stop();
-            } catch (error, stack) {
-              AppLog.w('exit', '退出前停止后端失败', error: error, stack: stack);
-            }
-          } finally {
-            await Hive.close();
-          }
-        };
+      try {
+        try {
+          await BossKeyService.instance.shutdown();
+        } catch (error, stack) {
+          AppLog.w('exit', '退出前注销老板键失败', error: error, stack: stack);
+        }
+        DramaDownloader.instance.pauseAll();
+        AudioDownloader.instance.pauseAll();
+        await FairMemoryService.instance.flushForExit();
+        try {
+          if (isDesktopHost) await NativePlayer.pauseOthers();
+        } catch (error, stack) {
+          // 退出路径继续往下走，但失败要留痕：否则「关闭后还有声音」无从查起。
+          AppLog.w('exit', '退出前暂停播放器失败', error: error, stack: stack);
+        }
+        try {
+          await BackendService.instance.stop();
+        } catch (error, stack) {
+          AppLog.w('exit', '退出前停止后端失败', error: error, stack: stack);
+        }
+      } finally {
+        await Hive.close();
+      }
+    };
   }
 }
 
@@ -186,6 +186,10 @@ Future<void> _loadLocalData() async {
   await Future.wait<void>([
     // Load before interactive pages mount, so a saved opt-out applies at launch.
     optional(HapticPreferences.instance.load),
+    // 短剧功能开关同理：壳层首帧就要决定 dock 画 3 项还是 4 项，
+    // 放到 await 之后会先画 4 项再抽掉一项（SP 已由 spFuture 打开，
+    // 这里只是一次内存读，不增加启动串行等待）。
+    optional(DramaFeaturePreferences.instance.load),
     LibraryStore.instance.init(),
     // The 加入书架 collection is optional data: a failure here must not block
     // startup, which is why it shares the retryable bootstrap with the history.
@@ -671,6 +675,9 @@ class _RootShellState extends State<RootShell> with TickerProviderStateMixin {
   /// 首页头部是普通 sliver（不是折叠 AppBar），把 offset 归零即等价，吸顶的
   /// 分类栏会自己重新吸住。
   void _selectTab(int index) {
+    // 短剧功能关闭后 dock 上已没有这一项，任何残留入口（空态按钮、
+    // 桌面导航、深链）都不该把壳层切过去。
+    if (index == 1 && !DramaFeaturePreferences.instance.enabled.value) return;
     if (index != _index) {
       FrameStats.mark('shell tab $index');
       // 先广播可见性：页面据此暂停/恢复播放器与定时器，不靠 TickerMode 翻转
@@ -764,7 +771,9 @@ class _RootShellState extends State<RootShell> with TickerProviderStateMixin {
         // 切到短剧 tab。
         return LibraryPage(
           onBrowse: () => _selectTab(0),
-          onFindDrama: () => _selectTab(1),
+          onFindDrama: DramaFeaturePreferences.instance.enabled.value
+              ? () => _selectTab(1)
+              : null,
         );
       default:
         return const MinePage();
@@ -784,6 +793,9 @@ class _RootShellState extends State<RootShell> with TickerProviderStateMixin {
     // 初始可见页：页面据此决定是否暂停播放器/定时器。
     shellVisibleTab.value = _index;
     _pageMotion.addStatusListener(_onPageMotionStatus);
+    DramaFeaturePreferences.instance.enabled.addListener(
+      _onDramaFeatureChanged,
+    );
     _startBackend();
   }
 
@@ -804,6 +816,32 @@ class _RootShellState extends State<RootShell> with TickerProviderStateMixin {
       FrameStats.mark('motion end');
       setState(() {});
     }
+  }
+
+  /// 短剧开关变化：收起/恢复入口，并把停在短剧页的壳层挪回首页。
+  ///
+  /// 短剧页是一个全屏视频流，关掉开关后不能让它继续留在 Stack 里播：
+  /// 先摘掉已挂载标记与 widget 缓存（下次进入是全新页面），再在不走
+  /// 滑动动画的情况下直接落位首页（目标页已经不存在，动画没有终点）。
+  void _onDramaFeatureChanged() {
+    if (!mounted) return;
+    final enabled = DramaFeaturePreferences.instance.enabled.value;
+    if (!enabled && desktopTab.value == 1) desktopTab.value = 0;
+    setState(() {
+      // 两个方向都要重做缓存：入口的回调是构建时定的闭包。
+      _tabCache.remove(1);
+      _tabCache.remove(2);
+      if (enabled) return;
+      _visitedTabs.remove(1);
+      if (_index == 1 || _premount == 1) {
+        ++_premountGeneration;
+        if (_index == 1) _index = 0;
+        _premount = null;
+        _pageFrom = _index.toDouble();
+        _pageMotion.value = 1;
+        shellVisibleTab.value = _index;
+      }
+    });
   }
 
   Future<void> _startBackend() async {
@@ -837,6 +875,9 @@ class _RootShellState extends State<RootShell> with TickerProviderStateMixin {
     dramaLightPageNotifier.removeListener(_onDramaChromeChanged);
     einkModeNotifier.removeListener(_onEinkModeChanged);
     _pageMotion.removeStatusListener(_onPageMotionStatus);
+    DramaFeaturePreferences.instance.enabled.removeListener(
+      _onDramaFeatureChanged,
+    );
     _homeScroll.dispose();
     _pageMotion.dispose();
     super.dispose();
@@ -860,10 +901,16 @@ class _RootShellState extends State<RootShell> with TickerProviderStateMixin {
             index: index,
             children: [
               HomePage(cueLoader: ApiClient.instance.searchCue),
-              const DramaPage(),
+              // 关掉短剧时不挂短剧页：占位保持 4 项，桌面 tab 下标不必换算。
+              if (DramaFeaturePreferences.instance.enabled.value)
+                const DramaPage()
+              else
+                const SizedBox.shrink(),
               LibraryPage(
                 onBrowse: () => desktopTab.value = 0,
-                onFindDrama: () => desktopTab.value = 1,
+                onFindDrama: DramaFeaturePreferences.instance.enabled.value
+                    ? () => desktopTab.value = 1
+                    : null,
               ),
               const MinePage(),
             ],
@@ -964,6 +1011,7 @@ class _RootShellState extends State<RootShell> with TickerProviderStateMixin {
         overVideo: dramaOnVideo,
         staticMaterial: shellDockStaticMaterial(overVideo: dramaOnVideo),
         animating: _pageMotion.isAnimating,
+        showDrama: DramaFeaturePreferences.instance.enabled.value,
       ),
     );
   }
