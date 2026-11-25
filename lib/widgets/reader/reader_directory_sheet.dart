@@ -20,6 +20,7 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:cupertino_ui/cupertino_ui.dart';
+import 'package:flutter/rendering.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
 
@@ -30,6 +31,63 @@ import '../wenku/wenku_ui.dart';
 import 'reader_directory_fast_scroll.dart';
 import 'reader_theme.dart';
 import 'settings/reader_settings_widgets.dart';
+
+// Keep the compact volume headers and find visible rows without walking the
+// chapters before them on every scroll frame.
+int _directoryRowAt(List<double> offsets, double offset) {
+  var first = 0;
+  var last = offsets.length - 1;
+  while (first + 1 < last) {
+    final mid = (first + last) ~/ 2;
+    if (offsets[mid] <= offset) {
+      first = mid;
+    } else {
+      last = mid;
+    }
+  }
+  return first;
+}
+
+class _DirectoryRowsDelegate extends SliverGridDelegate {
+  const _DirectoryRowsDelegate(this.offsets);
+
+  final List<double> offsets;
+
+  @override
+  SliverGridLayout getLayout(SliverConstraints constraints) =>
+      _DirectoryRowsLayout(offsets, constraints.crossAxisExtent);
+
+  @override
+  bool shouldRelayout(_DirectoryRowsDelegate oldDelegate) =>
+      !identical(offsets, oldDelegate.offsets);
+}
+
+class _DirectoryRowsLayout extends SliverGridLayout {
+  const _DirectoryRowsLayout(this.offsets, this.width);
+
+  final List<double> offsets;
+  final double width;
+
+  @override
+  int getMinChildIndexForScrollOffset(double scrollOffset) =>
+      _directoryRowAt(offsets, scrollOffset);
+
+  @override
+  int getMaxChildIndexForScrollOffset(double scrollOffset) =>
+      _directoryRowAt(offsets, scrollOffset);
+
+  @override
+  SliverGridGeometry getGeometryForChildIndex(int index) => SliverGridGeometry(
+    scrollOffset: offsets[index],
+    crossAxisOffset: 0,
+    mainAxisExtent:
+        offsets[math.min(index + 1, offsets.length - 1)] - offsets[index],
+    crossAxisExtent: width,
+  );
+
+  @override
+  double computeMaxScrollOffset(int childCount) => offsets[childCount];
+}
 
 /// Searchable chapter directory using the current reading palette.
 class ReaderDirectorySheet extends StatefulWidget {
@@ -71,6 +129,7 @@ class _ReaderDirectorySheetState extends State<ReaderDirectorySheet> {
   String _query = '';
   final Set<String> _expandedVolumes = {};
   List<({String volume, int? chapter})> _rows = const [];
+  List<double> _rowOffsets = const [0];
 
   /// One anchor chapter index per [_rows] entry for the fast-scroll handle.
   /// Kept as a stable field (not rebuilt per frame) so the handle keeps a drag
@@ -87,9 +146,13 @@ class _ReaderDirectorySheetState extends State<ReaderDirectorySheet> {
   }
 
   void _rebuildRows() {
-    final groups = <String>{
-      for (final chapter in widget.chapters) chapter.volumeName.trim(),
-    };
+    final groups = <String>{};
+    final firstChapterInVolume = <String, int>{};
+    for (var index = 0; index < widget.chapters.length; index++) {
+      final volume = widget.chapters[index].volumeName;
+      groups.add(volume.trim());
+      firstChapterInVolume.putIfAbsent(volume, () => index);
+    }
     final grouped = widget.embedded
         ? groups.any((name) => name.isNotEmpty)
         : groups.where((name) => name.isNotEmpty).length > 1;
@@ -109,12 +172,9 @@ class _ReaderDirectorySheetState extends State<ReaderDirectorySheet> {
       previous = volume;
     }
     _rows = rows;
+    _updateRowOffsets();
     _rowAnchors = [
-      for (final row in rows)
-        row.chapter ??
-            widget.chapters.indexWhere(
-              (chapter) => chapter.volumeName == row.volume,
-            ),
+      for (final row in rows) row.chapter ?? firstChapterInVolume[row.volume]!,
     ];
   }
 
@@ -213,6 +273,7 @@ class _ReaderDirectorySheetState extends State<ReaderDirectorySheet> {
       }
       _itemExtent = extent;
       _volumeExtent = volumeExtent;
+      _updateRowOffsets();
       _schedulePosition(
         current: row == null,
         position: row,
@@ -312,30 +373,18 @@ class _ReaderDirectorySheetState extends State<ReaderDirectorySheet> {
     });
   }
 
-  /// Height of one [_rows] entry; only volume headers differ from the chapter
-  /// stride (see [_volumeExtent]).
-  double _rowExtent(int index) =>
-      _rows[index].chapter == null ? _volumeExtent : _itemExtent;
-
-  /// Pixel offset of [index], mirroring the list's prefix sums.
-  double _rowOffset(int index) {
+  void _updateRowOffsets() {
     var offset = 0.0;
-    for (var row = 0; row < index && row < _rows.length; row++) {
-      offset += _rowExtent(row);
-    }
-    return offset;
+    _rowOffsets = [
+      offset,
+      for (final row in _rows)
+        offset += row.chapter == null ? _volumeExtent : _itemExtent,
+    ];
   }
 
-  /// Row index under a scroll [offset]; the inverse of [_rowOffset].
-  int _rowIndexAt(double offset) {
-    var start = 0.0;
-    for (var row = 0; row < _rows.length; row++) {
-      final end = start + _rowExtent(row);
-      if (offset < end) return row;
-      start = end;
-    }
-    return math.max(0, _rows.length - 1);
-  }
+  double _rowOffset(int index) => _rowOffsets[index.clamp(0, _rows.length)];
+
+  int _rowIndexAt(double offset) => _directoryRowAt(_rowOffsets, offset);
 
   List<int> get _visibleIndexes {
     Iterable<int> indexes = Iterable<int>.generate(widget.chapters.length);
@@ -423,30 +472,34 @@ class _ReaderDirectorySheetState extends State<ReaderDirectorySheet> {
                     chapters: widget.chapters,
                     indexes: _rowAnchors,
                     preset: preset,
-                    child: ListView.builder(
+                    child: CustomScrollView(
                       key: const ValueKey('reader-directory-scroll'),
                       controller: _scrollController,
                       keyboardDismissBehavior:
                           ScrollViewKeyboardDismissBehavior.onDrag,
-                      padding: classic
-                          ? const EdgeInsets.symmetric(vertical: 8)
-                          : const EdgeInsets.fromLTRB(10, 4, 10, 12),
-                      itemExtentBuilder: (position, _) => _rowExtent(position),
-                      itemCount: _rows.length,
-                      itemBuilder: (context, position) =>
-                          switch (_rows[position].chapter) {
-                            final int index =>
-                              classic
-                                  ? _classicRow(context, index, preset)
-                                  : _row(context, index, preset),
-                            null =>
-                              classic
-                                  ? _classicVolumeRow(
-                                      _rows[position].volume,
-                                      preset,
-                                    )
-                                  : _volumeRow(_rows[position].volume, preset),
-                          },
+                      semanticChildCount: _rows.length,
+                      slivers: [
+                        SliverPadding(
+                          padding: classic
+                              ? const EdgeInsets.symmetric(vertical: 8)
+                              : const EdgeInsets.fromLTRB(10, 4, 10, 12),
+                          sliver: SliverGrid.builder(
+                            gridDelegate: _DirectoryRowsDelegate(_rowOffsets),
+                            itemCount: _rows.length,
+                            itemBuilder: (context, position) {
+                              final row = _rows[position];
+                              if (row.chapter case final index?) {
+                                return classic
+                                    ? _classicRow(context, index, preset)
+                                    : _row(context, index, preset);
+                              }
+                              return classic
+                                  ? _classicVolumeRow(row.volume, preset)
+                                  : _volumeRow(row.volume, preset);
+                            },
+                          ),
+                        ),
+                      ],
                     ),
                   ),
           ),

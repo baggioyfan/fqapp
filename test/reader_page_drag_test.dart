@@ -7,8 +7,40 @@ import 'package:fqapp/services/chapter_text_formatter.dart';
 import 'package:fqapp/services/reader_preferences.dart';
 import 'package:fqapp/widgets/reader/reader_chapter_layout.dart';
 import 'package:fqapp/widgets/reader/reader_paged_view.dart';
+import 'package:fqapp/widgets/reader/reader_text_selection.dart';
 
 void main() {
+  testWidgets('unmarked adjacent pages skip selection painters', (
+    tester,
+  ) async {
+    final geometry = ReaderSelectionGeometry();
+    await _pumpPager(
+      tester,
+      ReaderPageTurnStyle.slide,
+      selectionScope: ReaderSelectionScope(
+        geometry: geometry,
+        washColor: Colors.yellow,
+        handleColor: Colors.black,
+        underlineColor: Colors.black,
+        narrationColor: Colors.yellow,
+      ),
+    );
+    expect(find.byType(ReaderBlockMarkLayer), findsWidgets);
+    expect(
+      find.byWidgetPredicate(
+        (widget) =>
+            widget is CustomPaint && widget.painter is ReaderBlockMarkPainter,
+      ),
+      findsNothing,
+    );
+    final layer = tester.widget<ReaderBlockMarkLayer>(
+      find.byType(ReaderBlockMarkLayer).first,
+    );
+    final entry = geometry.entryFor(layer.block.index);
+    expect(entry, isNotNull);
+    expect(entry!.painter.height, greaterThan(0));
+  });
+
   for (final style in [ReaderPageTurnStyle.slide, ReaderPageTurnStyle.cover]) {
     for (final direction in [1, -1]) {
       for (final startX in [40.0, 140.0, 280.0, 360.0]) {
@@ -169,7 +201,13 @@ void main() {
   }
 }
 
-Future<void> _pumpPager(WidgetTester tester, ReaderPageTurnStyle style) async {
+Future<ValueNotifier<ReaderPageTurnStyle>> _pumpPager(
+  WidgetTester tester,
+  ReaderPageTurnStyle initialStyle, {
+  ReaderSelectionScope? selectionScope,
+}) async {
+  final style = ValueNotifier(initialStyle);
+  addTearDown(style.dispose);
   await tester.binding.setSurfaceSize(const Size(600, 800));
   addTearDown(() => tester.binding.setSurfaceSize(null));
   final layout = ReaderChapterLayout(
@@ -193,19 +231,24 @@ Future<void> _pumpPager(WidgetTester tester, ReaderPageTurnStyle style) async {
       home: Scaffold(
         body: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 100),
-          child: ReaderPagedView(
-            layout: layout,
-            pageIndex: 1,
-            hasPreviousChapter: true,
-            hasNextChapter: true,
-            onPageChanged: (_) {},
-            onBoundary: (_) async {},
-            onDragStart: () {},
-            turnStyle: style,
-            backgroundColor: Colors.white,
+          child: ValueListenableBuilder(
+            valueListenable: style,
+            builder: (context, value, _) => ReaderPagedView(
+              layout: layout,
+              pageIndex: 1,
+              hasPreviousChapter: true,
+              hasNextChapter: true,
+              onPageChanged: (_) {},
+              onBoundary: (_) async {},
+              onDragStart: () {},
+              turnStyle: value,
+              backgroundColor: Colors.white,
+              selectionScope: selectionScope,
+            ),
           ),
         ),
       ),
     ),
   );
+  return style;
 }

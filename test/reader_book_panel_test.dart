@@ -224,8 +224,10 @@ Future<void> _query(WidgetTester tester, String text) async {
   await tester.pumpAndSettle();
 }
 
-double _directoryOffset(WidgetTester tester) =>
-    tester.widget<ListView>(_key('reader-directory-scroll')).controller!.offset;
+double _directoryOffset(WidgetTester tester) => tester
+    .widget<CustomScrollView>(_key('reader-directory-scroll'))
+    .controller!
+    .offset;
 
 double _notesOffset(WidgetTester tester) => tester
     .state<ScrollableState>(
@@ -430,11 +432,19 @@ void main() {
           expect(rect.top, greaterThanOrEqualTo(bounds.top));
           expect(rect.bottom, lessThanOrEqualTo(bounds.bottom));
         }
-        final list = tester.widget<ListView>(_key('reader-directory-scroll'));
-        // 卷头自带独立步长，章节行改走逐行 builder，不再有一个全局
-        // itemExtent；下面用同批的兄弟行继续钉住章节行的公共步长。
-        expect(list.itemExtent, isNull);
-        expect(list.itemExtentBuilder, isNotNull);
+        final list = tester.widget<CustomScrollView>(
+          _key('reader-directory-scroll'),
+        );
+        // 卷头与章节行高度不同，行偏移改由预计算的 offsets 决定（不再有
+        // 全局 itemExtent）；这里钉住它确实走的是自绘 sliver 布局。
+        expect(list.slivers, isNotEmpty);
+        expect(
+          find.descendant(
+            of: _key('reader-directory-scroll'),
+            matching: find.byType(SliverGrid),
+          ),
+          findsOneWidget,
+        );
         expect(
           bounds.height,
           greaterThanOrEqualTo(title.height + progress.height),

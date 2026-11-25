@@ -176,7 +176,12 @@ class ReaderSelectionEntry {
   final int blockIndex;
   final ReaderContentBlock block;
   final RenderBox box;
-  final TextPainter painter;
+
+  /// 延迟建 painter：注册发生在每块上屏时，而 painter 只有真正选到/画标记
+  /// 时才需要。之前是注册时就 `ReaderChapterLayout.blockPainter(...)`，等于
+  /// 每次翻页给整屏每段都排一次版。
+  final TextPainter Function() painterBuilder;
+  TextPainter get painter => painterBuilder();
 
   /// The block-space y window this entry answers for: the whole block in
   /// scroll mode, the visible lines' span in paged mode — so a point between
@@ -188,7 +193,7 @@ class ReaderSelectionEntry {
     required this.blockIndex,
     required this.block,
     required this.box,
-    required this.painter,
+    required this.painterBuilder,
     required this.windowTop,
     required this.windowBottom,
   });
@@ -219,11 +224,9 @@ class ReaderSelectionGeometry {
     _entries.add(entry);
   }
 
-  void unregister(int blockIndex, {double? windowTop}) => _entries.removeWhere(
-    (entry) =>
-        entry.blockIndex == blockIndex &&
-        (windowTop == null || entry.windowTop == windowTop),
-  );
+  /// 按身份摘除。之前按 `blockIndex + windowTop` 扫一遍：同一段在分页模式
+  /// 下会以不同窗口注册，扫的是整张表，且分不清是哪一次注册。
+  void unregister(ReaderSelectionEntry entry) => _entries.remove(entry);
 
   ReaderSelectionEntry? entryFor(int blockIndex, {double? blockY}) {
     ReaderSelectionEntry? fallback;
@@ -358,6 +361,7 @@ class ReaderBlockMarkLayer extends StatefulWidget {
 
 class _ReaderBlockMarkLayerState extends State<ReaderBlockMarkLayer> {
   TextPainter? _painter;
+  (ReaderSelectionGeometry, ReaderSelectionEntry)? _registration;
 
   @override
   void initState() {
@@ -368,20 +372,26 @@ class _ReaderBlockMarkLayerState extends State<ReaderBlockMarkLayer> {
   @override
   void didUpdateWidget(ReaderBlockMarkLayer oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (!identical(oldWidget.block, widget.block) ||
-        oldWidget.spec != widget.spec) {
+    final textChanged =
+        !identical(oldWidget.block, widget.block) ||
+        oldWidget.spec != widget.spec;
+    if (textChanged) {
       _painter?.dispose();
       _painter = null;
     }
-    _scheduleRegistration();
+    // 每次 rebuild 都重排注册等于把整表打散重建；只有可能改变「哪块在屏幕
+    // 哪一行」的输入变了才需要重新登记。
+    if (textChanged ||
+        !identical(oldWidget.scope.geometry, widget.scope.geometry) ||
+        oldWidget.windowTop != widget.windowTop ||
+        oldWidget.windowBottom != widget.windowBottom) {
+      _scheduleRegistration();
+    }
   }
 
   @override
   void dispose() {
-    widget.scope.geometry.unregister(
-      widget.block.index,
-      windowTop: widget.windowTop,
-    );
+    _unregister();
     _painter?.dispose();
     super.dispose();
   }
@@ -389,23 +399,32 @@ class _ReaderBlockMarkLayerState extends State<ReaderBlockMarkLayer> {
   TextPainter get _lazyPainter =>
       _painter ??= ReaderChapterLayout.blockPainter(widget.block, widget.spec);
 
+  void _unregister() {
+    if (_registration case (final geometry, final entry)) {
+      geometry.unregister(entry);
+      _registration = null;
+    }
+  }
+
   void _scheduleRegistration() {
+    _unregister();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       final box = context.findRenderObject();
       if (box is! RenderBox || !box.attached) return;
-      widget.scope.geometry.register(
-        entry: ReaderSelectionEntry(
-          blockIndex: widget.block.index,
-          block: widget.block,
-          box: box,
-          painter: _lazyPainter,
-          windowTop: widget.windowTop,
-          windowBottom: widget.windowBottom.isInfinite
-              ? widget.block.height
-              : widget.windowBottom,
-        ),
+      final geometry = widget.scope.geometry;
+      final entry = ReaderSelectionEntry(
+        blockIndex: widget.block.index,
+        block: widget.block,
+        box: box,
+        painterBuilder: () => _lazyPainter,
+        windowTop: widget.windowTop,
+        windowBottom: widget.windowBottom.isInfinite
+            ? widget.block.height
+            : widget.windowBottom,
       );
+      geometry.register(entry: entry);
+      _registration = (geometry, entry);
     });
   }
 
@@ -419,29 +438,37 @@ class _ReaderBlockMarkLayerState extends State<ReaderBlockMarkLayer> {
     final narrationRange = narration == null
         ? null
         : blockSelectionRange(widget.block, narration.$1, narration.$2);
+    final dialogueRanges =
+        widget.scope.dialogueRangesByBlock[widget.block.index] ?? const [];
+    // 绝大多数段落没有任何标记。没有标记时不挂 CustomPaint —— 否则每帧都要
+    // 走一次 ReaderBlockMarkPainter.paint（还会顺带建出 TextPainter）。
+    final hasMarks =
+        range != null ||
+        narrationRange != null ||
+        widget.rangeUnderlines.isNotEmpty ||
+        dialogueRanges.isNotEmpty;
     return Stack(
       children: [
         // First child paints first: the marks sit behind the text.
-        Positioned.fill(
-          child: CustomPaint(
-            painter: ReaderBlockMarkPainter(
-              block: widget.block,
-              painter: _lazyPainter,
-              selectionRange: range,
-              rangeUnderlines: widget.rangeUnderlines,
-              washColor: widget.scope.washColor,
-              underlineColor: widget.scope.underlineColor,
-              narrationRange: narrationRange,
-              narrationColor: widget.scope.narrationColor,
-              narrationUnderline: widget.scope.narrationUnderline,
-              dialogueRanges:
-                  widget.scope.dialogueRangesByBlock[widget.block.index] ??
-                  const [],
-              dialogueColor: widget.scope.dialogueColor,
-              dialogueUnderline: widget.scope.dialogueUnderline,
+        if (hasMarks)
+          Positioned.fill(
+            child: CustomPaint(
+              painter: ReaderBlockMarkPainter(
+                block: widget.block,
+                painter: _lazyPainter,
+                selectionRange: range,
+                rangeUnderlines: widget.rangeUnderlines,
+                washColor: widget.scope.washColor,
+                underlineColor: widget.scope.underlineColor,
+                narrationRange: narrationRange,
+                narrationColor: widget.scope.narrationColor,
+                narrationUnderline: widget.scope.narrationUnderline,
+                dialogueRanges: dialogueRanges,
+                dialogueColor: widget.scope.dialogueColor,
+                dialogueUnderline: widget.scope.dialogueUnderline,
+              ),
             ),
           ),
-        ),
         widget.child,
       ],
     );

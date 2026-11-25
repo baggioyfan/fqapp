@@ -157,7 +157,7 @@ void main() {
     await tester.pumpAndSettle();
     final list = find.descendant(
       of: find.byType(BottomSheet),
-      matching: find.byType(ListView),
+      matching: find.byKey(const ValueKey('reader-directory-scroll')),
     );
     expect(list, findsOneWidget);
     expect(tester.getRect(list).bottom, lessThanOrEqualTo(500));
