@@ -15,6 +15,7 @@ import '../services/shuqi_reader_source.dart';
 import '../services/user_facing_error.dart';
 import '../widgets/app_ui/app_ui_scope.dart';
 import '../widgets/app_ui/content_anchor.dart';
+import '../widgets/copyable_text.dart';
 import '../widgets/detail/detail_archive.dart';
 import '../widgets/detail/detail_states.dart';
 import '../widgets/detail/detail_style.dart';

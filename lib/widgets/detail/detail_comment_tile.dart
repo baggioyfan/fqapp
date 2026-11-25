@@ -8,6 +8,7 @@ import '../../models/book_comment.dart';
 import '../../models/comment_reply.dart';
 import '../../services/poster_cache.dart';
 import '../comment_images.dart';
+import '../copyable_text.dart';
 import '../home/home_design.dart';
 import 'detail_sections.dart';
 
@@ -139,9 +140,10 @@ class _DetailCommentTileState extends State<DetailCommentTile> {
           ],
           const SizedBox(height: 6),
           if (comment.text.isNotEmpty)
-            Text(
+            // #477：书评正文可长按选中复制。
+            CopyableText(
               comment.text,
-              key: ValueKey('detail_review_text_${comment.id}'),
+              textKey: ValueKey('detail_review_text_${comment.id}'),
               maxLines: widget.maxTextLines,
               overflow: widget.maxTextLines == null
                   ? TextOverflow.visible
@@ -382,8 +384,9 @@ class _ReplyTile extends StatelessWidget {
                 ),
                 const SizedBox(height: 3),
                 if (reply.text.isNotEmpty)
-                  Text(
+                  CopyableText(
                     reply.text,
+                    textKey: ValueKey('detail_reply_text_${reply.id}'),
                     style: TextStyle(
                       color: palette.ink,
                       fontSize: 12.5,
