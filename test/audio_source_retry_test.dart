@@ -143,6 +143,57 @@ void main() {
     ]);
   });
 
+  testWidgets('a chapter fallback does not replace the selected voice', (
+    tester,
+  ) async {
+    final players = <ControlledNativePlayer>[];
+    _sourceResponse = (request) async {
+      final item = request.url.pathSegments.last;
+      final tone = request.url.queryParameters['tone_id'];
+      if (item == '1' && tone == '96') {
+        return _json({'code': 101000, 'message': 'NO_THIS_TONE'}, 200);
+      }
+      return _json(
+        _playinfoPayload(item, url: 'https://cdn.example/$item-$tone.m4a'),
+        200,
+      );
+    };
+    await _mount(
+      tester,
+      players: players,
+      initialToneId: '96',
+      chapters: [
+        Chapter(itemId: '1', title: '第1章', volumeName: ''),
+        Chapter(itemId: '2', title: '第2章', volumeName: ''),
+      ],
+      extras: const AudioExtras(
+        tones: AudioToneSet(
+          ttsTones: [
+            AudioTone(id: '64', title: '成熟大叔音'),
+            AudioTone(id: '96', title: '多角色对话升级版'),
+          ],
+        ),
+      ),
+    );
+    await _pumpUntil(
+      tester,
+      () => players.isNotEmpty && players.first.isPlaying,
+    );
+    players.first.emitPosition(const Duration(seconds: 2));
+    await _pumpUntil(
+      tester,
+      () => players.length == 2 && players.last.isCreated,
+    );
+    players.first.emitCompleted();
+    await _pumpUntil(tester, () => players.last.isPlaying);
+    expect(
+      _sourceRequests.map(
+        (url) => (url.pathSegments.last, url.queryParameters['tone_id']),
+      ),
+      [('1', '96'), ('1', '64'), ('2', '96')],
+    );
+  });
+
   testWidgets('the next chapter buffers and falls back before auto-advance', (
     tester,
   ) async {
@@ -600,6 +651,7 @@ Map<String, dynamic> _playinfoPayload(
 Widget _app(
   List<ControlledNativePlayer> players, {
   List<Chapter>? chapters,
+  String? initialToneId,
   AudioExtras extras = const AudioExtras(),
   AudioExtrasLoader? extrasLoader,
   SubtitleLoader? subtitleLoader,
@@ -607,6 +659,7 @@ Widget _app(
 }) => MaterialApp(
   home: AudioPage(
     bookId: 'book',
+    initialToneId: initialToneId,
     title: '测试听书',
     chapters: chapters ?? [Chapter(itemId: '1', title: '第1章', volumeName: '')],
     historyStore: ControlledReaderStore(),
@@ -628,6 +681,7 @@ Future<void> _mount(
   WidgetTester tester, {
   List<ControlledNativePlayer>? players,
   List<Chapter>? chapters,
+  String? initialToneId,
   AudioExtras extras = const AudioExtras(),
   AudioExtrasLoader? extrasLoader,
   SubtitleLoader? subtitleLoader,
@@ -643,6 +697,7 @@ Future<void> _mount(
     _app(
       players ?? [],
       chapters: chapters,
+      initialToneId: initialToneId,
       extras: extras,
       extrasLoader: extrasLoader,
       subtitleLoader: subtitleLoader,

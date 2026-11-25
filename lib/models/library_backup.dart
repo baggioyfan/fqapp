@@ -530,7 +530,7 @@ class LibraryBackup {
         throw const FormatException('备份中有重复的进度');
       }
       if (source != null) clean['source'] = source;
-      for (final key in ['bookId', 'chapterId', 'toneId']) {
+      for (final key in ['bookId', 'chapterId', 'toneId', 'requestedToneId']) {
         if (record[key] != null && record[key] != '') {
           clean[key] = _id(record[key]);
         }
@@ -578,7 +578,12 @@ class LibraryBackup {
         }
         clean['positionUnit'] = 'comic-page';
       }
-      for (final key in ['autoAdvance', 'completed', 'fanqieImported']) {
+      for (final key in [
+        'autoAdvance',
+        'completed',
+        'fanqieImported',
+        'automaticTone',
+      ]) {
         if (record[key] == null) continue;
         if (record[key] is! bool) throw FormatException('备份字段 $key 无效');
         clean[key] = record[key];
