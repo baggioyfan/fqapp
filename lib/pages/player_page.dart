@@ -1805,7 +1805,10 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     QualityMemory.remember(widget.bookId, variant.name);
     _currentSource = source.withVariant(variant);
     _renditionHeight = variant.height > 0 ? variant.height : null;
-    final release = _teardownPlayer();
+    late final Future<void> release;
+    setState(() {
+      release = _teardownPlayer();
+    });
     NativePlayer? candidate;
     try {
       await release;
@@ -2138,6 +2141,18 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
             }
           : null,
       onSeeked: widget.shortSeries ? _onDanmakuSeek : null,
+      // 统计浮层每次轮询即时取样本；这里核对 attempt 与目标集，避免把上一集
+      // 的诊断数据挂到当前集上（换集/换档期间两边会短暂不一致）。
+      loadSample: () {
+        final sample = _diagnostics.latestSample;
+        if (sample == null ||
+            widget.eps.isEmpty ||
+            sample.attempt != _loadGeneration ||
+            sample.episode != _index + 1) {
+          return null;
+        }
+        return sample;
+      },
       newPlayerBottomStyle: style.useNewPlayerBottomStyle,
       hasBanner: style.hasBanner,
       padNewBottomStyle: style.padNewBottomStyle,

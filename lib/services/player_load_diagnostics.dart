@@ -115,6 +115,9 @@ class PlayerLoadSample {
 class PlayerLoadDiagnostics {
   final Duration Function() _now;
   final ValueChanged<PlayerLoadSample> _report;
+  PlayerLoadSample? _latestSample;
+
+  PlayerLoadSample? get latestSample => _latestSample;
 
   PlayerLoadDiagnostics({
     Duration Function()? now,
@@ -234,6 +237,7 @@ class PlayerLoadTrace {
       errorCode: _errorCode,
       httpStatusCode: _httpStatusCode,
     );
+    _diagnostics._latestSample = sample;
     // Diagnostics must never turn a successful load into a playback error.
     try {
       _diagnostics._report(sample);

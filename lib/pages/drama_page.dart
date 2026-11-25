@@ -3,6 +3,7 @@ import '../services/app_breakpoints.dart';
 import '../services/desktop_platform.dart';
 
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter/services.dart';
@@ -53,6 +54,7 @@ import '../widgets/player/playlet_more_panel.dart';
 import '../widgets/player/playlet_more_panel_light.dart';
 import '../widgets/player/playlet_option_sheet.dart';
 import '../widgets/player/playlet_quick_catalog_sheet.dart';
+import '../widgets/player/player_statistics_overlay.dart';
 import '../widgets/player/player_toast.dart';
 import '../widgets/player/player_video_layout.dart';
 import '../widgets/tab_swipe_area.dart';
@@ -515,6 +517,10 @@ class _DramaPageState extends ConsumerState<DramaPage>
   /// 只作用于在屏卡：渐变遮罩、信息层、进度条与静音药丸整批隐藏。
   bool _feedClearScreen = false;
 
+  /// Feed 详细统计浮层按会话保存；换剧、换集或重建播放器时保留开关，
+  /// 但浮层内部会在播放器/集身份变化时立即清空上一份数据。
+  bool _feedStatisticsVisible = false;
+
   /// 面板「字体大小」行级联打开的字号弹层（官方 `jm3.t0.m`：先关面板
   /// 再开弹层，`_modalOpen` 计账在弹层方法内部）。
   bool _pendingFeedFontScale = false;
@@ -866,6 +872,11 @@ class _DramaPageState extends ConsumerState<DramaPage>
     final enabled = shown == null || shown == widget.shellIndex;
     if (enabled == _tickerEnabled) return;
     _tickerEnabled = enabled;
+    if (_feedStatisticsVisible) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && _feedStatisticsVisible) setState(() {});
+      });
+    }
     if (enabled) {
       _resumeInline();
     } else {
@@ -1142,6 +1153,7 @@ class _DramaPageState extends ConsumerState<DramaPage>
     // 全页播放器正在接管（_openPlayer 已销毁 inline 播放器）时不开面板。
     if (_feedPanelOpen || _openingId != null) return;
     _feedPanelOpen = true;
+    if (_feedStatisticsVisible) setState(() {});
     final dark = PlayerStyleConfig.instance.morePanelDarkStyle;
     // 浅色支面板的内容会随夜间皮肤翻白（`PlayletMorePanelLight`），底色也
     // 得一起翻：否则深色主题下是 #FAFAFA 底配白字。
@@ -1188,6 +1200,10 @@ class _DramaPageState extends ConsumerState<DramaPage>
               // 官方 `jm3.t0`：行尾当前档 + 点击级联打开字号弹层。
               fontScaleLabel: ShortSeriesFontScale.label,
               onOpenFontSettings: () => _pendingFeedFontScale = true,
+              statisticsEnabled: _feedStatisticsVisible,
+              onToggleStatistics: () => setState(
+                () => _feedStatisticsVisible = !_feedStatisticsVisible,
+              ),
               // 官方 `jm3.d0.y`/`jm3.u`：行点击随面板关闭直接打开听书页/
               // 选集下载弹窗（与全页 chrome 同款直推；集目录不在场——
               // 未起播/单集搜索回落——时整行不出现）。
@@ -1215,6 +1231,10 @@ class _DramaPageState extends ConsumerState<DramaPage>
             onToggleDanmaku: () => unawaited(_toggleFeedDanmaku()),
             // 官方 `jm3.e`：弹幕设置入口在弹幕开关之后（与全页同门）。
             onOpenDanmakuSettings: () => _pendingFeedDanmakuSettings = true,
+            statisticsEnabled: _feedStatisticsVisible,
+            onToggleStatistics: () => setState(
+              () => _feedStatisticsVisible = !_feedStatisticsVisible,
+            ),
             clearScreen: _feedClearScreen,
             onToggleClearScreen: () =>
                 setState(() => _feedClearScreen = !_feedClearScreen),
@@ -1369,7 +1389,7 @@ class _DramaPageState extends ConsumerState<DramaPage>
     if (item == null) return;
     final episodes = _inline.episodes;
     if (episodes.isEmpty) return;
-    _modalOpen = true;
+    setState(() => _modalOpen = true);
     try {
       await DramaDownloadSheet.show(
         context,
@@ -2078,6 +2098,33 @@ class _DramaPageState extends ConsumerState<DramaPage>
             video: onScreen
                 ? _InlineVideoLayer(item: item, playback: _inline)
                 : null,
+            statisticsOverlayBuilder: onScreen && _feedStatisticsVisible
+                ? (displaySize) {
+                    final index = _inline.activeEpisodeIndex ?? 0;
+                    final episodes = _inline.episodes;
+                    final episodeLabel = index >= 0 && index < episodes.length
+                        ? episodes[index].title
+                        : '';
+                    return PlayerStatisticsOverlay(
+                      key: ValueKey<Object>((
+                        item.id,
+                        _inline.activeVid.value,
+                        _inline.player?.hashCode,
+                        index,
+                      )),
+                      player: _inline.player,
+                      position: _inline.position,
+                      duration: _inline.duration.value,
+                      playbackRate: _inline.rate.value,
+                      currentIndex: index,
+                      episodeLabel: episodeLabel,
+                      active: _tickerEnabled && !_modalOpen && !_feedPanelOpen,
+                      displaySize: displaySize,
+                      onClose: () =>
+                          setState(() => _feedStatisticsVisible = false),
+                    );
+                  }
+                : null,
             // 弹幕与视频同裁剪（12dp 圆角内），清屏态整层不出现（与播放
             // 页 chrome 的 `!_clearScreen` 同门）。
             danmakuOverlay: onScreen
@@ -2103,7 +2150,7 @@ class _DramaPageState extends ConsumerState<DramaPage>
             // 右侧横屏钮是另一条路：官方 `nk3.c.g` → `zf3.c.w` →
             // `transformToLandActivity`，起独立横屏页。
             onLandscape: () => _openPlayer(item, openFullScreen: true),
-            onQuickCatalog: () => _openQuickCatalog(item),
+            onQuickCatalog: () => unawaited(_openQuickCatalog(item)),
             // 标题行「剧名 >」= 官方进剧集详情页的入口（ql3/v0.a1）。
             onOpenSeriesDetail: () => _openSeriesDetail(item),
             onTogglePlay: _togglePlay,
@@ -2444,37 +2491,47 @@ class _DramaPageState extends ConsumerState<DramaPage>
     );
   }
 
-  void _openQuickCatalog(MediaItem item) {
+  Future<void> _openQuickCatalog(MediaItem item) async {
     if (!isVideoKind(item.kind)) {
       if (mounted) _openDetail(item);
       return;
     }
     if (_modalOpen || _openingId != null) return;
-    PlayletQuickCatalogSheet.show(
-      context,
-      item: item,
-      directoryLoader: widget.directoryLoader,
-      historyStore: widget.historyStore,
-      onEpisodeSelected: (index, episodes) {
-        unawaited(
-          _openPlayer(item, startEpisodeIndex: index, loadedEpisodes: episodes),
-        );
-      },
-      onFullscreen: () => unawaited(_openPlayer(item)),
-      seriesLoader: widget.seriesDetailLoader,
-      onRelatedSeriesSelected: (entry) => _openSeriesDetail(
-        MediaItem(
-          id: entry.id,
-          seriesId: entry.id,
-          title: entry.title,
-          cover: entry.cover,
-          kind: entry.kind,
-          author: '',
-          badge: '',
-          ep: entry.episodeCount > 0 ? '共 ${entry.episodeCount} 集' : '',
+    setState(() => _modalOpen = true);
+    try {
+      await PlayletQuickCatalogSheet.show(
+        context,
+        item: item,
+        directoryLoader: widget.directoryLoader,
+        historyStore: widget.historyStore,
+        onEpisodeSelected: (index, episodes) {
+          unawaited(
+            _openPlayer(
+              item,
+              startEpisodeIndex: index,
+              loadedEpisodes: episodes,
+            ),
+          );
+        },
+        onFullscreen: () => unawaited(_openPlayer(item)),
+        seriesLoader: widget.seriesDetailLoader,
+        onRelatedSeriesSelected: (entry) => _openSeriesDetail(
+          MediaItem(
+            id: entry.id,
+            seriesId: entry.id,
+            title: entry.title,
+            cover: entry.cover,
+            kind: entry.kind,
+            author: '',
+            badge: '',
+            ep: entry.episodeCount > 0 ? '共 ${entry.episodeCount} 集' : '',
+          ),
         ),
-      ),
-    );
+      );
+    } finally {
+      _modalOpen = false;
+      if (mounted) setState(() {});
+    }
   }
 
   void _openSearch() {
@@ -3035,6 +3092,7 @@ class _DramaFeedCard extends StatelessWidget {
   final MediaItem item;
   final bool opening;
   final Widget? video;
+  final Widget Function(Size displaySize)? statisticsOverlayBuilder;
 
   /// 弹幕层，与视频一起裁在 12dp 圆角内；清屏/未上屏时由宿主不传或整层
   /// 自隐藏。层自身 IgnorePointer，不抢手势。
@@ -3064,6 +3122,7 @@ class _DramaFeedCard extends StatelessWidget {
     required this.item,
     required this.opening,
     this.video,
+    this.statisticsOverlayBuilder,
     this.danmakuOverlay,
     this.errorOverlay,
     this.playback,
@@ -3238,6 +3297,51 @@ class _DramaFeedCard extends StatelessWidget {
                     ),
                   ],
                 ),
+              ),
+            ),
+          ),
+        if (statisticsOverlayBuilder != null && playback != null)
+          Positioned.fill(
+            child: LayoutBuilder(
+              builder: (context, constraints) => ListenableBuilder(
+                listenable: Listenable.merge([
+                  playback!.videoSize,
+                  playback!.duration,
+                  playback!.rate,
+                ]),
+                builder: (context, _) {
+                  final window = constraints.biggest;
+                  final wide = isWindowsDesktop || window.width >= 840;
+                  final layout = PlayerVideoLayout.calculate(
+                    window: window,
+                    insets: EdgeInsets.zero,
+                    videoSize: playback!.videoSize.value,
+                    fullScreen: true,
+                    fit: wide ? VideoFit.contain : VideoFit.fillFrame,
+                  );
+                  final insets = MediaQuery.paddingOf(context);
+                  final top = insets.top + _feedDanmakuTopMargin;
+                  final viewport = Rect.fromLTRB(
+                    insets.left,
+                    top,
+                    window.width - insets.right,
+                    math.max(top, window.height - bottomInset - 160),
+                  );
+                  if (viewport.isEmpty) return const SizedBox.shrink();
+                  return Stack(
+                    children: [
+                      Positioned.fromRect(
+                        rect: PlayerStatisticsOverlay.placement(
+                          viewport: viewport,
+                          video: layout.video,
+                        ),
+                        child: statisticsOverlayBuilder!(
+                          layout.video.intersect(layout.viewport).size,
+                        ),
+                      ),
+                    ],
+                  );
+                },
               ),
             ),
           ),

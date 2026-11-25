@@ -27,6 +27,8 @@ class PlayletSideSettingsFlow extends StatefulWidget {
     this.fontScaleLabel,
     this.fontScale = false,
     this.onFontScaleSelected,
+    this.statisticsEnabled = false,
+    this.onToggleStatistics,
     this.fillScreen = false,
     this.onFillScreenChanged,
     this.defaultMute = false,
@@ -54,6 +56,10 @@ class PlayletSideSettingsFlow extends StatefulWidget {
   /// 字号出口可用时才出现「字体大小」行。
   final bool fontScale;
   final VoidCallback? onFontScaleSelected;
+
+  /// 当前详细统计浮层状态；回调非空时点击切换并关闭整串设置。
+  final bool statisticsEnabled;
+  final VoidCallback? onToggleStatistics;
 
   final bool fillScreen;
   final ValueChanged<bool>? onFillScreenChanged;
@@ -124,6 +130,10 @@ class _PlayletSideSettingsFlowState extends State<PlayletSideSettingsFlow> {
               setState(() => _mute = !_mute);
               widget.onDefaultMuteChanged!(_mute);
             },
+      statisticsEnabled: widget.statisticsEnabled,
+      onToggleStatistics: widget.onToggleStatistics == null
+          ? null
+          : () => _closeThen(widget.onToggleStatistics!),
       onOpenListenMode: widget.onOpenListenMode == null
           ? null
           : () => _closeThen(widget.onOpenListenMode!),
@@ -174,6 +184,8 @@ class PlayletMorePanelSide extends StatelessWidget {
     this.danmakuSettings = false,
     this.fontScaleLabel,
     this.fontScale = false,
+    this.statisticsEnabled = false,
+    this.onToggleStatistics,
     this.fillScreen = false,
     this.onFillScreenChanged,
     this.defaultMute = false,
@@ -193,6 +205,9 @@ class PlayletMorePanelSide extends StatelessWidget {
 
   final String? fontScaleLabel;
   final bool fontScale;
+
+  final bool statisticsEnabled;
+  final VoidCallback? onToggleStatistics;
 
   final bool fillScreen;
   final VoidCallback? onFillScreenChanged;
@@ -280,6 +295,22 @@ class PlayletMorePanelSide extends StatelessWidget {
           icon: 'font',
           value: fontScaleLabel,
           onTap: () => onStep(PlayerSidePanelRoute.fontScale),
+        ),
+      if (onToggleStatistics != null)
+        PlayerSidePanelRow(
+          rowKey: 'player-more-statistics',
+          label: '详细统计信息',
+          leading: const SizedBox.square(
+            dimension: 24,
+            child: Icon(
+              Icons.query_stats_rounded,
+              size: 22,
+              color: Colors.white,
+            ),
+          ),
+          switchValue: statisticsEnabled,
+          onToggle: onToggleStatistics,
+          switchKey: 'player-more-statistics-switch',
         ),
     ];
     return SafeArea(

@@ -30,6 +30,8 @@ class PlayletMorePanelLight extends StatelessWidget {
     this.onOpenDanmakuSettings,
     this.fontScaleLabel,
     this.onOpenFontSettings,
+    this.statisticsEnabled = false,
+    this.onToggleStatistics,
     this.onOpenListenMode,
     this.onOpenOfflineCache,
     this.rateLabel,
@@ -54,6 +56,10 @@ class PlayletMorePanelLight extends StatelessWidget {
   /// 官方 `jm3.t0.m()`：点击关闭面板并打开字号弹层（`nm3.e`）。null 时
   /// 整行不出现（feed 长按面板未接字号）。
   final VoidCallback? onOpenFontSettings;
+
+  /// 当前详细统计浮层状态；回调非空时点击切换并收起面板。
+  final bool statisticsEnabled;
+  final VoidCallback? onToggleStatistics;
 
   /// 官方 `jm3.d0.y()`：点击关闭面板并打开听书模式页。null 时整行不出现。
   final VoidCallback? onOpenListenMode;
@@ -243,6 +249,23 @@ class PlayletMorePanelLight extends StatelessWidget {
                           onOpenFontSettings!();
                         },
                       ),
+                    if (onToggleStatistics != null)
+                      _SwitchRow(
+                        rowKey: 'player-more-light-statistics',
+                        leading: Icon(
+                          Icons.query_stats_rounded,
+                          size: 22,
+                          color: _foreground(context),
+                        ),
+                        label: '详细统计信息',
+                        toggled: statisticsEnabled,
+                        onToggle: () {
+                          onToggleStatistics!();
+                          Navigator.pop(context);
+                        },
+                        foreground: _foreground(context),
+                        labelStyle: _labelStyle(context),
+                      ),
                   ]),
                 ],
               ),
@@ -342,7 +365,7 @@ class PlayletMorePanelLight extends StatelessWidget {
   }
 }
 
-/// 弹幕开关行：自带本地 state（深色面板同款模式）。
+/// 开关行自带本地 state，让不关闭面板的开关立即更新。
 ///
 /// bottom sheet 不跟随父级 setState 重建，开关若只渲染传入的快照，
 /// 点完会停在旧状态、重开面板才刷新；本地 state 让开关动画立刻跟随。
@@ -350,17 +373,19 @@ class PlayletMorePanelLight extends StatelessWidget {
 class _SwitchRow extends StatefulWidget {
   const _SwitchRow({
     required this.rowKey,
-    required this.icon,
+    this.icon,
+    this.leading,
     required this.label,
     required this.toggled,
     required this.onToggle,
     required this.foreground,
     required this.labelStyle,
-  });
+  }) : assert(icon != null || leading != null);
 
   /// 行 key 前缀；渲染出的行 key 是 `<rowKey>-row`（与既有弹幕行保持一致）。
   final String rowKey;
-  final String icon;
+  final String? icon;
+  final Widget? leading;
   final String label;
   final bool toggled;
   final VoidCallback onToggle;
@@ -397,10 +422,20 @@ class _SwitchRowState extends State<_SwitchRow> {
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 12),
         child: SizedBox(
+          key: ValueKey(widget.rowKey),
           height: 48,
           child: Row(
             children: [
-              _PanelIconLight(name: widget.icon, color: widget.foreground),
+              SizedBox(
+                width: 24,
+                height: 24,
+                child:
+                    widget.leading ??
+                    _PanelIconLight(
+                      name: widget.icon!,
+                      color: widget.foreground,
+                    ),
+              ),
               const SizedBox(width: 8),
               Expanded(child: Text(widget.label, style: widget.labelStyle)),
               const SizedBox(width: 12),

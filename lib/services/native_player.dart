@@ -2,6 +2,8 @@ import 'platform_channel.dart';
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart'
+    show TargetPlatform, defaultTargetPlatform;
 import 'package:flutter/services.dart';
 
 import 'app_log.dart';
@@ -58,6 +60,42 @@ class NativePlaybackException implements Exception {
 
   @override
   String toString() => 'NativePlaybackException: $message';
+}
+
+/// A point-in-time view of native playback metrics.
+///
+/// Missing or unusable values stay null; geometry can come from the existing
+/// texture events when native statistics are unavailable.
+class NativePlaybackStatistics {
+  final int? videoWidth;
+  final int? videoHeight;
+  final num? frameRate;
+  final String? videoCodec;
+  final String? videoMimeType;
+  final String? audioCodec;
+  final String? audioMimeType;
+  final int? videoBitrate;
+  final int? audioBitrate;
+  final int? bufferedDurationMs;
+  final int? estimatedBandwidthBps;
+  final int? renderedFrames;
+  final int? droppedFrames;
+
+  const NativePlaybackStatistics({
+    this.videoWidth,
+    this.videoHeight,
+    this.frameRate,
+    this.videoCodec,
+    this.videoMimeType,
+    this.audioCodec,
+    this.audioMimeType,
+    this.videoBitrate,
+    this.audioBitrate,
+    this.bufferedDurationMs,
+    this.estimatedBandwidthBps,
+    this.renderedFrames,
+    this.droppedFrames,
+  });
 }
 
 /// Flutter-side wrapper of the native ExoPlayer host.
@@ -407,6 +445,10 @@ class NativePlayer {
   int _videoHeight = 0;
   int _videoRotationCorrection = 0;
   Object? _lastError;
+  String? _decoderName;
+  int _statisticsGeneration = 0;
+  int _geometryGeneration = -1;
+  bool _statisticsCurrent = false;
 
   Duration get position => _position;
   Duration get duration => _duration;
@@ -419,6 +461,7 @@ class NativePlayer {
   bool get firstFrameRendered => _firstFrameRendered;
   int get videoWidth => _videoWidth;
   int get videoHeight => _videoHeight;
+  String? get decoderName => _decoderName;
 
   /// Clockwise rotation not applied by the native texture backend.
   int get videoRotationCorrection => _videoRotationCorrection;
@@ -455,7 +498,7 @@ class NativePlayer {
   /// 原地换源（后台切章）的等待者：`reopen` 的回包只说明请求已受理，
   /// 必须等 native 发回 `reopened` 才算真的打开（此时 duration 还是上一章
   /// 的残留值，用它判断会提前起播、连到已关闭的本地代理端口）。
-  Completer<void>? _reopenCompleter;
+  ({Completer<void> completer, int statisticsGeneration})? _reopenCompleter;
   Future<void> _reopenQueue = Future<void>.value();
   int _reopenRequest = 0;
   static const _reopenTimeout = Duration(seconds: 15);
@@ -465,6 +508,7 @@ class NativePlayer {
     if (_disposed) {
       return Future<int>.error(StateError('NativePlayer is disposed'));
     }
+    if (_createFuture == null) _resetPlaybackStatistics();
     return _createFuture ??= _create(cdnUrl, keyHex, startMs);
   }
 
@@ -602,14 +646,21 @@ class NativePlayer {
 
   Future<void> _reopen(String cdnUrl, String keyHex) async {
     if (_disposed) throw StateError('NativePlayer was disposed');
+    // Invalidate when this queued operation takes ownership, not when queued.
+    _resetPlaybackStatistics();
     _lastError = null;
     _position = Duration.zero;
     _duration = Duration.zero;
     _completed = false;
     final completer = Completer<void>();
     completer.future.ignore();
+    // Late acknowledgements must carry both this request id and source epoch.
+    final statisticsGeneration = _statisticsGeneration;
     final request = ++_reopenRequest;
-    _reopenCompleter = completer;
+    _reopenCompleter = (
+      completer: completer,
+      statisticsGeneration: statisticsGeneration,
+    );
     try {
       await _invoke('reopen', {
         'requestId': request,
@@ -618,7 +669,7 @@ class NativePlayer {
       });
       await completer.future.timeout(_reopenTimeout);
     } finally {
-      if (identical(_reopenCompleter, completer)) _reopenCompleter = null;
+      if (_reopenCompleter?.completer == completer) _reopenCompleter = null;
     }
   }
 
@@ -935,10 +986,13 @@ class NativePlayer {
       unawaited(IosAudioSession.stop(owner: iosMediaOwner));
     }
     _disposed = true;
+    _resetPlaybackStatistics();
     final reopen = _reopenCompleter;
     _reopenCompleter = null;
-    if (reopen != null && !reopen.isCompleted) {
-      reopen.completeError(StateError('NativePlayer disposed during reopen'));
+    if (reopen != null && !reopen.completer.isCompleted) {
+      reopen.completer.completeError(
+        StateError('NativePlayer disposed during reopen'),
+      );
     }
     if (_createFuture != null && !_createdCompleter.isCompleted) {
       _createdCompleter.completeError(StateError('NativePlayer disposed'));
@@ -962,6 +1016,7 @@ class NativePlayer {
   }
 
   Future<void> _releaseNative() {
+    _resetPlaybackStatistics();
     final playerId = _playerId;
     if (playerId == null) return Future<void>.value();
     return _nativeRelease ??= _disposeNative(playerId);
@@ -1003,6 +1058,7 @@ class NativePlayer {
         final value = event['value'];
         if (value is num) {
           _textureId = value.toInt();
+          _statisticsCurrent = true;
           if (!_createdCompleter.isCompleted) {
             _createdCompleter.complete(value.toInt());
           }
@@ -1030,8 +1086,13 @@ class NativePlayer {
       case 'reopened':
         if (event['requestId'] != _reopenRequest) return;
         final pending = _reopenCompleter;
+        if (pending == null ||
+            pending.statisticsGeneration != _statisticsGeneration) {
+          return;
+        }
         _reopenCompleter = null;
-        if (pending != null && !pending.isCompleted) pending.complete();
+        _statisticsCurrent = true;
+        if (!pending.completer.isCompleted) pending.completer.complete();
       case 'error':
         if (event['requestId'] != null &&
             event['requestId'] != _reopenRequest) {
@@ -1055,11 +1116,18 @@ class NativePlayer {
         }
         final pendingReopen = _reopenCompleter;
         _reopenCompleter = null;
-        if (pendingReopen != null && !pendingReopen.isCompleted) {
-          pendingReopen.completeError(error);
+        if (pendingReopen != null && !pendingReopen.completer.isCompleted) {
+          pendingReopen.completer.completeError(error);
         }
         if (!_errorCtrl.isClosed) _errorCtrl.add(error);
       case 'decoderInitialized':
+        final decoder = event['value'];
+        final name = decoder is Map ? decoder['name'] : null;
+        if (_statisticsCurrent &&
+            name is String &&
+            _decoderToken.hasMatch(name)) {
+          _decoderName = name;
+        }
         AppLog.d(
           'player-decoder',
           jsonEncode({
@@ -1116,6 +1184,9 @@ class NativePlayer {
               rotation is num && const [90, 180, 270].contains(rotation)
               ? rotation.toInt()
               : 0;
+          if (_statisticsCurrent) {
+            _geometryGeneration = _statisticsGeneration;
+          }
           // 诊断：issue #11 竖版源在换档后被塞进横向盒子导致拉伸。这里把
           // 原生上报的原始字段全量抛出，用来区分「尺寸本身是编码尺寸」还是
           // 「布局/旋转约定不一致」。
@@ -1130,4 +1201,93 @@ class NativePlayer {
         }
     }
   }
+
+  /// Reads native metrics without making a statistics failure a playback
+  /// failure. Android is the only platform with the native statistics method;
+  /// elsewhere the existing video-size events provide the available snapshot.
+  Future<NativePlaybackStatistics> readStatistics() async {
+    final generation = _statisticsGeneration;
+    final playerId = _playerId;
+    if (defaultTargetPlatform != TargetPlatform.android ||
+        _disposed ||
+        !_statisticsCurrent ||
+        playerId == null) {
+      return _geometryStatistics();
+    }
+
+    try {
+      final value = await _channel
+          .invokeMethod<Object?>('getStatistics', {'id': playerId})
+          .timeout(_methodTimeout);
+      if (_disposed || generation != _statisticsGeneration) {
+        return _geometryStatistics();
+      }
+      return _statisticsFromMap(value, _geometryStatistics());
+    } catch (_) {
+      return _geometryStatistics();
+    }
+  }
+
+  void _resetPlaybackStatistics() {
+    ++_statisticsGeneration;
+    _geometryGeneration = -1;
+    _decoderName = null;
+    _statisticsCurrent = false;
+  }
+
+  NativePlaybackStatistics _geometryStatistics() {
+    if (_disposed ||
+        !_statisticsCurrent ||
+        _geometryGeneration != _statisticsGeneration) {
+      return const NativePlaybackStatistics();
+    }
+    return NativePlaybackStatistics(
+      videoWidth: _positiveInt(_videoWidth),
+      videoHeight: _positiveInt(_videoHeight),
+    );
+  }
+
+  NativePlaybackStatistics _statisticsFromMap(
+    Object? value,
+    NativePlaybackStatistics geometry,
+  ) {
+    if (value is! Map) return geometry;
+
+    int? positiveInt(String key) => _positiveInt(value[key]);
+    int? nonNegativeInt(String key) => _nonNegativeInt(value[key]);
+    num? positiveNumber(String key) {
+      final raw = value[key];
+      if (raw is! num || !raw.isFinite || raw <= 0) return null;
+      return raw;
+    }
+
+    String? label(String key) {
+      final raw = value[key];
+      if (raw is! String) return null;
+      final trimmed = raw.trim();
+      return trimmed.isEmpty ? null : trimmed;
+    }
+
+    return NativePlaybackStatistics(
+      videoWidth: positiveInt('videoWidth') ?? geometry.videoWidth,
+      videoHeight: positiveInt('videoHeight') ?? geometry.videoHeight,
+      frameRate: positiveNumber('frameRate'),
+      videoCodec: label('videoCodec'),
+      videoMimeType: label('videoMimeType'),
+      audioCodec: label('audioCodec'),
+      audioMimeType: label('audioMimeType'),
+      videoBitrate: positiveInt('videoBitrate'),
+      audioBitrate: positiveInt('audioBitrate'),
+      bufferedDurationMs: nonNegativeInt('bufferedDurationMs'),
+      estimatedBandwidthBps: positiveInt('estimatedBandwidthBps'),
+      renderedFrames: nonNegativeInt('renderedFrames'),
+      droppedFrames: nonNegativeInt('droppedFrames'),
+    );
+  }
 }
+
+int? _positiveInt(Object? value) =>
+    value is num && value.isFinite && value > 0 ? value.toInt() : null;
+
+int? _nonNegativeInt(Object? value) =>
+    value is num && value.isFinite && value >= 0 ? value.toInt() : null;

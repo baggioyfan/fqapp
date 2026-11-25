@@ -13,6 +13,7 @@ import '../services/desktop_platform.dart';
 import 'video_player_chrome.dart';
 import 'player/playlet_danmaku_layer.dart';
 import 'player/playlet_danmaku_settings.dart';
+import 'player/player_statistics_overlay.dart';
 
 class DesktopVideoChrome extends StatefulWidget {
   const DesktopVideoChrome({
@@ -20,10 +21,12 @@ class DesktopVideoChrome extends StatefulWidget {
     required this.configuration,
     required this.onRateSelected,
     this.onVolumeSelected,
+    this.routeVisible = true,
   });
   final VideoPlayerChrome configuration;
   final Future<void> Function(double) onRateSelected;
   final Future<void> Function(double)? onVolumeSelected;
+  final bool routeVisible;
   @override
   State<DesktopVideoChrome> createState() => _DesktopVideoChromeState();
 }
@@ -32,6 +35,7 @@ class _DesktopVideoChromeState extends State<DesktopVideoChrome> {
   VideoPlayerChrome get c => widget.configuration;
   bool _visible = true;
   bool _dockCollapsed = false;
+  bool _statisticsVisible = false;
   double _volume = 1;
   double _rate = 1;
   double? _scrub;
@@ -523,6 +527,26 @@ class _DesktopVideoChromeState extends State<DesktopVideoChrome> {
                                 landscape: true,
                               ),
                             ),
+                          if (_statisticsVisible)
+                            Positioned.fill(
+                              child: LayoutBuilder(
+                                builder: (context, pictureConstraints) =>
+                                    PlayerStatisticsOverlay(
+                                      player: c.player,
+                                      position: _position,
+                                      duration: c.duration,
+                                      playbackRate: _rate,
+                                      currentIndex: c.currentIndex,
+                                      episodeLabel: '第${c.currentIndex + 1}集',
+                                      active: widget.routeVisible,
+                                      loadSample: c.loadSample,
+                                      displaySize: pictureConstraints.biggest,
+                                      onClose: () => setState(
+                                        () => _statisticsVisible = false,
+                                      ),
+                                    ),
+                              ),
+                            ),
                         ],
                       ),
                     ),
@@ -663,6 +687,17 @@ class _DesktopVideoChromeState extends State<DesktopVideoChrome> {
                                         ),
                                         icon: const Icon(Icons.tune),
                                       ),
+                                    IconButton(
+                                      key: const ValueKey(
+                                        'desktop-player-statistics',
+                                      ),
+                                      tooltip: '详细统计信息',
+                                      onPressed: () => setState(
+                                        () => _statisticsVisible =
+                                            !_statisticsVisible,
+                                      ),
+                                      icon: const Icon(Icons.query_stats),
+                                    ),
                                     PopupMenuButton<double>(
                                       tooltip: '倍速',
                                       initialValue: _rate,

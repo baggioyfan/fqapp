@@ -44,6 +44,7 @@ import androidx.media3.exoplayer.mediacodec.MediaCodecInfo
 import androidx.media3.exoplayer.mediacodec.MediaCodecRenderer.DecoderInitializationException
 import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
 import androidx.media3.exoplayer.source.ProgressiveMediaSource
+import androidx.media3.exoplayer.upstream.DefaultBandwidthMeter
 import com.example.shortplay.CryptoNative
 import com.example.shortplay.HttpBridge
 import io.flutter.embedding.engine.plugins.FlutterPlugin
@@ -552,6 +553,16 @@ class NativePlayerPlugin internal constructor(
                 result.success(null)
             }
 
+            "getStatistics" -> {
+                val id = call.requiredArgument<Int>("id", result) ?: return
+                val readStatistics = { result.success(playbackStatistics(id)) }
+                if (Looper.myLooper() == Looper.getMainLooper()) {
+                    readStatistics()
+                } else {
+                    handler.post { readStatistics() }
+                }
+            }
+
             "dispose" -> {
                 val id = call.requiredArgument<Int>("id", result) ?: return
                 disposePlayer(id)
@@ -789,6 +800,62 @@ class NativePlayerPlugin internal constructor(
             }
 
             else -> result.notImplemented()
+        }
+    }
+
+    private fun playbackStatistics(id: Int): Map<String, Any> {
+        val player = players[id]?.player ?: return emptyMap()
+        return try {
+            val videoFormat = player.videoFormat
+            val audioFormat = player.audioFormat
+            val counters = player.videoDecoderCounters
+            counters?.ensureUpdated()
+            val bandwidthMeter = DefaultBandwidthMeter.getSingletonInstance(
+                flutterBinding.applicationContext
+            )
+
+            buildMap {
+                fun putPositive(key: String, value: Int) {
+                    if (value > 0) put(key, value)
+                }
+
+                fun putNonNegative(key: String, value: Int) {
+                    if (value >= 0) put(key, value)
+                }
+
+                fun putText(key: String, value: String?) {
+                    value?.takeIf { it.isNotBlank() }?.let { put(key, it) }
+                }
+
+                videoFormat?.let { format ->
+                    putPositive("videoWidth", format.width)
+                    putPositive("videoHeight", format.height)
+                    if (format.frameRate.isFinite() && format.frameRate > 0f) {
+                        put("frameRate", format.frameRate.toDouble())
+                    }
+                    putText("videoCodec", format.codecs)
+                    putText("videoMimeType", format.sampleMimeType)
+                    putPositive("videoBitrate", format.bitrate)
+                }
+                audioFormat?.let { format ->
+                    putText("audioCodec", format.codecs)
+                    putText("audioMimeType", format.sampleMimeType)
+                    putPositive("audioBitrate", format.bitrate)
+                }
+                player.totalBufferedDuration.takeIf { it >= 0L }?.let {
+                    put("bufferedDurationMs", it)
+                }
+                bandwidthMeter.bitrateEstimate.takeIf { it > 0L }?.let {
+                    put("estimatedBandwidthBps", it)
+                }
+                counters?.let {
+                    putNonNegative("renderedFrames", it.renderedOutputBufferCount)
+                    putNonNegative("droppedFrames", it.droppedBufferCount)
+                }
+            }
+        } catch (error: Throwable) {
+            Log.w(TAG, "read playback statistics failed: ${error.javaClass.simpleName}")
+            emptyMap()
         }
     }
 
