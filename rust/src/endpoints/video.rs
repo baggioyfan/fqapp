@@ -4601,21 +4601,50 @@ fn build_cenc_index(
     Ok(Some(index))
 }
 
+/// The codec an encrypted sample entry stood for, read from its `sinf/frma`.
+///
+/// `encv`/`enca` are generic wrappers: the real four-character code lives in
+/// the protection scheme's `frma`. Rewriting every `encv` to `hvc1` mislabels
+/// VVC (`vvc1`) and bytevc2 (`bvc2`) tracks, which then no longer decode.
+fn sample_entry_format(data: &[u8], entry: &Mp4Box) -> Option<[u8; 4]> {
+    let child_start = box_children_start(&entry.typ, entry.off, entry.header)?;
+    for child in iter_boxes(data, child_start, entry.off + entry.size) {
+        if child.typ != *b"sinf" {
+            continue;
+        }
+        for grand in iter_boxes(data, child.off + child.header, child.off + child.size) {
+            if grand.typ != *b"frma" || grand.off + 12 > data.len() {
+                continue;
+            }
+            let mut format = [0u8; 4];
+            format.copy_from_slice(&data[grand.off + 8..grand.off + 12]);
+            // A four-character code is printable ASCII; anything else means the
+            // box is damaged, and the caller's default is safer than copying it.
+            if format.iter().all(|b| (0x20..=0x7e).contains(b)) {
+                return Some(format);
+            }
+        }
+    }
+    None
+}
+
 /// Records the rewrites `rewrite_encrypted_sample_entries` used to apply in
-/// place (encv -> hvc1, enca -> mp4a, `sinf` blanked into a `free` box) as
-/// offset patches instead, so the file on disk keeps its original bytes.
+/// place (encv -> its `sinf/frma` codec, enca -> mp4a, `sinf` blanked into a
+/// `free` box) as offset patches instead, so the file on disk keeps its
+/// original bytes.
 fn collect_sample_entry_patches(
     data: &[u8],
     boxes: &HashMap<[u8; 4], Vec<Mp4Box>>,
     base_off: u64,
     out: &mut Vec<CencPatch>,
 ) {
-    for (typ, replacement) in [(b"encv", b"hvc1"), (b"enca", b"mp4a")] {
+    for (typ, fallback) in [(b"encv", b"hvc1"), (b"enca", b"mp4a")] {
         let Some(list) = boxes.get(typ) else {
             continue;
         };
         for b in list {
             if b.off + 8 <= data.len() {
+                let replacement = sample_entry_format(data, b).unwrap_or(*fallback);
                 out.push(CencPatch {
                     off: base_off + (b.off + 4) as u64,
                     bytes: replacement.to_vec(),
