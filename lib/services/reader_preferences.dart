@@ -47,6 +47,62 @@ enum ReaderColumnMode {
 @immutable
 class ReaderPreferences {
   static Future<void>? _writes;
+
+  /// 正文字号档位表，照抄官方主阅读器（7.0.9.32 `rm4.e` 的 `k` 数组）：
+  /// 13 起，13~29 多为 1dp 一档，之后 32/36/40/44 每档跳 4。
+  ///
+  /// 官方不做连续字号：滑条拖的是这份表的**下标**（`TextSectionSeekBar`
+  /// 的 `setIntText` + `getTextValue`），A+/A− 也按下标走一格。
+  static const List<double> fontSizes = <double>[
+    13,
+    15,
+    17,
+    18,
+    19,
+    20,
+    21,
+    22,
+    23,
+    24,
+    25,
+    26,
+    27,
+    28,
+    29,
+    32,
+    36,
+    40,
+    44,
+  ];
+
+  /// 官方 `rm4.c` 读 `reader_font_dp_size` 的缺省档（该字段 `m = 24`）。
+  static const double defaultFontSize = 24;
+
+  static double get minFontSize => fontSizes.first;
+
+  static double get maxFontSize => fontSizes.last;
+
+  /// 官方 `rm4/c.z()`：不在档位表里的字号对齐到**最近的 ≥ 档**，超过最大档
+  /// 一律落回 44；非有限值退回默认档。
+  static double snapFontSize(double value) {
+    if (!value.isFinite) return defaultFontSize;
+    for (final size in fontSizes) {
+      if (size >= value) return size;
+    }
+    return maxFontSize;
+  }
+
+  /// 档位表下标；滑条在「档」上滑动，存盘仍是字号本身。
+  static int fontSizeIndex(double value) =>
+      fontSizes.indexOf(snapFontSize(value));
+
+  static double fontSizeAt(int index) =>
+      fontSizes[index.clamp(0, fontSizes.length - 1)];
+
+  /// 标题字号范围比正文高一档，保证大字号下章名不会比正文还小。
+  static const double minTitleSize = 16;
+  static const double maxTitleSize = 48;
+
   static const _fontSizeKey = 'reader_font_size';
   static const _fontWeightKey = 'reader_font_weight';
   static const _lineHeightKey = 'reader_line_height';
@@ -209,7 +265,7 @@ class ReaderPreferences {
   final bool desktopSidebarOpen;
 
   const ReaderPreferences({
-    this.fontSize = 18,
+    this.fontSize = defaultFontSize,
     this.fontWeight = 400,
     this.lineHeight = 1.8,
     this.paragraphSpacing = 12,
@@ -218,7 +274,7 @@ class ReaderPreferences {
     this.customBackgroundColor,
     this.letterSpacing = 0,
     this.verticalPadding = 16,
-    this.titleSize = 20,
+    this.titleSize = 26,
     this.titleAlignment = ReaderTitleAlignment.start,
     bool? showReadingInfo,
     ReaderInfoMode readingInfoMode = ReaderInfoMode.compact,
@@ -377,7 +433,7 @@ class ReaderPreferences {
     final normalizedWeight = ((fontWeight.clamp(300, 700) / 100).round() * 100)
         .clamp(300, 700);
     return ReaderPreferences(
-      fontSize: fontSize.isFinite ? fontSize.clamp(14, 32) : 18,
+      fontSize: snapFontSize(fontSize),
       fontWeight: normalizedWeight,
       lineHeight: lineHeight.isFinite ? lineHeight.clamp(1.2, 2.4) : 1.8,
       paragraphSpacing: paragraphSpacing.isFinite
@@ -394,7 +450,9 @@ class ReaderPreferences {
       verticalPadding: verticalPadding.isFinite
           ? verticalPadding.clamp(0, 64)
           : 16,
-      titleSize: titleSize.isFinite ? titleSize.clamp(16, 40) : 20,
+      titleSize: titleSize.isFinite
+          ? titleSize.clamp(minTitleSize, maxTitleSize)
+          : 20,
       titleAlignment: titleAlignment,
       readingInfoMode: readingInfoMode,
       showSystemStatusBar: showSystemStatusBar,
@@ -442,7 +500,7 @@ class ReaderPreferences {
       orElse: () => ReaderThemePreset.light,
     );
     return ReaderPreferences(
-      fontSize: _number(preferences, _fontSizeKey) ?? 18,
+      fontSize: _number(preferences, _fontSizeKey) ?? defaultFontSize,
       fontWeight: (_number(preferences, _fontWeightKey) ?? 400).round(),
       lineHeight: _number(preferences, _lineHeightKey) ?? 1.8,
       paragraphSpacing: _number(preferences, _paragraphSpacingKey) ?? 12,
@@ -456,7 +514,10 @@ class ReaderPreferences {
       verticalPadding: _number(preferences, _verticalPaddingKey) ?? 16,
       titleSize:
           _number(preferences, _titleSizeKey) ??
-          ((_number(preferences, _fontSizeKey) ?? 18) + 2),
+          (ReaderPreferences.snapFontSize(
+                _number(preferences, _fontSizeKey) ?? defaultFontSize,
+              ) +
+              2),
       titleAlignment: ReaderTitleAlignment.values.firstWhere(
         (value) => value.name == preferences.get(_titleAlignmentKey),
         orElse: () => ReaderTitleAlignment.start,

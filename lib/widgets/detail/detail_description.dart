@@ -2,6 +2,7 @@ import 'package:cupertino_ui/cupertino_ui.dart';
 import 'package:material_ui/material_ui.dart';
 
 import '../app_ui/app_ui_scope.dart';
+import '../copyable_text.dart';
 import '../home/home_design.dart';
 import '../home/home_shelf.dart';
 import '../wenku/wenku_ui.dart';
@@ -141,15 +142,17 @@ class _DetailDescriptionState extends State<DetailDescription> {
                     return Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
+                        // #477：长按简介复制全文（折叠态复制的是完整简介，不是截断的三行；
+                        // 取舍见 CopyableText）。AnimatedSize 与省略号都不受影响。
                         AnimatedSize(
                           duration: MediaQuery.disableAnimationsOf(context)
                               ? Duration.zero
                               : WenkuMotion.enter,
                           curve: WenkuMotion.ease,
                           alignment: Alignment.topCenter,
-                          child: AppText(
+                          child: CopyableText(
                             widget.text,
-                            key: const Key('detail_description_text'),
+                            textKey: const Key('detail_description_text'),
                             maxLines: _isExpanded ? null : 3,
                             overflow: _isExpanded
                                 ? TextOverflow.visible

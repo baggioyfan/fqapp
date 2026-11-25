@@ -6,6 +6,7 @@ import '../../models/book_detail.dart';
 import '../../services/poster_cache.dart';
 import '../app_ui/app_ui_scope.dart';
 import '../comment_emoji.dart';
+import '../copyable_text.dart';
 import '../home/home_design.dart';
 import '../home/home_shelf.dart';
 import '../wenku/wenku_ui.dart';
@@ -246,15 +247,19 @@ class _PreviewReview extends StatelessWidget {
           ),
           const SizedBox(height: 4),
           if (comment.text.isNotEmpty)
-            CommentEmojiText(
-              key: ValueKey('detail_review_text_${comment.id}'),
-              text: comment.text,
-              maxLines: 4,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                color: scheme.onSurface,
-                fontSize: 13,
-                height: 1.5,
+            // #477：书评正文同样长按选中复制；表情句仍交给 CommentEmojiText 渲染。
+            CopyableText(
+              comment.text,
+              child: CommentEmojiText(
+                key: ValueKey('detail_review_text_${comment.id}'),
+                text: comment.text,
+                maxLines: 4,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: scheme.onSurface,
+                  fontSize: 13,
+                  height: 1.5,
+                ),
               ),
             ),
         ],

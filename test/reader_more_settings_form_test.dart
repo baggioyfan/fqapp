@@ -85,7 +85,10 @@ void main() {
       find.descendant(of: font, matching: find.text('字号')),
     );
     final valueRect = tester.getRect(
-      find.descendant(of: font, matching: find.text('18 pt')),
+      find.descendant(
+        of: font,
+        matching: find.text('${ReaderPreferences.defaultFontSize.round()} pt'),
+      ),
     );
     expect(labelRect.center.dy, closeTo(valueRect.center.dy, 0.01));
     for (final key in const [
@@ -195,6 +198,25 @@ void main() {
     expect(find.text('朗读句高亮'), findsOneWidget);
     final style = find.byKey(const ValueKey('reader-narration-style-auto'));
     expect(tester.getSize(style).height, lessThan(48));
+    expect(tester.takeException(), isNull);
+  });
+
+  // #456：字号走官方档位表（`rm4.e`）：滑条一格一档，顶部 32/36/40/44。
+  testWidgets('font size slider follows the official ladder', (tester) async {
+    await _pumpForm(tester);
+    final lastIndex = ReaderPreferences.fontSizes.length - 1;
+    final font = tester.widget<ReaderValueSlider>(_slider('字号'));
+    expect(font.min, 0);
+    expect(font.max, lastIndex.toDouble());
+    expect(font.divisions, lastIndex, reason: '每格一档，不允许落在两档之间');
+    expect(font.format(lastIndex.toDouble()), '44 pt');
+    expect(font.format(0), '13 pt');
+    final title = tester.widget<ReaderValueSlider>(_slider('标题字号'));
+    expect(
+      title.max,
+      greaterThan(ReaderPreferences.maxFontSize),
+      reason: '标题上限要高于正文，大字号下章名不能比正文还小',
+    );
     expect(tester.takeException(), isNull);
   });
 }

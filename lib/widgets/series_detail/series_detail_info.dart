@@ -3,6 +3,7 @@ import 'package:material_ui/material_ui.dart';
 
 import '../../models/series_detail.dart' show CastMember;
 import '../../services/api_client.dart';
+import '../copyable_text.dart';
 import '../home/home_design.dart';
 import 'series_detail_common.dart';
 
@@ -65,16 +66,15 @@ class _SeriesDetailIntroSectionState extends State<SeriesDetailIntroSection> {
     );
   }
 
-  Widget _intro(HomePalette palette) => GestureDetector(
-    behavior: HitTestBehavior.opaque,
+  // #477：长按弹系统选择菜单复制；点按展开/收起。两个手势都交给 CopyableText：
+  // 选区比外层 GestureDetector 更深，放在外层的话点按会被选区吞掉。
+  Widget _intro(HomePalette palette) => CopyableText(
+    widget.intro,
+    textKey: const ValueKey('series-detail-intro'),
+    maxLines: _expanded ? null : 3,
+    overflow: _expanded ? TextOverflow.clip : TextOverflow.ellipsis,
+    style: TextStyle(fontSize: 13, height: 1.5, color: palette.ink),
     onTap: () => setState(() => _expanded = !_expanded),
-    child: Text(
-      widget.intro,
-      key: const ValueKey('series-detail-intro'),
-      maxLines: _expanded ? null : 3,
-      overflow: _expanded ? TextOverflow.clip : TextOverflow.ellipsis,
-      style: TextStyle(fontSize: 13, height: 1.5, color: palette.ink),
-    ),
   );
 
   Widget _castRow(HomePalette palette) => SingleChildScrollView(

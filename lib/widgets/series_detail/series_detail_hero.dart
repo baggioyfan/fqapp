@@ -2,6 +2,7 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
 
+import '../copyable_text.dart';
 import '../home/home_design.dart';
 import 'series_detail_theme.dart';
 
@@ -72,9 +73,10 @@ class SeriesDetailHero extends StatelessWidget {
       Padding(
         // 浏览器 `h1` 默认 margin-block: 0.67em（26sp → 17.4）。
         padding: const EdgeInsets.symmetric(vertical: 17.4),
-        child: Text(
+        // #477：剧名可长按复制（交互取舍见 CopyableText）。
+        child: CopyableText(
           title,
-          key: const ValueKey('series-detail-title'),
+          textKey: const ValueKey('series-detail-title'),
           maxLines: 2,
           overflow: TextOverflow.ellipsis,
           style: TextStyle(

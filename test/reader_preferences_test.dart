@@ -129,7 +129,7 @@ void main() {
 
     final restored = await ReaderPreferences.load();
 
-    expect(restored.fontSize, 32);
+    expect(restored.fontSize, 44);
     expect(restored.fontWeight, 500);
     expect(restored.lineHeight, 1.2);
     expect(restored.paragraphSpacing, 0);
@@ -137,7 +137,7 @@ void main() {
     expect(restored.themePreset, ReaderThemePreset.light);
     expect(restored.letterSpacing, 3);
     expect(restored.verticalPadding, 0);
-    expect(restored.titleSize, 40);
+    expect(restored.titleSize, 48);
     expect(restored.titleAlignment, ReaderTitleAlignment.start);
     expect(restored.showReadingInfo, isTrue);
     expect(restored.followSystemBrightness, isTrue);
@@ -147,6 +147,33 @@ void main() {
     // A wrong-typed stored value falls back to the default (on).
     expect(restored.continuousReading, isTrue);
     expect(restored.showParagraphBubbles, isTrue);
+  });
+
+  // #456：字号走官方档位表（rm4.e），存盘值必须落在表里，并默认 24。
+  test('font size follows the official ladder', () async {
+    // 官方 rm4.c 的缺省档。
+    expect(const ReaderPreferences().fontSize, 24);
+    expect((await ReaderPreferences.load()).fontSize, 24);
+
+    // 档位表首尾就是官方 13/44。
+    expect(ReaderPreferences.minFontSize, 13);
+    expect(ReaderPreferences.maxFontSize, 44);
+
+    // 官方 rm4.c.z()：不在表内向上对齐，超上限落回 44。
+    expect(ReaderPreferences.snapFontSize(14), 15);
+    expect(ReaderPreferences.snapFontSize(30), 32);
+    expect(ReaderPreferences.snapFontSize(31), 32);
+    expect(ReaderPreferences.snapFontSize(33), 36);
+    expect(ReaderPreferences.snapFontSize(45), 44);
+    expect(ReaderPreferences.snapFontSize(99), 44);
+    expect(ReaderPreferences.snapFontSize(12), 13);
+    expect(ReaderPreferences.snapFontSize(double.nan), 24);
+
+    // 表内的值原样存回（包括新的 44 上限）。
+    await const ReaderPreferences(fontSize: 44, titleSize: 48).save();
+    final restored = await ReaderPreferences.load();
+    expect(restored.fontSize, 44);
+    expect(restored.titleSize, 48);
   });
 
   test('column mode resolves single vs two-column spread by viewport', () {
@@ -169,7 +196,7 @@ void main() {
         'reader_theme_preset': 42,
       });
       final restored = await ReaderPreferences.load();
-      expect(restored.fontSize, 18);
+      expect(restored.fontSize, 24);
       expect(restored.fontWeight, 400);
       expect(restored.lineHeight, 1.8);
       expect(restored.paragraphSpacing, 12);
@@ -185,7 +212,7 @@ void main() {
       paragraphSpacing: double.negativeInfinity,
       horizontalPadding: double.nan,
     ).normalized();
-    expect(value.fontSize, 18);
+    expect(value.fontSize, 24);
     expect(value.lineHeight, 1.8);
     expect(value.paragraphSpacing, 12);
     expect(value.horizontalPadding, 20);

@@ -162,9 +162,10 @@ extension _ShuqiDetailClassic on _ShuqiDetailPageState {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
+                    // #477：书名与作者可长按复制（交互取舍见 CopyableText）。
+                    CopyableText(
                       book.name.isEmpty ? _title : book.name,
-                      key: const Key('shuqi-book-title'),
+                      textKey: const Key('shuqi-book-title'),
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
@@ -176,7 +177,7 @@ extension _ShuqiDetailClassic on _ShuqiDetailPageState {
                     ),
                     if (book.author.isNotEmpty) ...[
                       const SizedBox(height: 6),
-                      Text(
+                      CopyableText(
                         book.author,
                         style: TextStyle(color: palette.muted, fontSize: 12.5),
                       ),
@@ -213,9 +214,10 @@ extension _ShuqiDetailClassic on _ShuqiDetailPageState {
           ),
           if (book.intro.isNotEmpty) ...[
             const SizedBox(height: 14),
-            Text(
+            // #477：简介长按复制全文（折叠的 6 行只是显示上限）。
+            CopyableText(
               book.intro,
-              key: const Key('shuqi-intro'),
+              textKey: const Key('shuqi-intro'),
               maxLines: 6,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(color: palette.ink, fontSize: 13, height: 1.6),

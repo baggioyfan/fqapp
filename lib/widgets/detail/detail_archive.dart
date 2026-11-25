@@ -29,6 +29,7 @@ import 'package:material_ui/material_ui.dart';
 import '../../models/book_detail.dart';
 import '../../models/media_item.dart';
 import '../../services/app_style_tokens.dart';
+import '../copyable_text.dart';
 import '../home/home_media_card.dart';
 import '../wenku/src/easy_glass.dart';
 import '../wenku/wenku_ui.dart';
@@ -143,9 +144,10 @@ class DetailArchiveIdentity extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        AppText(
+        // #477：书名与作者可长按复制（交互取舍见 CopyableText）。
+        CopyableText(
           title,
-          key: const Key('detail_book_title'),
+          textKey: const Key('detail_book_title'),
           style: TextStyle(
             fontWeight: FontWeight.w800,
             fontSize: wide ? 28 : 24,
@@ -167,14 +169,18 @@ class DetailArchiveIdentity extends StatelessWidget {
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     Flexible(
-                      child: AppText(
+                      // 点按落在文字上时由 CopyableText 转给作者主页：选区比
+                      // 外层 surface 更深，不这么接就会被选区长按/点按吞掉。
+                      child: CopyableText(
                         author,
-                        key: const Key('detail_author_name'),
+                        textKey: const Key('detail_author_name'),
                         style: const TextStyle(
                           fontSize: 15,
                           height: 1.4,
                           fontWeight: FontWeight.w600,
                         ),
+                        onTap: canOpenAuthor ? onOpenAuthor : null,
+                        pressFeedback: canOpenAuthor,
                       ),
                     ),
                     if (canOpenAuthor) ...[
@@ -407,9 +413,9 @@ class _DetailArchiveSynopsisState extends State<DetailArchiveSynopsis> {
               reverseDuration: reduceMotion ? Duration.zero : WenkuMotion.exit,
               alignment: Alignment.topLeft,
               curve: WenkuMotion.ease,
-              child: AppText(
+              child: CopyableText(
                 widget.text,
-                key: const Key('detail_description_text'),
+                textKey: const Key('detail_description_text'),
                 maxLines: _isExpanded ? null : 3,
                 overflow: _isExpanded
                     ? TextOverflow.visible

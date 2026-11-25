@@ -1477,13 +1477,13 @@ void main() {
         find.byKey(const ValueKey('reader-appearance-scroll')),
         findsNothing,
       );
-      expect(changes.last.fontSize, 20);
+      expect(changes.last.fontSize, 26);
 
       // Reopen (a fresh sheet gets the committed value) and exercise the rest.
       changes.clear();
       await tester.tap(find.text('open'));
       await tester.pumpAndSettle();
-      expect(find.text('20'), findsOneWidget);
+      expect(find.text('26'), findsOneWidget);
       await tester.tap(find.byKey(const ValueKey('reader-spacing-loose')));
       await tester.pump(const Duration(milliseconds: 150));
       expect(changes.last.lineHeight, 2.1);
@@ -1645,11 +1645,11 @@ void main() {
         find.byKey(const ValueKey('reader-settings-category-grid')),
         findsOneWidget,
       );
-      expect(changes.last.fontSize, 19);
+      expect(changes.last.fontSize, 25);
 
       await store.select(AppThemeStyle.classic);
       await tester.pumpAndSettle();
-      expect(find.text('19'), findsOneWidget);
+      expect(find.text('25'), findsOneWidget);
       expect(tester.takeException(), isNull);
     });
   });

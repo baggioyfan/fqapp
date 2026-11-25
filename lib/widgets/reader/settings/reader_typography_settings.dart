@@ -120,12 +120,17 @@ class ReaderTypographySettings extends StatelessWidget {
           _slider(
             id: 'reader-font-size',
             label: '字号',
-            current: value.fontSize,
-            min: 14,
-            max: 32,
-            divisions: 18,
-            format: (n) => '${n.round()} pt',
-            apply: (prefs, n) => prefs.copyWith(fontSize: n),
+            // 官方滑条走档位表下标（`TextSectionSeekBar.setIntText` +
+            // `getTextValue`），不是连续 dp：每格一档，顶部 32/36/40/44。
+            current: ReaderPreferences.fontSizeIndex(value.fontSize).toDouble(),
+            min: 0,
+            max: (ReaderPreferences.fontSizes.length - 1).toDouble(),
+            divisions: ReaderPreferences.fontSizes.length - 1,
+            format: (n) =>
+                '${ReaderPreferences.fontSizeAt(n.round()).round()} pt',
+            apply: (prefs, n) => prefs.copyWith(
+              fontSize: ReaderPreferences.fontSizeAt(n.round()),
+            ),
           ),
           _item(_weightRow()),
           _slider(
@@ -142,9 +147,12 @@ class ReaderTypographySettings extends StatelessWidget {
             id: 'reader-title-size',
             label: '标题字号',
             current: value.titleSize,
-            min: 16,
-            max: 40,
-            divisions: 24,
+            min: ReaderPreferences.minTitleSize,
+            max: ReaderPreferences.maxTitleSize,
+            divisions:
+                (ReaderPreferences.maxTitleSize -
+                        ReaderPreferences.minTitleSize)
+                    .round(),
             format: (n) => '${n.round()} pt',
             apply: (prefs, n) => prefs.copyWith(titleSize: n),
           ),

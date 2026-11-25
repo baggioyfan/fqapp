@@ -243,9 +243,14 @@ void main() {
       _expectAnchor(tester, store, anchor);
       await _openAppearance(tester);
       // 字号在「字体」分类里；每次改一级都要保住段落锚点。
+      // 滑条拖的是官方档位表下标：19~22 落在第 4~7 格。
       await openReaderSettingsCategory(tester, 'font');
       for (var size = 19; size <= 22; size++) {
-        await setReaderSliderValue(tester, 'reader-font-size', size.toDouble());
+        await setReaderSliderValue(
+          tester,
+          'reader-font-size',
+          ReaderPreferences.fontSizeIndex(size.toDouble()).toDouble(),
+        );
         _expectAnchor(tester, store, anchor);
       }
       await closeReaderSettingsSheet(tester);
@@ -258,6 +263,52 @@ void main() {
       await tester.pumpWidget(const SizedBox.shrink());
     },
   );
+
+  // #456：字号最大档（官方 44）必须仍能正常分页、守住段落锚点。
+  testWidgets('the 44 pt cap paginates and keeps the paragraph anchor', (
+    tester,
+  ) async {
+    await _size(tester, const Size(390, 760));
+    final store = MemoryReaderStore();
+    await tester.pumpWidget(_app(store: store));
+    await tester.pumpAndSettle();
+    await _tapSide(tester, 1);
+    final anchor = store.entry!['textOffset'] as int;
+    final defaultPages = _pager(tester).layout.pages.length;
+
+    await _openAppearance(tester);
+    await openReaderSettingsCategory(tester, 'font');
+    await setReaderSliderValue(
+      tester,
+      'reader-font-size',
+      (ReaderPreferences.fontSizes.length - 1).toDouble(),
+    );
+
+    _expectAnchor(tester, store, anchor);
+    final pager = _pager(tester);
+    expect(pager.layout.spec.bodyStyle.fontSize, ReaderPreferences.maxFontSize);
+    expect(
+      pager.layout.pages.length,
+      greaterThan(defaultPages),
+      reason: '44 号每页装得更少，页数必须多于默认 24 号',
+    );
+
+    // 最大档下转横屏再回来：重排不能丢掉当前段落。
+    await tester.binding.setSurfaceSize(const Size(760, 390));
+    await tester.pumpAndSettle();
+    _expectAnchor(tester, store, anchor);
+    await tester.binding.setSurfaceSize(const Size(390, 760));
+    await tester.pumpAndSettle();
+    _expectAnchor(tester, store, anchor);
+
+    await closeReaderSettingsSheet(tester);
+    expect(
+      (await ReaderPreferences.load()).fontSize,
+      ReaderPreferences.maxFontSize,
+    );
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
 
   testWidgets(
     'tablet and Windows spreads preserve reading width and settings choices',

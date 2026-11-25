@@ -1,6 +1,7 @@
 import 'package:material_ui/material_ui.dart';
 import '../../models/book_detail.dart';
 import '../../models/media_item.dart';
+import '../copyable_text.dart';
 import '../home/home_design.dart';
 import 'detail_cover_tile.dart';
 import 'detail_style.dart';
@@ -62,6 +63,7 @@ class DetailHero extends StatelessWidget {
       centered: centered,
       includeTags: !tagsBelowCover,
     );
+    // #477：书名与作者支持长按复制（具体交互与中文选区的取舍见 CopyableText）。
     final info = Column(
       crossAxisAlignment: centered
           ? CrossAxisAlignment.center
@@ -69,9 +71,9 @@ class DetailHero extends StatelessWidget {
       children: [
         Padding(
           padding: const EdgeInsets.only(top: 2, bottom: 1),
-          child: Text(
+          child: CopyableText(
             title,
-            key: const Key('detail_book_title'),
+            textKey: const Key('detail_book_title'),
             style: TextStyle(
               color: palette.ink,
               fontSize: horizontalDesktop
@@ -328,13 +330,18 @@ class _MetaLine extends StatelessWidget {
                 semanticLabel: '查看 $name 的主页',
                 onTap: onOpenAuthor!,
                 borderRadius: BorderRadius.circular(4),
-                child: Text(
+                // 点按必须由 CopyableText 自己接：选区区比这里的按钮更深，
+                // 否则跳作者主页会被它抢走（见 CopyableText.onTap）。
+                child: CopyableText(
                   '$name ›',
-                  key: const Key('detail_author_name'),
+                  textKey: const Key('detail_author_name'),
                   style: style.copyWith(color: palette.ink),
+                  onTap: onOpenAuthor,
+                  // 作者行看着像按钮，保留按下回弹（拖动/长按都不影响）。
+                  pressFeedback: true,
                 ),
               )
-            : Text(name, style: style),
+            : CopyableText(name, style: style),
       if (tail.isNotEmpty)
         Text(
           '${name.isEmpty ? '' : ' · '}$tail',

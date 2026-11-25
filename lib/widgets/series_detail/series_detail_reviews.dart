@@ -5,6 +5,7 @@ import '../../models/book_detail.dart' show formatCounter;
 import '../../models/playlet_comment.dart';
 import '../../services/api_client.dart';
 import '../comment_emoji.dart';
+import '../copyable_text.dart';
 import '../home/home_cell_blocks.dart' show HomeBlockMore;
 import '../home/home_design.dart';
 import 'series_detail_common.dart';
@@ -137,11 +138,15 @@ class SeriesDetailReviews extends StatelessWidget {
           ],
         ),
         const SizedBox(height: 4),
-        CommentEmojiText(
-          text: comment.text,
-          maxLines: 4,
-          overflow: TextOverflow.ellipsis,
-          style: TextStyle(fontSize: 13, height: 1.5, color: palette.ink),
+        // #477：剧评正文也可长按选中复制。
+        CopyableText(
+          comment.text,
+          child: CommentEmojiText(
+            text: comment.text,
+            maxLines: 4,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(fontSize: 13, height: 1.5, color: palette.ink),
+          ),
         ),
       ],
     ),

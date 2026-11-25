@@ -426,7 +426,7 @@ void main() {
     final layout = _layout(
       size: const Size(240, 85),
       scale: 2.5,
-      preferences: const ReaderPreferences(fontSize: 32, titleSize: 40),
+      preferences: const ReaderPreferences(fontSize: 44, titleSize: 48),
     );
     final page = layout.pages.first;
     expect(page.height, greaterThan(layout.spec.pageHeight));
@@ -455,7 +455,12 @@ ReaderChapterLayout _layout({
   String title = '第一章 山间来信',
   Size size = const Size(350, 640),
   double scale = 1,
-  ReaderPreferences preferences = const ReaderPreferences(),
+  // 排版几何用例锁在 18/20 上：这里测的是测量与渲染是否一致，不随产品默认字号
+  // （官方 24）漂移；默认值的覆盖在 reader_preferences_test 里。
+  ReaderPreferences preferences = const ReaderPreferences(
+    fontSize: 18,
+    titleSize: 20,
+  ),
   ChapterContent? content,
 }) => ReaderChapterLayout(
   title: title,

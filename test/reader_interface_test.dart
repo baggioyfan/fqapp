@@ -177,7 +177,12 @@ void main() {
       await _openAppearance(tester);
       // 字号与字距、标题对齐都在「字体」分类。
       await openReaderSettingsCategory(tester, 'font');
-      await setReaderSliderValue(tester, 'reader-font-size', 19);
+      // 字号滑条拖的是官方档位表下标：第 4 格 = 19pt。
+      await setReaderSliderValue(
+        tester,
+        'reader-font-size',
+        ReaderPreferences.fontSizeIndex(19).toDouble(),
+      );
       expect(_firstVisibleParagraph(tester), anchor);
       await setReaderSliderValue(tester, 'reader-letter-spacing', 0.1);
       await tester.ensureVisible(find.text('居中'));

@@ -406,7 +406,10 @@ void main() {
         expect(contentBoxes.length, greaterThan(1));
         expect(
           contentBoxes.first.left,
-          closeTo(18 * (offline ? 1.3 : 1) * 2, 2),
+          closeTo(
+            ReaderPreferences.defaultFontSize * (offline ? 1.3 : 1) * 2,
+            2,
+          ),
         );
         expect(contentBoxes[1].left, closeTo(0, .01));
         expect(contentBoxes.last.right, lessThan(firstRender.size.width - 9));

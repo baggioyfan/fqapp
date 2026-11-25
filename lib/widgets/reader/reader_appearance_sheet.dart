@@ -1142,29 +1142,30 @@ class _ClassicFontSizeStepper extends StatelessWidget {
   final double value;
   final ValueChanged<double> onChanged;
 
-  static const _min = 14.0;
-  static const _max = 32.0;
-
   @override
   Widget build(BuildContext context) {
     final preset = ReaderSettingsTheme.of(context);
+    // 官方 `rm4.e.k()/l()`：A−/A+ 在档位表上走一格（不是 ±1pt），
+    // 到了首/末档就没有下一格，按钮自动置灰。
+    final index = ReaderPreferences.fontSizeIndex(value);
+    final previous = index > 0 ? ReaderPreferences.fontSizes[index - 1] : null;
+    final next = index < ReaderPreferences.fontSizes.length - 1
+        ? ReaderPreferences.fontSizes[index + 1]
+        : null;
     Widget end({
       required String glyph,
       required double fontSize,
-      required double delta,
+      required double? target,
       required String tooltip,
       required Key key,
     }) {
-      final next = value + delta;
       return Expanded(
         child: Tooltip(
           message: tooltip,
           child: InkWell(
             key: key,
             borderRadius: BorderRadius.circular(90),
-            onTap: next < _min || next > _max
-                ? null
-                : () => onChanged(next.clamp(_min, _max).toDouble()),
+            onTap: target == null ? null : () => onChanged(target),
             child: Container(
               constraints: const BoxConstraints(minHeight: 36),
               alignment: Alignment.center,
@@ -1194,13 +1195,13 @@ class _ClassicFontSizeStepper extends StatelessWidget {
             key: const ValueKey('reader-font-size-decrease'),
             glyph: 'A−',
             fontSize: 14,
-            delta: -1,
+            target: previous,
             tooltip: '减小字号',
           ),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 12),
             child: Text(
-              value.round().toString(),
+              ReaderPreferences.snapFontSize(value).round().toString(),
               style: TextStyle(color: preset.accentColor, fontSize: 13),
             ),
           ),
@@ -1208,7 +1209,7 @@ class _ClassicFontSizeStepper extends StatelessWidget {
             key: const ValueKey('reader-font-size-increase'),
             glyph: 'A+',
             fontSize: 20,
-            delta: 1,
+            target: next,
             tooltip: '增大字号',
           ),
         ],
