@@ -11,6 +11,7 @@ extension _ReaderPageMenuPlayers on _ReaderPageState {
       // iOS 首版没有原生播放器（见 platform_capabilities.dart），观影入口点了
       // 只会推出一个起不来的播放页，所以与短剧 tab 一致整体不展示。
       final video =
+          DramaFeaturePreferences.instance.enabled.value &&
           supportsVideoPlayback &&
           _preferences.showVideoButton &&
           match != null &&

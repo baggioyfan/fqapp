@@ -11,6 +11,7 @@ import '../models/media_item.dart';
 import '../models/media_id.dart';
 import '../models/search_discovery.dart';
 import '../services/api_client.dart';
+import '../services/drama_feature_preferences.dart';
 import '../services/app_theme_style.dart';
 import '../services/backend_transport.dart';
 import '../services/desktop_platform.dart';
@@ -203,7 +204,13 @@ class SearchPage extends StatefulWidget {
 
 class _SearchPageState extends State<SearchPage> {
   static const _paginationThreshold = 480.0;
-  static const _categories = SearchCategory.values;
+  late final _showDrama = DramaFeaturePreferences.instance.enabled.value;
+  late final _categories = [
+    for (final category in SearchCategory.values)
+      if (_showDrama || !_isDramaKind(category.kind)) category,
+  ];
+
+  static bool _isDramaKind(String? kind) => kind == 'video' || kind == 'manju';
   static const _listViewPreference = 'search_list_view';
   static const _minimumScorePreference = 'search_minimum_score';
 
@@ -228,7 +235,7 @@ class _SearchPageState extends State<SearchPage> {
   /// 每个结果条目的稳定 GlobalKey，按来源限定的 kind:id 复用。切换风格或
   /// 列表/网格时用它测量“当前可见作品 + 行内偏移”，不能只靠像素偏移。
   final Map<String, GlobalKey> _resultKeys = <String, GlobalKey>{};
-  List<_SearchFeed> _feeds = [for (final _ in _categories) _SearchFeed()];
+  late List<_SearchFeed> _feeds = [for (final _ in _categories) _SearchFeed()];
   String _query = '';
   String? _idQuery;
   int _tabIndex = 0;
@@ -317,7 +324,9 @@ class _SearchPageState extends State<SearchPage> {
     super.initState();
     if (isDesktopHost) DesktopShellState.enterSearch();
     // 首帧就停在该页签：分区入口（短剧/漫剧）进来的搜索不该先闪「综合」。
-    _tabIndex = _categories.indexOf(widget.initialCategory);
+    _tabIndex = _categories
+        .indexOf(widget.initialCategory)
+        .clamp(0, _categories.length - 1);
     _scrollController.addListener(_onScroll);
     _loadHistory();
     unawaited(_loadLayout());
@@ -938,7 +947,9 @@ class _SearchPageState extends State<SearchPage> {
         for (var index = 0; index < _categories.length; index++) {
           final feed = _feeds[index];
           final kind = _categories[index].kind;
-          if (item != null && (kind == null || kind == item.kind)) {
+          if (item != null &&
+              (_showDrama || !_isDramaKind(item.kind)) &&
+              (kind == null || kind == item.kind)) {
             feed.items.add(item);
           }
           feed.initialized = true;
@@ -1002,6 +1013,7 @@ class _SearchPageState extends State<SearchPage> {
       setState(() {
         for (final item in page.items) {
           if (item.id.isEmpty ||
+              (!_showDrama && _isDramaKind(item.kind)) ||
               (category.kind != null && item.kind != category.kind)) {
             continue;
           }
