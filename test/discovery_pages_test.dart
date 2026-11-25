@@ -626,7 +626,7 @@ void main() {
       expect(find.text('5'), findsOneWidget);
     });
 
-    testWidgets('an empty reply list says so', (tester) async {
+    testWidgets('回复为空但上游报了总数时给出可重试回执', (tester) async {
       await pump(
         tester,
         replyLoader: (_) async => const CommentReplyPage(totalCount: 5),
@@ -635,7 +635,14 @@ void main() {
         find.byKey(const ValueKey('detail_reply_toggle_7532767563971527448')),
       );
       await tester.pumpAndSettle();
-      expect(find.text('暂无回复'), findsOneWidget);
+      // 上游声称还有回复却没给正文，这时显示「暂无回复」会让人以为这条书评没人回复；
+      // 保留列表自带的计数，并按失败处理以便重试（#491）。
+      expect(find.text('暂无回复'), findsNothing);
+      expect(
+        find.byKey(const ValueKey('detail_reply_error_7532767563971527448')),
+        findsOneWidget,
+      );
+      expect(find.text('回复 5'), findsOneWidget);
     });
   });
 

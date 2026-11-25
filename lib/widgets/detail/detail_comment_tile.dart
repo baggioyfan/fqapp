@@ -57,8 +57,12 @@ class _DetailCommentTileState extends State<DetailCommentTile> {
     try {
       final page = await loader(widget.comment.id);
       if (!mounted) return;
+      // 上游在错误命名空间里回的是 200 + 空列表 + total 0。这时把「回复」数改写成 0
+      // 会让人以为这条书评没有回复，所以保留列表自带的计数，并按失败处理（可重试）。
+      final emptyButClaimed = page.isEmpty && widget.comment.replyCount > 0;
       setState(() {
-        _replies = page;
+        _replies = emptyButClaimed ? null : page;
+        _failed = emptyButClaimed;
         _loading = false;
       });
     } catch (_) {

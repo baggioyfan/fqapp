@@ -178,6 +178,8 @@ extension _ReaderPageIdeas on _ReaderPageState {
       widget.bookId,
       commentId,
       groupId: widget.bookId,
+      // 段评在 503 命名空间，书评是 501；用错会拿到空列表。
+      commentSource: 503,
     );
   }
 }

@@ -843,21 +843,23 @@ fn handle_comment_replies<'a>(ctx: &'a Ctx, params: &'a Params) -> BoxFuture<'a,
             ));
         }
 
+        // 官方 7.0.9.32 抓包（`POST /novel/commentapi/reply/list/{comment_id}/v1`）：
+        // 书评回复 `comment_source=501`、段评回复 `503`，`comment_type` 固定 2、
+        // `group_type` 固定 1、`count=20`，`business_param` 只有 `book_id` 与
+        // `need_count`。`comment_source` 是评论命名空间：用错空间时上游照样回 200，
+        // 但 `reply_list` 为空、`total=0`，界面就会把「回复 48」显示成「回复 0」。
+        let source = int_default(&params.get_str("comment_source"), 501);
         let body = json!({
-            "aid": 1967,
             "business_param": {
                 "book_id": book_id,
-                "client_ab_params": "{\"comment_dislike_filter\":\"0\"}",
-                "need_count": false,
+                "need_count": true,
             },
             "comment_id": comment_id,
-            "comment_source": 502,
-            "comment_type": 1,
-            "compliance_status": 0,
-            "count": int_default(&params.get_str("count"), 10),
-            "cursor": "",
+            "comment_source": source,
+            "comment_type": 2,
+            "count": int_default(&params.get_str("count"), 20).clamp(1, 50),
             "group_id": group_id,
-            "group_type": 15,
+            "group_type": 1,
         });
         let body = serde_json::to_vec(&body).map_err(|e| ApiError::Internal(e.to_string()))?;
 
