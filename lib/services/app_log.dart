@@ -257,7 +257,9 @@ class AppLog with WidgetsBindingObserver {
   /// is credential material (`a=b; c=d`), and splitting it would leak the
   /// tail. Standalone long hex/base64 blobs are *not* redacted — without
   /// a sensitive key around them they are indistinguishable from ids.
-  @visibleForTesting
+  ///
+  /// 不只日志用：播放失败的「复制诊断」也走这里，把作品名、剧集 id 一并过
+  /// 一遍，用户粘到问题反馈里的文本就不会带凭据。
   static String sanitizeLogText(String input) {
     var out = input;
     out = out.replaceAllMapped(

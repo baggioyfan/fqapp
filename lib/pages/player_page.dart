@@ -14,6 +14,7 @@ import '../models/series_detail.dart';
 import '../models/related_series.dart';
 import '../widgets/player/related_series_sheet.dart';
 import 'detail_page.dart' show openBookDetail;
+import 'about_page.dart' show AboutPage;
 import 'series_detail_page.dart' show SeriesDetailPage;
 import '../services/api_client.dart';
 import '../services/backend_transport.dart' show BackendRequest;
@@ -31,6 +32,7 @@ import '../services/library_store.dart';
 import '../services/native_player.dart';
 import '../services/webdav_auto_sync.dart';
 import '../services/playback_issue.dart';
+import '../services/player_failure_report.dart';
 import '../services/player_history.dart';
 import '../services/player_layout_preferences.dart';
 import '../services/player_load_diagnostics.dart';
@@ -200,6 +202,10 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   int? _pendingCompletion;
   NativePlayer? _pendingAutoplay;
   PlaybackIssue? _error;
+
+  /// 失败瞬间冻结下来的诊断快照。播放器拆除、重试、切集都会改掉 live 状态，
+  /// 所以「复制诊断」读的是这一份，而不是当时的字段。
+  PlayerFailureReport? _failureReport;
   int _loadGeneration = 0;
   final Stopwatch _watchTime = Stopwatch();
   final List<StreamSubscription<dynamic>> _subs = [];
@@ -1467,6 +1473,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     setState(() {
       _initVideo = true;
       _error = null;
+      _failureReport = null;
       _duration = Duration.zero;
       _playing = false;
     });
@@ -1743,8 +1750,17 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       ApiException() => error.statusCode,
       _ => null,
     };
-    _loadTrace?.fail(errorCode: errorCode, httpStatusCode: httpStatusCode);
     final issue = PlaybackIssue.fromError(error);
+    _loadTrace?.fail(
+      errorCode: errorCode,
+      httpStatusCode: httpStatusCode,
+      // 分类和提示文案同源；Dart 侧自带的两类异常没有对应 issue，单独标。
+      errorCategory: switch (error) {
+        FormatException() => 'format',
+        StateError() => 'state',
+        _ => issue.name,
+      },
+    );
     // 首帧之前失败先静默重来（见 [_retryBeforeFirstFrame]）。放在 trace.fail
     // 之后：这一次尝试仍然如实记成失败，重试自己会开一条新的 trace。
     // 编码不受支持是确定结论：静默重来只会再拿到同一种编码，直接给出原因
@@ -1753,6 +1769,29 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     _sources.invalidate(widget.eps[_index].itemId);
     _prefetchTimer?.cancel();
     _prefetchTimer = null;
+    // 在拆除播放器、++generation 之前冻结：拆完 latestSample 可能被下一次
+    // 尝试覆盖，集号也可能已经变了。
+    final sample = _diagnostics.latestSample;
+    final failureReport = PlayerFailureReport(
+      version: AboutPage.versionText,
+      title: widget.title,
+      bookId: widget.bookId,
+      episodeId: widget.eps[_index].itemId,
+      episode: _index + 1,
+      attempt: generation,
+      issue: issue,
+      // 只认「同一次尝试、同一集、结果确实是 error」的样本，否则宁可不报。
+      sample:
+          sample?.attempt == generation &&
+              sample?.episode == _index + 1 &&
+              sample?.outcome == 'error'
+          ? sample
+          : null,
+      duringPlayback: _hasDisplayed,
+      errorCode: errorCode,
+      httpStatusCode: httpStatusCode,
+      upstreamCode: error is ApiException ? error.upstreamCode : null,
+    );
     ++_loadGeneration;
     _progressTimer?.cancel();
     _watchTime.stop();
@@ -1764,6 +1803,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     }
     setState(() {
       _error = issue;
+      _failureReport = failureReport;
       _initVideo = false;
       _playing = false;
     });
@@ -2320,6 +2360,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
           PlayerErrorFeedback(
             key: const ValueKey('player-error'),
             issue: _error!,
+            report: _failureReport,
             onRetry: widget.eps.isEmpty || !_error!.retryable ? null : retry,
           ),
         if (_error == null && (waiting || _player!.buffering))

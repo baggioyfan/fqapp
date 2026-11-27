@@ -10,13 +10,24 @@ import 'package:fqapp/pages/player_page.dart';
 import 'package:fqapp/services/api_client.dart';
 import 'package:fqapp/services/native_player.dart';
 import 'package:fqapp/services/playback_issue.dart';
+import 'package:fqapp/services/player_failure_report.dart';
+import 'package:fqapp/services/player_load_diagnostics.dart';
 import 'package:fqapp/widgets/player/player_feedback.dart';
 import 'package:fqapp/widgets/video_player_chrome.dart';
 
 import 'support/controlled_player.dart';
 
 void main() {
+  String? copiedText;
   setUp(() {
+    copiedText = null;
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(SystemChannels.platform, (call) async {
+          if (call.method == 'Clipboard.setData') {
+            copiedText = (call.arguments as Map)['text'] as String;
+          }
+          return null;
+        });
     SharedPreferences.setMockInitialValues({'player_playback_rate': 1.25});
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(
@@ -48,7 +59,14 @@ void main() {
       ),
       '播放服务暂时不可用',
     ),
-    (const ApiException('private-token', statusCode: 403), '视频暂时无法播放'),
+    (
+      const ApiException(
+        'private-token',
+        statusCode: 403,
+        upstreamCode: 101002,
+      ),
+      '视频暂时无法播放',
+    ),
     (const ApiException('private-token', statusCode: 503), '播放服务暂时不可用'),
     (const ApiException('private-token', statusCode: 504), '加载超时'),
     (StateError('private-token'), '播放失败'),
@@ -65,6 +83,27 @@ void main() {
         expect(find.textContaining(error.runtimeType.toString()), findsNothing);
         expect(find.byType(CircularProgressIndicator), findsNothing);
         expect(find.widgetWithText(OutlinedButton, '重试'), findsOneWidget);
+        expect(find.textContaining('诊断：获取播放地址'), findsOneWidget);
+        session.diagnostics
+            .begin(attempt: 999, episode: 2, trigger: 'switch', appActive: true)
+            .finish('firstFrame');
+        await tester.tap(find.widgetWithText(TextButton, '复制诊断'));
+        await tester.pump(const Duration(milliseconds: 350));
+        await _flush(tester);
+        final copied = copiedText!;
+        expect(copied, contains('作品：播放提示测试'));
+        expect(copied, contains('剧集 ID：1'));
+        expect(copied, contains('失败阶段：获取播放地址 (address)'));
+        expect(copied, contains('错误分类：${PlaybackIssue.fromError(error).name}'));
+        if (error is ApiException) {
+          expect(copied, contains('HTTP 状态：${error.statusCode}'));
+          if (error.upstreamCode != null) {
+            expect(copied, contains('上游错误码：${error.upstreamCode}'));
+          }
+        }
+        expect(copied, isNot(contains('播放尝试：999')));
+        expect(copied, isNot(contains('"attempt":999')));
+        expect(copied, isNot(contains('private-token')));
         await tester.pump(const Duration(seconds: 30));
         expect(session.requests, ['1']);
         expect(session.players, isEmpty);
@@ -89,6 +128,13 @@ void main() {
     expect(find.textContaining('bytevc2'), findsOneWidget);
     expect(find.byType(CircularProgressIndicator), findsNothing);
     expect(find.widgetWithText(OutlinedButton, '重试'), findsNothing);
+    expect(find.textContaining('unsupportedCodec · HTTP 500'), findsOneWidget);
+    await tester.tap(find.widgetWithText(TextButton, '复制诊断'));
+    await tester.pump(const Duration(milliseconds: 350));
+    await _flush(tester);
+    final copied = copiedText!;
+    expect(copied, contains('错误分类：unsupportedCodec'));
+    expect(copied, contains('"errorCategory":"unsupportedCodec"'));
     await tester.pump(const Duration(seconds: 30));
     expect(session.requests, ['1']);
     expect(session.players, isEmpty);
@@ -119,6 +165,15 @@ void main() {
         expect(find.text(scenario.title), findsOneWidget);
         expect(find.textContaining('private-token'), findsNothing);
         expect(find.byType(PlayerLoadingFeedback), findsNothing);
+        expect(find.textContaining('诊断：播放中'), findsOneWidget);
+        await tester.tap(find.widgetWithText(TextButton, '复制诊断'));
+        await tester.pump(const Duration(milliseconds: 350));
+        await _flush(tester);
+        final copied = copiedText!;
+        expect(copied, contains('失败阶段：播放中 (playback)'));
+        expect(copied, contains('播放器错误码：${scenario.code}'));
+        expect(copied, isNot(contains('private-token')));
+        expect(copied, isNot(contains('加载记录：')));
         expect(session.players.single.disposed, true);
         await tester.pump(const Duration(seconds: 10));
         expect(session.requests, ['1']);
@@ -129,6 +184,7 @@ void main() {
         expect(session.players.last.position, const Duration(seconds: 37));
         expect(session.players.last.rate, 1.25);
         expect(find.byType(PlayerErrorFeedback), findsNothing);
+        expect(find.text('复制诊断'), findsNothing);
       },
     );
   }
@@ -277,6 +333,7 @@ void main() {
       await tester.pump(const Duration(seconds: 5));
       expect(find.text('加载较慢'), findsNothing);
       expect(find.text('正在加载第 2 集'), findsOneWidget);
+      expect(find.text('复制诊断'), findsNothing);
       expect(session.requests, ['1', '2']);
       original.complete(_source('1'));
       await _flush(tester);
@@ -343,6 +400,33 @@ void main() {
       await tester.pump();
       await tester.tap(retry);
       expect(retries, 1);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Center(
+              child: MediaQuery(
+                data: const MediaQueryData(textScaler: TextScaler.linear(2)),
+                child: SizedBox(
+                  width: 200,
+                  height: 120,
+                  child: PlayerErrorFeedback(
+                    issue: PlaybackIssue.service,
+                    report: _report(),
+                    onRetry: () => retries++,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      expect(tester.takeException(), isNull);
+      final copy = find.widgetWithText(TextButton, '复制诊断');
+      await tester.ensureVisible(copy);
+      await tester.pump();
+      await tester.tap(copy);
+      await _flush(tester);
+      expect(copiedText, contains('HTTP 状态：500'));
       await tester.pumpWidget(const SizedBox.shrink());
     },
   );
@@ -391,6 +475,27 @@ Map<String, dynamic> _source(String id) => {
   'video_url': 'https://example.invalid/$id.mp4',
 };
 
+PlayerFailureReport _report() {
+  final diagnostics = PlayerLoadDiagnostics(report: (_) {});
+  diagnostics
+      .begin(attempt: 1, episode: 1, trigger: 'initial', appActive: true)
+      .fail(httpStatusCode: 500, errorCategory: 'service');
+  return PlayerFailureReport(
+    version: '1.0.207 (212)',
+    title: '播放提示测试',
+    bookId: '1',
+    episodeId: '2',
+    episode: 1,
+    attempt: 1,
+    issue: PlaybackIssue.service,
+    sample: diagnostics.latestSample,
+    duringPlayback: false,
+    errorCode: null,
+    httpStatusCode: 500,
+    upstreamCode: null,
+  );
+}
+
 VideoPlayerChrome _chrome(WidgetTester tester) =>
     tester.widget<VideoPlayerChrome>(find.byType(VideoPlayerChrome));
 
@@ -416,6 +521,7 @@ Future<void> _mount(WidgetTester tester, _Session session) async {
 
 class _Session {
   final store = ControlledReaderStore();
+  final diagnostics = PlayerLoadDiagnostics(report: (_) {});
   final Future<Map<String, dynamic>> Function(Chapter)? loader;
   final ControlledNativePlayer Function()? factory;
   final int episodeCount;
@@ -434,6 +540,7 @@ class _Session {
       ],
       startIndex: 0,
       historyStore: store,
+      loadDiagnostics: diagnostics,
       contentLoader: (chapter) {
         requests.add(chapter.itemId);
         return loader?.call(chapter) ?? Future.value(_source(chapter.itemId));

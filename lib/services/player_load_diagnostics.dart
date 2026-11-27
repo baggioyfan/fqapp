@@ -30,6 +30,24 @@ const _allowedOutcomes = <String>{
   'disposed',
   'superseded',
 };
+
+/// 失败分类的白名单。值与 PlaybackIssue 的枚举名对齐，另有 `format` / `state`
+/// 两个承接 Dart 侧抛出的 `FormatException` / `StateError`。
+/// `unsupported` 是本 fork 特有的分类（片源编码本机不支持），上游没有。
+const _allowedErrorCategories = <String>{
+  'offline',
+  'network',
+  'timeout',
+  'unavailable',
+  'service',
+  'decoding',
+  'unsupported',
+  'unsupportedCodec',
+  'unknown',
+  'empty',
+  'format',
+  'state',
+};
 const _allowedSources = <String>{
   'network',
   'cacheHit',
@@ -66,6 +84,7 @@ class PlayerLoadSample {
   final String? failureStage;
   final int? errorCode;
   final int? httpStatusCode;
+  final String? errorCategory;
 
   PlayerLoadSample({
     required this.attempt,
@@ -81,6 +100,7 @@ class PlayerLoadSample {
     required String? failureStage,
     required int? errorCode,
     required int? httpStatusCode,
+    required String? errorCategory,
   }) : trigger = _safeLabel(trigger, _allowedTriggers),
        outcome = _safeLabel(outcome, _allowedOutcomes),
        source = _safeLabel(source, _allowedSources),
@@ -93,7 +113,10 @@ class PlayerLoadSample {
            ? null
            : _safeLabel(failureStage, _allowedStages),
        errorCode = _safeErrorCode(errorCode),
-       httpStatusCode = _safeHttpStatus(httpStatusCode);
+       httpStatusCode = _safeHttpStatus(httpStatusCode),
+       errorCategory = errorCategory == null
+           ? null
+           : _safeLabel(errorCategory, _allowedErrorCategories);
 
   Map<String, Object?> toJson() => {
     'attempt': attempt,
@@ -109,6 +132,7 @@ class PlayerLoadSample {
     'failureStage': failureStage,
     'errorCode': errorCode,
     'httpStatusCode': httpStatusCode,
+    'errorCategory': errorCategory,
   };
 }
 
@@ -158,6 +182,7 @@ class PlayerLoadTrace {
   String? _failureStage;
   int? _errorCode;
   int? _httpStatusCode;
+  String? _errorCategory;
   bool _finished = false;
 
   PlayerLoadTrace._(
@@ -202,12 +227,14 @@ class PlayerLoadTrace {
     }
   }
 
-  /// Ends an unsuccessful attempt with a safe phase label and numeric codes.
-  /// Error strings are intentionally not accepted by this API.
-  void fail({int? errorCode, int? httpStatusCode}) {
+  /// Ends an unsuccessful attempt with a safe phase label, a whitelisted
+  /// error category and numeric codes. Error strings are intentionally not
+  /// accepted by this API.
+  void fail({int? errorCode, int? httpStatusCode, String? errorCategory}) {
     if (_finished) return;
     _failureStage = _stage;
     _errorCode = errorCode;
+    _errorCategory = errorCategory;
     _httpStatusCode = httpStatusCode;
     finish('error');
   }
@@ -236,6 +263,7 @@ class PlayerLoadTrace {
       failureStage: _failureStage,
       errorCode: _errorCode,
       httpStatusCode: _httpStatusCode,
+      errorCategory: _errorCategory,
     );
     _diagnostics._latestSample = sample;
     // Diagnostics must never turn a successful load into a playback error.

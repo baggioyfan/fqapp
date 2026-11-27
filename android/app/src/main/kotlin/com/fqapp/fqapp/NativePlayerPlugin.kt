@@ -472,6 +472,12 @@ class NativePlayerPlugin internal constructor(
 
     override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
         when (call.method) {
+            "getDiagnosticEnvironment" -> result.success(
+                mapOf(
+                    "model" to "${Build.MANUFACTURER} ${Build.MODEL}",
+                    "system" to "Android ${Build.VERSION.RELEASE} (SDK ${Build.VERSION.SDK_INT})"
+                )
+            )
             "create" -> {
                 val cdnUrl = call.requiredArgument<String>("cdnUrl", result) ?: return
                 val keyHex = call.requiredArgument<String>("keyHex", result) ?: return

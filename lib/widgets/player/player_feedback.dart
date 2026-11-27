@@ -1,14 +1,35 @@
 import 'dart:async';
 
 import 'package:material_ui/material_ui.dart';
+import 'package:flutter/services.dart';
 
 import '../../services/playback_issue.dart';
+import '../../services/player_failure_report.dart';
+import 'player_toast.dart';
 
 class PlayerErrorFeedback extends StatelessWidget {
   final PlaybackIssue issue;
+  final PlayerFailureReport? report;
   final VoidCallback? onRetry;
 
-  const PlayerErrorFeedback({super.key, required this.issue, this.onRetry});
+  const PlayerErrorFeedback({
+    super.key,
+    required this.issue,
+    this.report,
+    this.onRetry,
+  });
+
+  Future<void> _copy(BuildContext context) async {
+    final failure = report;
+    if (failure == null) return;
+    try {
+      final text = await failure.text();
+      await Clipboard.setData(ClipboardData(text: text));
+      if (context.mounted) PlayerToast.show(context, '已复制诊断，请粘贴到问题反馈中');
+    } on PlatformException {
+      if (context.mounted) PlayerToast.show(context, '复制失败，请重试');
+    }
+  }
 
   @override
   Widget build(BuildContext context) => _FeedbackCard(
@@ -16,6 +37,10 @@ class PlayerErrorFeedback extends StatelessWidget {
     message: issue.message,
     leading: const Icon(Icons.error_outline, color: Colors.white70, size: 24),
     onRetry: onRetry,
+    detail: report == null
+        ? null
+        : '诊断：${report!.summary}\n第 ${report!.episode} 集 · ${report!.version}',
+    onCopy: report == null ? null : () => unawaited(_copy(context)),
   );
 }
 
@@ -114,12 +139,16 @@ class _FeedbackCard extends StatelessWidget {
   final String message;
   final Widget leading;
   final VoidCallback? onRetry;
+  final String? detail;
+  final VoidCallback? onCopy;
 
   const _FeedbackCard({
     required this.title,
     required this.message,
     required this.leading,
     this.onRetry,
+    this.detail,
+    this.onCopy,
   });
 
   @override
@@ -135,17 +164,26 @@ class _FeedbackCard extends StatelessWidget {
               onPressed: onRetry,
               child: const Text('重试'),
             );
+      final actions = [
+        ?retryButton,
+        if (onCopy != null)
+          TextButton(
+            style: TextButton.styleFrom(foregroundColor: Colors.white),
+            onPressed: onCopy,
+            child: const Text('复制诊断'),
+          ),
+      ];
       // An expanded description panel can leave only a narrow video strip.
       // Keep the action reachable without overflowing or enlarging the video.
       if (constraints.maxWidth < 140 || constraints.maxHeight < 96) {
         return Center(
           child: Tooltip(
-            message: '$title\n$message',
+            message: '$title\n$message${detail == null ? '' : '\n$detail'}',
             child: FittedBox(
               fit: BoxFit.scaleDown,
-              child:
-                  retryButton ??
-                  Text(title, style: const TextStyle(color: Colors.white70)),
+              child: actions.isEmpty
+                  ? Text(title, style: const TextStyle(color: Colors.white70))
+                  : Row(mainAxisSize: MainAxisSize.min, children: actions),
             ),
           ),
         );
@@ -192,9 +230,25 @@ class _FeedbackCard extends StatelessWidget {
                         fontSize: 13,
                       ),
                     ),
-                    if (retryButton != null) ...[
+                    if (detail != null) ...[
                       const SizedBox(height: 8),
-                      retryButton,
+                      Text(
+                        detail!,
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                          color: Colors.white70,
+                          fontSize: 12,
+                          height: 1.5,
+                        ),
+                      ),
+                    ],
+                    if (actions.isNotEmpty) ...[
+                      const SizedBox(height: 8),
+                      Wrap(
+                        alignment: WrapAlignment.center,
+                        spacing: 8,
+                        children: actions,
+                      ),
                     ],
                   ],
                 ),
