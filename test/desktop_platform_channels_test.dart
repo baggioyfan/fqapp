@@ -13,6 +13,11 @@ import 'package:fqapp/services/platform_channel.dart';
 /// `MissingPluginException`（create 1 ms 内失败），表现就是「每一集都播不起来」。
 /// 而全量 `flutter test` 依然全绿 —— 没有任何用例盯着这段装配。
 void main() {
+  // `DesktopPlatform.instance` 首次构造时会 new FlutterTts()，它内部立刻
+  // `setMethodCallHandler`，没有 binding 会直接断言失败 —— 这不是被测逻辑的
+  // 问题，纯属取单例前的环境准备。
+  TestWidgetsFlutterBinding.ensureInitialized();
+
   group('桌面平台通道装配', () {
     setUp(() {
       PlatformChannels.invoke = null;
