@@ -17,6 +17,7 @@ test/app_theme_style_lock_test.dart          4
 
 # --- fork 独有：备份、首页、听书、进度、WebDAV、密钥
 test/backup_capture_collision_test.dart      4
+test/desktop_platform_channels_test.dart     3
 test/home_manual_refresh_test.dart           4
 test/home_tab_alignment_test.dart            3
 test/library_backup_sync_test.dart           15

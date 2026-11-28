@@ -168,12 +168,27 @@ class DesktopPlatform with WindowListener {
       (_events[name] ??= StreamController<dynamic>.broadcast()).stream;
   void _emit(String name, dynamic event) => _events[name]?.add(event);
 
-  Future<void> initialize() async {
-    if (!isWindowsDesktop) return;
-    MediaKit.ensureInitialized();
-    await windowManager.ensureInitialized();
+  /// 装配平台通道：Mac / Windows / Linux 的播放（media_kit）、听书、系统媒体
+  /// 全挂在这两个回调上。
+  ///
+  /// **所有桌面平台都必须走这里**。漏了它 `NativePlayer` 会退回真正的
+  /// `MethodChannel`，`create` 在 1 ms 内抛 `MissingPluginException`，界面上
+  /// 就是「每一集都播不起来」。2026-11-23 换 Fluent 基底时这层被写成
+  /// `isWindowsDesktop`，macOS（和 Linux）在线播放整条挂掉，而全量测试照样全绿。
+  ///
+  /// 返回是否已装配：非桌面平台返回 false，调用方应跳过后续初始化。
+  @visibleForTesting
+  bool installPlatformChannels() {
+    if (!isDesktopHost) return false;
     PlatformChannels.invoke = invoke;
     PlatformChannels.events = events;
+    return true;
+  }
+
+  Future<void> initialize() async {
+    if (!installPlatformChannels()) return;
+    MediaKit.ensureInitialized();
+    await windowManager.ensureInitialized();
     windowManager.addListener(this);
     await windowManager.setPreventClose(true);
     final display = await screenRetriever.getPrimaryDisplay();
@@ -187,7 +202,11 @@ class DesktopPlatform with WindowListener {
         ),
         center: true,
         title: '什锦铺',
-        titleBarStyle: TitleBarStyle.hidden,
+        // Fluent 壳（无边框 + 自绘标题栏）是 Windows 桌面端的形态；macOS 上
+        // 保留系统标题栏，红黄绿三个按钮与拖拽行为才和系统一致。
+        titleBarStyle: isWindowsDesktop
+            ? TitleBarStyle.hidden
+            : TitleBarStyle.normal,
       ),
       () async {
         await windowManager.show();
